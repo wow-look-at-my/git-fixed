@@ -157,6 +157,25 @@ func cannotUnpack(emit func(gitobj.OID, string), p *Pack, l *packLayout, oid git
 	emit(oid, fmt.Sprintf("cannot unpack %s from %s at offset %d", oid, p.Path, e.off))
 }
 
+// failSubtree reports every delta standing on an entry that could not be
+// produced. The caller has already reported the entry itself.
+//
+// An object whose base cannot be built cannot be built either, and git says so
+// about each of them: it decodes every object from its own root, so it meets
+// the same fault once per object below it. Walking the forest once instead
+// means the deltas under a fault are the ones nothing else will visit, and
+// leaving them out reports a pack as holding objects it cannot produce.
+func failSubtree(emit func(gitobj.OID, string), p *Pack, l *packLayout, root int32) {
+	stack := append([]int32(nil), l.children(root)...)
+	for len(stack) > 0 {
+		i := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		e := l.ents[i]
+		cannotUnpack(emit, p, l, p.OIDAt(e.idx), e)
+		stack = append(stack, l.children(i)...)
+	}
+}
+
 // packEntry is one object as the pack stores it, in offset order. It holds no
 // pointer on purpose: there is one entry per object, so a pointer here puts
 // every allocation and every sweep of the slice through the write barrier. The
@@ -332,6 +351,7 @@ func (p *Pack) verifyObjects(o VerifyOpts) bool {
 		e := l.ents[i]
 		oid := p.OIDAt(e.idx)
 		cannotUnpack(emit, p, l, oid, e)
+		failSubtree(emit, p, l, i)
 	}
 
 	// The index records a CRC over each entry's raw bytes. Checking those is
@@ -459,6 +479,7 @@ func (w *walker) walkChain(root int32, in *Inflater) {
 	if err != nil {
 		oid := p.OIDAt(e.idx)
 		cannotUnpack(w.emit, p, l, oid, *e)
+		failSubtree(w.emit, p, l, root)
 		return
 	}
 	w.finish(root, typ, data)
@@ -475,6 +496,7 @@ func (w *walker) walkChain(root int32, in *Inflater) {
 		data, err := w.rebuild(d, in)
 		if err != nil {
 			cannotUnpack(w.emit, p, l, p.OIDAt(l.ents[d].idx), l.ents[d])
+			failSubtree(w.emit, p, l, d)
 			continue
 		}
 		deferred = w.spread(d, typ, data, in, deferred)
@@ -515,6 +537,7 @@ func (w *walker) spread(base int32, typ gitobj.Type, data []byte, in *Inflater, 
 		}
 		if err != nil {
 			cannotUnpack(w.emit, p, l, p.OIDAt(ce.idx), *ce)
+			failSubtree(w.emit, p, l, child)
 			continue
 		}
 		w.finish(child, typ, out)

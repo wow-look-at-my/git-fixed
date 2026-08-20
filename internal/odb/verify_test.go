@@ -212,3 +212,33 @@ func packHeaderClaiming(typ gitobj.Type, size int64) []byte {
 	}
 	return out
 }
+
+// TestEveryDeltaUnderABrokenOneIsReported is about the objects a fault hides.
+//
+// git decodes each object from its own root, so a base that will not build
+// fails every object standing on it and it says so about each of them. Walking
+// the forest once meets that fault once, and stopping there leaves the deltas
+// below it unmentioned: a pack reported as holding objects it cannot produce,
+// and a repair that never hears of them.
+func TestEveryDeltaUnderABrokenOneIsReported(t *testing.T) {
+	gittest.RequireGit(t)
+	r := gittest.New(t)
+	objs := linearPack(4)
+	const broken = 1
+	path, offsets := r.WritePack("chain", objs)
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	data[(offsets[broken]+offsets[broken+1])/2] ^= 0xff
+	gittest.WriteOver(t, path, data)
+
+	got := walkPack(t, path, 1, 0)
+	assert.False(t, got.ok, "a pack with an entry that will not decode is not ok")
+	assert.Contains(t, got.objects, hashOf(objs[0]), "the root is still readable")
+	said := strings.Join(got.errors, "\n")
+	for i := broken; i < len(objs); i++ {
+		oid := hashOf(objs[i])
+		assert.NotContains(t, got.objects, oid, "object %d stands on the broken one", i)
+		assert.Contains(t, said, oid.String(), "object %d was never reported", i)
+	}
+}
