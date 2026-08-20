@@ -95,6 +95,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	defer stop()
 
+	heapStop, err := startHeapProfile()
+	if err != nil {
+		fmt.Fprintf(stderr, "fatal: %s\n", err)
+		return 128
+	}
+	defer heapStop()
+
 	// The diagnosis comes first, and it is git's own. A repair that printed
 	// only what it changed would leave nobody able to see what was wrong.
 	o := f.options(dir, rest, stdout, stderr)
