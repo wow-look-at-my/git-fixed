@@ -10,8 +10,9 @@ order and of its internal hash table, so it is not reproducible from one machine
 the system `git fsck` in the same repository, splits both outputs into non-empty lines, sorts them, and requires equality along with the exit code.
 
 `internal/fsckcmd/differential_test.go`, `repos_test.go`, `refs_test.go` and `corrupt_test.go` hold 77 such comparisons. Each builds a repository
-that is broken in one specific way -- a tree entry named `.git`, a duplicate tree entry, a bad committer line, a corrupt loose object, a pack whose CRC no longer matches, a
-commit-graph with a wrong parent, a `packed-refs` line with no newline -- and then requires the two implementations to agree.
+that is broken in one specific way -- a tree entry named `.git`, a duplicate tree entry, a bad committer line, a corrupt loose object, a pack whose
+CRC no longer matches, a commit-graph with a wrong parent, a `packed-refs` line with no newline -- and then requires the two implementations to
+agree.
 `internal/gittest/repo.go` writes those repositories directly, because git's own porcelain refuses to produce most of them.
 
 `gittest.RequireGit` fails the test when the system git is older than `gittest.MinGit`, rather than skipping it: git rewords its messages between
