@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/wow-look-at-my/git-fixed/internal/fsckcmd"
 	"github.com/wow-look-at-my/git-fixed/internal/gittest"
 )
 
@@ -255,4 +257,21 @@ func TestOptionsCarryGitsResolvedDefaults(t *testing.T) {
 	o2 := newFsckFlags().options("/somewhere", []string{"HEAD"}, os.Stdout, os.Stderr)
 	assert.Equal(t, "/somewhere", o2.Dir)
 	assert.Equal(t, []string{"HEAD"}, o2.Args)
+}
+
+// TestTheFsckVerdictIsJudgedBeforeItRuns pins the ordering the shortcut needs,
+// and the trap that made it dead code on every single run.
+//
+// fsck resolves some options as it goes and writes them back into the struct it
+// was given: with no object named, the index becomes a head. Asking afterwards
+// therefore asks about a command line nobody typed, the answer is always no,
+// and the repair reads the whole repository a second time for nothing.
+func TestTheFsckVerdictIsJudgedBeforeItRuns(t *testing.T) {
+	r := repo(t)
+	o := newFsckFlags().options(r.Dir, nil, io.Discard, io.Discard)
+	require.True(t, sameVerdict(o), "a plain command line asks fsck the question the repair asks")
+
+	require.Equal(t, 0, fsckcmd.Run(o))
+	assert.False(t, sameVerdict(o),
+		"fsck no longer rewrites the options it was given, so run() can stop working around it")
 }

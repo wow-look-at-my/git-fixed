@@ -98,10 +98,16 @@ func run(args []string, stdout, stderr io.Writer) int {
 	// The diagnosis comes first, and it is git's own. A repair that printed
 	// only what it changed would leave nobody able to see what was wrong.
 	o := f.options(dir, rest, stdout, stderr)
+
+	// Asked before the run, not after. fsck resolves some of its options as it
+	// goes and writes them back here: with no object named it makes the index
+	// a head, so afterwards these options no longer describe the command line
+	// and this reads false on every ordinary run.
+	reusable := sameVerdict(o)
 	status := fsckcmd.Run(o)
 
 	var healthy *bool
-	if sameVerdict(o) {
+	if reusable {
 		asked := status == 0
 		healthy = &asked
 	}
