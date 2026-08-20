@@ -1,7 +1,7 @@
 # Architecture
 
-`git-fsck` here is a drop-in replacement for `git fsck`. It reads the same repository, accepts the same options, prints the same lines, and exits with
-the same status. What differs is that every expensive phase runs on all cores.
+`git-fixed --dry-run` is a drop-in replacement for `git fsck`. It reads the same repository, accepts the same options, prints the same lines, and exits
+with the same status. What differs is that every expensive phase runs on all cores. Without `--dry-run` the same run goes on to repair what it found.
 
 ## What "compatible" means, and how it is measured
 
@@ -69,7 +69,12 @@ objects in reachability order rather than pack order.
 ## Measured
 
 On a synthetic repository of 229,960 objects, built by `scripts/make-bench-repo.sh`, against git 2.55.0. `scripts/bench.sh` produces these numbers,
-and refuses to print a time unless the two implementations agreed on the output first.
+and refuses to print a time unless the two implementations agreed on the output first. It times `--dry-run`, which is the comparable command and
+also the one that cannot touch the repository being measured.
+
+The repair half is not in these numbers because on a healthy repository it costs nothing. Its scan skips the pack verification and the object walk
+when the fsck above it came back clean, which is the difference between 0.65s and 3.2s here. `internal/repair.ScanTrustingFsck` says what it still
+checks and why.
 
 Four cores, so read every ratio against four. Each figure is the best of nine runs, because the machine's own noise is wider than several of the
 differences below.
@@ -112,7 +117,7 @@ separately. `internal/zlibmsg` is an inflate that produces nothing but the first
 
 | package             | what it holds                                                                             |
 |---------------------|-------------------------------------------------------------------------------------------|
-| `cmd/git-fsck`      | the command: option table, defaults, exit status                                            |
+| `cmd/git-fixed`     | the one binary: option table, the two modes, defaults, exit status                          |
 | `internal/parseopt` | git's parse-options behaviour: `--no-` forms, unique-prefix abbreviation, git's usage text   |
 | `internal/gitobj`   | object names and object types                                                               |
 | `internal/gitrepo`  | the repository: config, refs, reflogs, index, worktrees                                     |
