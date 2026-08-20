@@ -293,6 +293,12 @@ func (in *Inflater) Inflate(p *Pack, dataOff, size int64) ([]byte, error) {
 	if dataOff < 0 || dataOff > int64(len(p.data)) {
 		return nil, fmt.Errorf("read past the end of %s", p.Path)
 	}
+	if !plausibleSize(size, int64(len(p.data))-dataOff) {
+		// size is the entry header's word for it, and this pack does not
+		// hold enough bytes to inflate to that however it is read.
+		// see inflatebound.go
+		return nil, fmt.Errorf("object at %d in %s claims a size no stream there could hold", dataOff, p.Path)
+	}
 	in.br.Reset(p.data[dataOff:])
 	if in.zr == nil {
 		zr, err := zlib.NewReader(&in.br)

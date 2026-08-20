@@ -172,3 +172,43 @@ func TestACorruptDeltaIsReportedWhateverTheBudget(t *testing.T) {
 func hashOf(o gittest.PackObject) gitobj.OID {
 	return odb.HashLiteral(gitobj.SHA1, o.Type.Name(), o.Data)
 }
+
+// TestAnEntryCannotAskForMoreThanThePackHolds is about the number in an entry's
+// header rather than the bytes after it.
+//
+// That number says how big the object will be once it is inflated, and a walk
+// that takes it at its word reserves it before reading a byte of the payload.
+// Four wrong bytes there ask for thirty-two terabytes, and the run dies with
+// the runtime's own out-of-memory message, naming no object and no pack. No
+// stream of the length actually available can inflate that far, so the entry is
+// refused and reported like any other that will not decode.
+func TestAnEntryCannotAskForMoreThanThePackHolds(t *testing.T) {
+	gittest.RequireGit(t)
+	r := gittest.New(t)
+	objs := branchingPack()
+	path, offsets := r.WritePack("test", objs)
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	// The header is rewritten in place to claim 32 TB. It runs over the
+	// start of the entry's own stream, which is what an entry with a wrong
+	// size looks like from here anyway.
+	copy(data[offsets[1]:], packHeaderClaiming(gitobj.TypeBlob, 1<<45))
+	gittest.WriteOver(t, path, data)
+
+	got := walkPack(t, path, 1, 0)
+	assert.False(t, got.ok, "an entry that cannot be read must fail the pack")
+	assert.NotEmpty(t, got.errors, "and it must say which one")
+	assert.NotContains(t, got.objects, hashOf(objs[1]))
+}
+
+// packHeaderClaiming builds the type and size a pack entry starts with, in the
+// encoding git's unpack_object_header_buffer reads back.
+func packHeaderClaiming(typ gitobj.Type, size int64) []byte {
+	out := []byte{byte(typ)<<4 | byte(size&0xf)}
+	for size >>= 4; size > 0; size >>= 7 {
+		out[len(out)-1] |= 0x80
+		out = append(out, byte(size&0x7f))
+	}
+	return out
+}
