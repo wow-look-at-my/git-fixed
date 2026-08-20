@@ -242,3 +242,37 @@ func TestAPackedRefsRewriteRestoresAMangledLine(t *testing.T) {
 		"the branch came back pointing somewhere else")
 	requireGitClean(t, r)
 }
+
+// TestAnIndexRebuiltFromHeadKeepsEveryMode cuts the index down to its header, so
+// every entry has to come from HEAD's tree.
+//
+// An entry rebuilt that way has no stat data, and the mode lives INSIDE the stat
+// block, so it is written there by hand. Getting that wrong is silent: git reads
+// mode 000000 and the file stops being executable, or stops being a symlink.
+func TestAnIndexRebuiltFromHeadKeepsEveryMode(t *testing.T) {
+	gittest.RequireGit(t)
+	r := history(t)
+	r.Write("run.sh", "#!/bin/sh\necho hi\n")
+	require.NoError(t, os.Chmod(filepath.Join(r.Dir, "run.sh"), 0o755))
+	require.NoError(t, os.Symlink("a.txt", filepath.Join(r.Dir, "link.txt")))
+	r.Git("add", "-A")
+	r.Git("commit", "-m", "modes")
+	wanted := r.Git("ls-files", "--stage")
+	require.Contains(t, wanted, "100755", "the test wrote no executable file")
+	require.Contains(t, wanted, "120000", "the test wrote no symlink")
+
+	// Header only: the entry count still says how many there were, and not one
+	// of them can be read, so HEAD supplies every path.
+	path := filepath.Join(r.GitDir(), "index")
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	overwrite(t, path, data[:12])
+
+	res := fix(t, r)
+
+	require.NotNil(t, res.Index)
+	assert.Zero(t, res.Index.Salvaged, "the test left something salvageable")
+	assert.Positive(t, res.Index.FromHead, "nothing came from HEAD")
+	assert.Equal(t, wanted, r.Git("ls-files", "--stage"), "a mode did not survive")
+	assert.Empty(t, r.Git("status", "--porcelain"), "the rebuilt index disagrees with the worktree")
+}
