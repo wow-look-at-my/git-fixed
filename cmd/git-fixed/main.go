@@ -44,7 +44,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	set := &parseopt.Set{
 		Usage: usage,
 		Opts: append([]*parseopt.Bool{
-			{Short: 'n', Long: "dry-run", Help: "report what is wrong, and change nothing", Value: &dryRun},
+			{Short: 'n', Long: "dry-run", Help: "report what is wrong, and repair nothing", Value: &dryRun},
 			{Long: "undo", Help: "put a run's displaced files back", Value: &undo},
 			{Long: "list-runs", Help: "list the runs whose files can be put back", Value: &listRuns},
 		}, f.table()...),
@@ -132,6 +132,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 // reportPlan says what a --dry-run would have repaired, and gives back the
 // status the fsck above it reached.
+//
+// "repair nothing" is the promise, not "write nothing". --lost-found is git's
+// own option and writing is what it does, so it still writes under a --dry-run,
+// as it would under git fsck. Refusing the pair would take the one command git
+// has for saving dangling objects away from the mode that stands in for it.
 //
 // A repository with nothing to repair gets no line at all. That silence is the
 // point: there, a --dry-run is exactly git fsck, output and exit status alike,

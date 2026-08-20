@@ -275,3 +275,20 @@ func TestTheFsckVerdictIsJudgedBeforeItRuns(t *testing.T) {
 	assert.False(t, sameVerdict(o),
 		"fsck no longer rewrites the options it was given, so run() can stop working around it")
 }
+
+// TestDryRunStillWritesWhatLostFoundWrites pins the one thing a --dry-run does
+// put on disk, so that it stays a decision rather than becoming a surprise.
+//
+// --lost-found is git's own option and writing dangling objects is the whole of
+// what it does. A --dry-run promises to repair nothing, not to write nothing,
+// and refusing the pair would take git's one command for saving those objects
+// away from the mode that stands in for git fsck.
+func TestDryRunStillWritesWhatLostFoundWrites(t *testing.T) {
+	r := repo(t)
+	r.Blob("loose and unreferenced\n")
+
+	got := invoke(t, r, "--dry-run", "--lost-found")
+	assert.Equal(t, 0, got.Code)
+	assert.DirExists(t, filepath.Join(r.GitDir(), "lost-found"),
+		"--lost-found stopped writing, so it no longer does what git's option does")
+}
