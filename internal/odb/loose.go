@@ -97,6 +97,14 @@ func readLooseBytes(raw []byte, shown string, expected gitobj.OID, algo *gitobj.
 	res.TypeName = typeName
 	res.Type = gitobj.TypeFromName(typeName)
 	res.Size = size
+	if res.Type == gitobj.TypeBad {
+		// git's parse_loose_header() stops at a type name it does not
+		// know, and quotes the header it was reading.
+		res.Failed = true
+		res.Errors = append(res.Errors,
+			fmt.Sprintf("unable to parse type from header '%s' of %s", hdr[:nul], shown))
+		return res
+	}
 
 	if res.Type == gitobj.TypeBlob && size > bigFileThreshold {
 		res.streamCheck(zr, br, hdr[:n], nul, size, shown, expected, algo)

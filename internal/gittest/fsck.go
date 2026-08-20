@@ -54,10 +54,17 @@ func (r *Repo) GitFsck(args ...string) Result {
 }
 
 // RequireGit fails the test when the system git is missing, because a
-// comparison against it is the whole point of these tests.
+// comparison against it is the whole point of these tests. It also records the
+// version, because git changes the wording of a message between releases and a
+// failure here is usually the first sign of it.
 func RequireGit(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Fatalf("these tests compare against the system git, which is not installed: %v", err)
 	}
+	out, err := exec.Command("git", "--version").Output()
+	if err != nil {
+		t.Fatalf("running git --version: %v", err)
+	}
+	t.Logf("comparing against %s", strings.TrimSpace(string(out)))
 }

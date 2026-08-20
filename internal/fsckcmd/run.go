@@ -145,6 +145,7 @@ func Run(o *Options) int {
 		r.defaultHeads()
 		o.KeepCacheObjects = true
 	}
+	r.noteNoHeads()
 	rep.Flush()
 	if r.died() != "" {
 		return die()
@@ -485,10 +486,6 @@ func (r *run) checkLooseObject(key sortKey, oid gitobj.OID, path, shown string) 
 			r.rep.Errf(key, "error: %s: object corrupt or missing: %s", oid, shown)
 		}
 	}
-	if res.TypeName != "" && res.Type == gitobj.TypeBad {
-		r.rep.Errf(key, "error: %s: object is of unknown type '%s': %s", res.RealOID, res.TypeName, shown)
-		failed = true
-	}
 	if failed {
 		r.fail(ErrorObject)
 		return
@@ -529,9 +526,13 @@ func (r *run) checkPack(group int, p *odb.Pack) {
 		BigFileThreshold: r.db.BigFileThreshold,
 		Emit: func(oid gitobj.OID, text string) {
 			if oid.Valid() && strings.HasPrefix(text, "cannot unpack ") {
-				// git's reader has already put this object on the
-				// pack's bad list, so the next read of it dies.
+				// An object that will not decode is not a finding
+				// in git: its reader dies on the spot, and the run
+				// ends with that one message. So record the death
+				// and say nothing here.
 				r.db.MarkBadPacked(oid)
+				r.noteFatalMsg(fmt.Sprintf("packed object %s (stored in %s) is corrupt", oid, p.Path))
+				return
 			}
 			r.rep.Errf(key(oid, 0), "error: %s", text)
 		},

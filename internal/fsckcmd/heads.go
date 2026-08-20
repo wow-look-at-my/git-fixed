@@ -19,15 +19,10 @@ func (r *run) handleArgs() {
 			r.fail(ErrorObject)
 			continue
 		}
-		e := r.objs.Get(oid)
-		if e == nil || e.Flags()&flagHasObj == 0 {
-			r.rep.Errf(key, "error: %s: object missing", oid)
-			r.fail(ErrorObject)
-			continue
-		}
-		e.SetFlag(flagUsed)
-		r.fsck.PutObjectName(oid, "%s", arg)
-		r.markReachable(e)
+		// git hands the argument to the same code that handles a
+		// reference, so an object that is not there is reported as a
+		// reference pointing at nothing rather than as a missing object.
+		r.handleRef(arg, oid, false)
 	}
 }
 
@@ -47,10 +42,17 @@ func (r *run) defaultHeads() {
 			r.handleReflogs(wt)
 		}
 	}
-	if r.defaultRefs.Load() == 0 {
-		r.rep.Errf(sortKey{phase: phaseHeads, group: 1 << 20}, "notice: No default references")
-		r.o.ShowUnreachable = false
+}
+
+// noteNoHeads reports that nothing became a starting point. git counts an
+// object named on the command line the same way it counts a reference, so an
+// argument that does not resolve leaves the run with no heads at all.
+func (r *run) noteNoHeads() {
+	if r.defaultRefs.Load() != 0 {
+		return
 	}
+	r.rep.Errf(sortKey{phase: phaseHeads, group: 1 << 20}, "notice: No default references")
+	r.o.ShowUnreachable = false
 }
 
 // handleRef is git's fsck_handle_ref().
@@ -93,16 +95,18 @@ func (r *run) headLink(name, target string, oid gitobj.OID, ok bool) bool {
 	detached := target == "HEAD" || target == name
 	if !detached && !strings.HasPrefix(target, "refs/heads/") {
 		r.fail(ErrorRefs)
-		r.rep.Errf(key, "error: %s points to something strange (%s)", name, target)
+		r.rep.Errf(key, "error: %s: badHeadTarget: HEAD points to non-branch '%s'", name, target)
 		return false
 	}
 	if oid.IsNull() {
 		if detached {
 			r.fail(ErrorRefs)
-			r.rep.Errf(key, "error: %s: detached HEAD points at nothing", name)
+			r.rep.Errf(key, "error: %s: badRefOid: points to invalid object ID '%s'", name, oid)
 			return false
 		}
-		r.rep.Errf(key, "notice: %s points to an unborn branch (%s)", name, strings.TrimPrefix(target, "refs/heads/"))
+		// A symbolic HEAD naming a branch that does not exist yet is an
+		// unborn branch, which is the state of every new repository.
+		// git says nothing about it.
 	}
 	return true
 }

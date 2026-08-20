@@ -31,6 +31,11 @@ func New(t *testing.T) *Repo {
 	r.Git("init", "-q", "--template=", ".")
 	r.Git("config", "user.name", "A U Thor")
 	r.Git("config", "user.email", "author@example.com")
+	// git runs maintenance in the background after a commit. It repacks
+	// underneath the test and holds the multi-pack-index lock, so a test
+	// that writes one of its own loses a race it never knew it was in.
+	r.Git("config", "gc.auto", "0")
+	r.Git("config", "maintenance.auto", "false")
 	return r
 }
 
@@ -42,6 +47,11 @@ func NewSHA256(t *testing.T) *Repo {
 	r.Git("init", "-q", "--template=", "--object-format=sha256", ".")
 	r.Git("config", "user.name", "A U Thor")
 	r.Git("config", "user.email", "author@example.com")
+	// git runs maintenance in the background after a commit. It repacks
+	// underneath the test and holds the multi-pack-index lock, so a test
+	// that writes one of its own loses a race it never knew it was in.
+	r.Git("config", "gc.auto", "0")
+	r.Git("config", "maintenance.auto", "false")
 	return r
 }
 
