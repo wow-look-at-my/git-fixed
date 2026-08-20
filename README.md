@@ -1,6 +1,24 @@
 # git-fixed
 
-Drop-in replacements for git's own commands, written in Go, that use every core instead of one. First one: `git fsck`.
+Tools for repositories git has broken, written in Go. `git-fsck` finds the damage on every core; `git-fix` undoes it without losing anything.
+
+## git-fix
+
+Repairs a damaged repository. It recovers every object it can, from the repository itself before the network, and it never deletes: a file it has to
+displace goes to a quarantine directory that `--undo` empties back.
+
+```
+$ git-fix              # repair this repository
+$ git-fix --dry-run    # say what is wrong, change nothing
+$ git-fix --undo       # put the last run's displaced files back
+```
+
+An object no source has is reported, and the run fails. It is not amputated, no branch is wound back to route around it, and no history is rewritten.
+Dangling and unreachable objects are left alone: those are ordinary, and pruning them is how repositories lose work in the first place.
+
+Recovery sources, cheapest first: another copy already in the repository, the worktree file the index names, a tree rebuilt from the index, then a
+remote. Every source ends at the same check -- content that does not hash to the name being recovered is refused -- so a recovery is the original
+object or it does not happen. See `docs/repair.md`.
 
 ## git-fsck
 
