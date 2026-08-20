@@ -163,6 +163,9 @@ func (r *run) checkIndexes() int {
 			fmt.Fprintf(r.o.Stderr, "fatal: %s\n", err)
 			return 128
 		}
+		for _, sig := range idx.Ignored {
+			r.rep.Errf(sortKey{phase: phaseIndex}, "ignoring %s extension", sig)
+		}
 		r.fsckIndex(idx, shown, wt.IsMain)
 	}
 	return 0

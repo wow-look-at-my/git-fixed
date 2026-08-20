@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/wow-look-at-my/git-fixed/internal/gitobj"
+	"github.com/wow-look-at-my/go-containers/set"
 )
 
 // Index format versions git accepts.
@@ -50,7 +51,18 @@ type Index struct {
 	Entries     []IndexEntry
 	CacheTree   *CacheTree
 	ResolveUndo []ResolveUndo
+	// Ignored names the extensions that were skipped. git prints one line
+	// per extension it does not know, and carries on.
+	Ignored []string
 }
+
+// knownExtensions are the index extensions git reads. It skips one it does not
+// know rather than refusing the index, so this has to know the same names to
+// stay quiet about the same ones. read-cache.c lines 69 to 76.
+//
+// Only TREE and REUC are parsed here. The rest hold no object name, so an fsck
+// has nothing to look at in them, and consuming them is the whole job.
+var knownExtensions = set.Of("TREE", "REUC", "link", "UNTR", "FSMN", "EOIE", "IEOT", "sdir")
 
 // FatalError is a condition git reports with "fatal:" and exit status 128.
 type FatalError struct{ Msg string }
@@ -116,15 +128,21 @@ func (r *Repo) ReadIndex(path string) (*Index, []string, error) {
 		}
 		body := data[pos : pos+size]
 		pos += size
-		switch sig {
-		case "TREE":
+		switch {
+		case sig == "TREE":
 			idx.CacheTree = parseCacheTree(body, r.Algo)
-		case "REUC":
+		case sig == "REUC":
 			idx.ResolveUndo = parseResolveUndo(body, r.Algo)
+		case knownExtensions.Contains(sig):
+			// git reads it and this does not need to. Consuming it is
+			// enough, and it says nothing about it either.
+		case sig[0] >= 'A' && sig[0] <= 'Z':
+			// git's rule: a name that starts with a capital letter is
+			// an OPTIONAL extension, so an unknown one is skipped with
+			// a note. Reading this backwards refused every index with
+			// an untracked cache in it.
+			idx.Ignored = append(idx.Ignored, sig)
 		default:
-			if sig[0] < 'A' || sig[0] > 'Z' {
-				continue // an optional extension is safe to skip
-			}
 			return nil, errs, &FatalError{
 				Msg: fmt.Sprintf("index uses %s extension, which we do not understand", sig),
 			}

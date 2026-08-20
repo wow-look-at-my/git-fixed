@@ -258,3 +258,28 @@ func TestAPackWithAnUnusualName(t *testing.T) {
 	res := sameAsGit(t, r)
 	assert.Equal(t, 0, res.Code, "the repository is whole, whatever its pack is called")
 }
+
+// TestAnIndexExtensionThisDoesNotRead is git's rule about optional extensions,
+// which this had backwards.
+//
+// git skips an extension whose name starts with a capital letter and refuses
+// one whose name does not. Reading that the other way round made every index
+// with an untracked cache in it a fatal error, and an untracked cache is
+// something a person turns on to make git faster.
+func TestAnIndexExtensionThisDoesNotRead(t *testing.T) {
+	gittest.RequireGit(t)
+	r := gittest.New(t)
+	r.SimpleHistory()
+	r.Git("read-tree", "HEAD")
+	r.Git("config", "core.untrackedCache", "true")
+	r.Git("update-index", "--untracked-cache")
+	r.Git("status", "--porcelain")
+
+	data, err := os.ReadFile(filepath.Join(r.GitDir(), "index"))
+	require.NoError(t, err)
+	require.True(t, bytes.Contains(data, []byte("UNTR")),
+		"this fixture has no untracked cache in it, so it proves nothing")
+
+	res := sameAsGit(t, r)
+	assert.Equal(t, 0, res.Code, "an extension git reads is not a reason to refuse the index")
+}
