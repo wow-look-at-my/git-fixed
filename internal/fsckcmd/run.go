@@ -94,10 +94,6 @@ type run struct {
 
 	pendingMu sync.Mutex
 	pending   []*objEntry
-
-	// rare holds the links only a handful of objects have. see rareLinks.
-	rareMu sync.Mutex
-	rare   map[gitobj.OID]rareLinks
 }
 
 func (r *run) fail(bits uint32) { r.errors.Or(bits) }

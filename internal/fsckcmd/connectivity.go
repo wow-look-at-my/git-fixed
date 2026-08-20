@@ -155,16 +155,9 @@ func (r *run) traverseOne(e *objEntry) []*objEntry {
 	}
 	key := sortKey{phase: phaseConnectivity, oid: e.OID}
 	if edges, cached := e.Edges(); cached {
-		if e.Flags()&flagRare != 0 {
-			rare := r.rareFor(e.OID)
-			for _, msg := range rare.errs {
-				r.rep.Errf(key, "error: %s", msg)
-			}
-			for _, l := range rare.bad {
-				r.rep.Errf(key, "error: in tree %s: entry %s has bad mode %.6o",
-					r.fsck.Describe(e.OID), l.entry, l.rawMode)
-			}
-		}
+		// Nothing to print alongside them: an object only has edges
+		// recorded once the object pass has read it, and the object pass
+		// rejects one whose links will not parse before it gets that far.
 		var out []*objEntry
 		for _, ed := range edges {
 			var target *objEntry
@@ -186,11 +179,6 @@ func (r *run) traverseOne(e *objEntry) []*objEntry {
 	}
 	var out []*objEntry
 	for _, l := range links {
-		if l.badMode {
-			r.rep.Errf(key, "error: in tree %s: entry %s has bad mode %.6o",
-				r.fsck.Describe(e.OID), l.entry, l.rawMode)
-			continue
-		}
 		if l.name != "" {
 			r.fsck.PutObjectName(l.oid, "%s", l.name)
 		}
@@ -267,9 +255,6 @@ func (r *run) markUnreachableReferents() {
 		}
 		links, _ := walkLinks(typ, e.OID, buf, r.repo.Algo, "", false)
 		for _, l := range links {
-			if l.badMode {
-				continue
-			}
 			if target, _, ok := r.objs.Lookup(l.oid, l.typ); ok && target != nil {
 				target.SetFlag(flagUsed)
 			}

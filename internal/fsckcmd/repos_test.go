@@ -136,6 +136,36 @@ func TestDeltaChainsInPack(t *testing.T) {
 	sameAsGit(t, r, "--unreachable")
 }
 
+// TestTreeEntryWithAModeThatNamesNoObject pins what the link walk does with a
+// mode that is not a file, a link or a directory.
+//
+// git canonicalises the mode as it decodes the tree, in canon_mode(), and
+// everything left over becomes a gitlink, which the walk steps over without a
+// word. Its object check still sees the mode as written and warns about it
+// twice. Reading the raw mode in the walk as well produced an error git never
+// prints, and a repository git is happy with came back damaged.
+func TestTreeEntryWithAModeThatNamesNoObject(t *testing.T) {
+	gittest.RequireGit(t)
+	r := gittest.New(t)
+	blob := r.Blob("content\n")
+	tree := r.WriteRaw("tree", gittest.Tree(
+		gittest.TreeEntry{Mode: "100644", Name: "a", OID: blob},
+		gittest.TreeEntry{Mode: "060000", Name: "b", OID: blob},
+	))
+	commit := r.Commit(tree, nil, "one")
+	r.UpdateRef("refs/heads/master", commit)
+	r.SetHEAD("refs/heads/master")
+
+	got := sameAsGit(t, r)
+	assert.Equal(t, 0, got.Code, "git is happy with this repository, so this must be")
+	joined := strings.Join(got.Lines(), "\n")
+	assert.Contains(t, joined, "badFilemode", "the object check still reads the mode as written")
+	assert.NotContains(t, joined, "has bad mode", "the walk does not")
+	sameAsGit(t, r, "--name-objects")
+	sameAsGit(t, r, "--connectivity-only")
+	sameAsGit(t, r, "--unreachable")
+}
+
 func TestCorruptPackData(t *testing.T) {
 	gittest.RequireGit(t)
 	r := gittest.New(t)

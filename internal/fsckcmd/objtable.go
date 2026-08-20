@@ -17,17 +17,12 @@ const (
 	flagUsed      = 1 << 3
 	// flagWalked says the object pass recorded this object's edges.
 	flagWalked = 1 << 4
-	// flagRare says run.rare holds this object's bad tree entries or its
-	// parse errors, which almost no object has.
-	flagRare = 1 << 5
 )
 
 // objEntry is one object the run knows about, whether or not it exists.
 //
 // There is one of these per object, so a field here costs megabytes on a large
-// repository. It is 64 bytes. The two rare things an object can carry -- a tree
-// entry whose mode names no kind of object, and a commit or tag that will not
-// parse -- live in run.rare, not in bytes every object pays.
+// repository: it is 64 bytes, and was 128.
 type objEntry struct {
 	OID   gitobj.OID
 	typ   atomic.Int32

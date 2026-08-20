@@ -45,8 +45,6 @@ func (r *run) checkObject(key sortKey, e *objEntry, typ gitobj.Type, buf []byte)
 	// object checks, because decoding it twice was the single largest cost
 	// of the object pass.
 	var edges []edge
-	var badLinks []link
-	var parseErrs []string
 	broken := false
 	linkCount := 0
 	if typ == gitobj.TypeTree {
@@ -56,11 +54,11 @@ func (r *run) checkObject(key sortKey, e *objEntry, typ gitobj.Type, buf []byte)
 		}
 		entries, treeErr := fsck.ParseTreeInto(*scratch, buf, r.repo.Algo)
 		*scratch = entries
-		edges, badLinks, broken = r.treeEdges(key, e.OID, entries)
+		edges, broken = r.treeEdges(entries)
 		linkCount = len(edges)
 		ret := r.fsck.TreeEntries(key, e.OID, entries, treeErr)
 		treeScratch.Put(scratch)
-		r.recordEdges(e, edges, badLinks, parseErrs)
+		r.recordEdges(e, edges)
 		if broken {
 			r.objError(key, e.OID, "broken links")
 		}
@@ -68,13 +66,12 @@ func (r *run) checkObject(key sortKey, e *objEntry, typ gitobj.Type, buf []byte)
 			return
 		}
 	} else {
-		var links []link
-		links, parseErrs = walkLinks(typ, e.OID, buf, r.repo.Algo, r.fsck.ObjectName(e.OID), r.o.NameObjects)
+		// The errors are dropped: parsable() ran this same walk before
+		// this object got here and rejected it if the walk had anything to
+		// say, which is where git rejects it too, in parse_object_buffer()
+		// before any check runs.
+		links, _ := walkLinks(typ, e.OID, buf, r.repo.Algo, r.fsck.ObjectName(e.OID), r.o.NameObjects)
 		linkCount = len(links)
-		broken = len(parseErrs) > 0
-		for _, msg := range parseErrs {
-			r.rep.Errf(key, "error: %s", msg)
-		}
 		for _, l := range links {
 			target, idx, ok := r.objs.Lookup(l.oid, l.typ)
 			if !ok {
@@ -84,7 +81,7 @@ func (r *run) checkObject(key sortKey, e *objEntry, typ gitobj.Type, buf []byte)
 			}
 			edges = append(edges, makeEdge(idx, ok, l.typ, l.viaTag))
 		}
-		r.recordEdges(e, edges, badLinks, parseErrs)
+		r.recordEdges(e, edges)
 		if broken {
 			r.objError(key, e.OID, "broken links")
 		}
@@ -110,49 +107,14 @@ var treeScratch sync.Pool
 
 // recordEdges keeps the references for the connectivity walk, unless the names
 // that walk prints make them useless.
-func (r *run) recordEdges(e *objEntry, edges []edge, bad []link, errs []string) {
+func (r *run) recordEdges(e *objEntry, edges []edge) {
 	if r.o.NameObjects {
 		// --name-objects builds each name from the path the walk took to
 		// reach an object, so a recorded edge cannot carry it. The walk
 		// re-reads the object in that case.
 		return
 	}
-	// The rare pair goes in first: SetEdges publishes the object to the
-	// connectivity walk, which reads both.
-	if len(bad) > 0 || len(errs) > 0 {
-		r.putRare(e, bad, errs)
-	}
 	e.SetEdges(edges)
-}
-
-// rareLinks is what a very few objects carry and the rest do not: a tree entry
-// whose mode names no kind of object, and the parse errors of a commit or a tag.
-// The connectivity walk prints both again, so both have to survive the object
-// pass. Holding them in objEntry cost every object in the repository the three
-// slice headers, for something almost none of them have.
-type rareLinks struct {
-	bad  []link
-	errs []string
-}
-
-// putRare records the awkward half of one object's links, and marks the object
-// so that the walk knows to come and ask. Without that mark every object in the
-// repository would take this lock to be told there is nothing here for it.
-func (r *run) putRare(e *objEntry, bad []link, errs []string) {
-	r.rareMu.Lock()
-	if r.rare == nil {
-		r.rare = make(map[gitobj.OID]rareLinks)
-	}
-	r.rare[e.OID] = rareLinks{bad: bad, errs: errs}
-	r.rareMu.Unlock()
-	e.SetFlag(flagRare)
-}
-
-// rareFor returns what putRare recorded for an object carrying flagRare.
-func (r *run) rareFor(oid gitobj.OID) rareLinks {
-	r.rareMu.Lock()
-	defer r.rareMu.Unlock()
-	return r.rare[oid]
 }
 
 // markReachable is git's mark_object_reachable(): a root has no parent to blame

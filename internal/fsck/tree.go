@@ -42,6 +42,26 @@ func (e TreeEntry) IsSymlink() bool { return e.Mode&0o170000 == modeSymlink }
 // IsRegular reports whether the entry names a regular file.
 func (e TreeEntry) IsRegular() bool { return e.Mode&0o170000 == modeRegular }
 
+// WalkKind is the object a link walk follows this entry to, and whether it
+// follows it at all.
+//
+// git canonicalises a tree entry's mode while it decodes it, in canon_mode():
+// a regular file stays a regular file, a symbolic link stays a link, a
+// directory stays a directory, and ANYTHING ELSE becomes a gitlink. Only fsck's
+// own object check asks for the mode as written, through TREE_DESC_RAW_MODES,
+// and that is where the badFilemode and zeroPaddedFilemode warnings come from.
+// The link walk sees the canonical mode, so an entry whose mode names no kind
+// of object is a submodule to it and it walks past in silence.
+func (e TreeEntry) WalkKind() (gitobj.Type, bool) {
+	switch {
+	case e.IsRegular(), e.IsSymlink():
+		return gitobj.TypeBlob, true
+	case e.IsDir():
+		return gitobj.TypeTree, true
+	}
+	return gitobj.TypeNone, false
+}
+
 // errBadTree is git's decode_tree_entry() failure, which fsck turns into one
 // "cannot be parsed as a tree".
 var errBadTree = errors.New("cannot be parsed as a tree")
