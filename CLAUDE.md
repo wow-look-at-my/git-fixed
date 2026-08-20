@@ -1,7 +1,20 @@
 # git-fixed
 
-Drop-in replacements for git commands, in Go, that use every core. Only `git fsck` exists so far. More commands are planned, so keep anything general
-out of `internal/fsckcmd`.
+Tools for repositories git has broken, in Go, using every core. `git fsck` finds damage; `git fix` repairs it. More commands are planned, so keep
+anything general out of `internal/fsckcmd`.
+
+## Repair's one rule: no repair may lose data
+
+Not "no more than was already lost". The repository worked before it broke and must work afterwards. This governs every choice in `internal/repair`:
+
+- **Nothing is deleted, only quarantined.** A displaced file moves to `.git/git-fixed/quarantine/<run>/` with a manifest, and `--undo` restores it.
+  No path in that package may call `os.Remove` on a repository file.
+- **An object no source has is reported, and the run fails.** Never amputate it, never wind a ref back to route around it, never rewrite a tree or a
+  commit. A repository that passes fsck because its broken parts were removed is not repaired.
+- **Dangling and unreachable are not damage.** Never pruned, never counted. Never run `gc`, `prune`, `repack`, or `reflog expire` -- those are what
+  break these repositories.
+- **Every recovery is verified by hash.** `odb.WriteLoose` refuses content that does not hash to the name being recovered, which is what makes a
+  recovery provably the original. Depth, and the six damage kinds: `docs/repair.md`.
 
 ## The contract
 
@@ -25,6 +38,7 @@ out of `internal/fsckcmd`.
 - `internal/fsck` -- the checks from `fsck.c`: trees, commits, tags, blobs, the message-id severity table.
 - `internal/gitpath` -- whether a tree entry name reaches `.git` on some filesystem.
 - `internal/fsckcmd` -- the ref-consistency pass, the six object phases, the object table, the connectivity walk, the sorted reporter.
+- `cmd/git-fix` and `internal/repair` -- the damage scan, the recovery ladder, the quarantine, the refusal to amputate. `docs/repair.md`.
 - `internal/gittest` -- test repositories and the comparison against the real `git fsck`.
 
 ## Performance invariants
@@ -48,6 +62,7 @@ distinguish -- is now reproduced by `internal/zlibmsg`. `docs/zlib-messages.md`.
 
 ## Docs
 
+- `docs/repair.md` -- the six damage kinds, the recovery ladder, why nothing is ever deleted
 - `docs/architecture.md` -- phases, parallelism, caches, benchmarks, package layout
 - `docs/alias-detection.md` -- the four filesystems and the four rules
 - `docs/pack-verification.md` -- delta forest, worker distribution, big blobs
