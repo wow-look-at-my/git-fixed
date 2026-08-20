@@ -66,7 +66,7 @@ func treeLinksFrom(entries []fsck.TreeEntry, name string, named bool) []link {
 // most numerous thing in a repository, so this is the path that decides how
 // much memory a run costs.
 func (r *run) treeEdges(entries []fsck.TreeEntry) (edges []edge, broken bool) {
-	edges = make([]edge, 0, len(entries))
+	edges = allocEdges(len(entries))[:0]
 	for i := range entries {
 		e := &entries[i]
 		typ, follow := e.WalkKind()

@@ -6,7 +6,9 @@ after the fsck. There is one binary and there must stay one. More commands are p
 - **`--dry-run` is the drop-in for `git fsck`**, so its output and its exit status are git's whenever there is nothing to repair. A line printed
   there that git does not print is a bug, not a nicety.
 - **A run must cost what the fsck costs.** The scan skips the pack verification and the object walk when the caller's fsck came back clean, which is
-  the difference between 0.65s and 3.2s over 229,960 objects. `repair.ScanTrustingFsck`.
+  the difference between 0.37s and 2.56s over 229,960 objects. Any narrower fsck pays the full scan. `repair.ScanTrustingFsck`, `docs/architecture.md`.
+- **A phase that takes time draws a meter.** git shows one on five phases of its fsck and this shows one on the same five, plus two on the repair
+  scan, which git has nothing to copy for. `internal/progress`, `docs/progress.md`.
 - **Judge the fsck options before fsck runs.** `fsckcmd.Run` resolves some of them into the struct it was given -- with no object named the index
   becomes a head -- so `sameVerdict` asked afterwards answers about a command line nobody typed. `cmd/git-fixed/fsck.go`.
 
@@ -35,8 +37,8 @@ Not "no more than was already lost". The repository worked before it broke and m
 - **The differential tests need git >= `gittest.MinGit`, and fail rather than skip below it.** An older git rewords messages, so a run against one
   compares this implementation against a different specification. CI installs git from `ppa:git-core/ppa` for the same reason.
 - **A new check needs a differential test in the same change.** `internal/fsckcmd/differential_test.go`, `repos_test.go`, `refs_test.go` and
-  `corrupt_test.go` hold 52 test functions, most of them table-driven over several repositories each. `internal/gittest` writes the broken
-  repositories git's porcelain refuses to produce.
+  `corrupt_test.go` hold 54 test functions, most of them table-driven over several repositories each. `internal/gittest` writes the broken
+  repositories git's porcelain refuses to produce, including packs it will not build.
 - **`go-toolchain`, bare, is the build.** It gates coverage at 80%. Never run `go build` or `go test` directly, and never pipe its output.
 - **A test that writes over a file git made must chmod it first.** git writes a packfile and a loose object read-only, and the agent sandbox runs as
   root, where the mode is ignored. Such a test passes here and fails on CI for everyone else. `overwrite` in `repair_gaps_test.go` is the helper.
@@ -63,16 +65,23 @@ Breaking one of these costs about half the run. Each is a mistake that was made 
 - **A packed read goes through the delta base cache.** Without it an object at chain depth ten costs ten inflations. `internal/odb/cache.go`.
 - **A tree is decoded once**, into a pooled slice, with entry names as `[]byte` views into the decode buffer. Copying them to strings was the single
   largest allocation source measured.
-- **`packEntry` holds no pointer, and the object table has 64 shards per core.** There is one of each per object, so a pointer or a shard collision
-  costs the whole repository. `docs/architecture.md` has the four that were measured and fixed.
+- **Nothing with one instance per object holds a pointer.** `packEntry`, `objEntry.edges` (one `uint64` each), and the object table's slots are all
+  pointer-free, so tens of millions of them cost the collector nothing per cycle.
+- **The object table is not a map, and it is sized before the first write.** Object names are already uniform, so four of their bytes are the hash;
+  the size comes from the pack indexes, because growing a shard rehashes it. `docs/architecture.md` has the seven that were measured and fixed.
+- **The delta walk holds one buffer per chain level, so it is bounded.** Without the budget the cost is workers times depth times object size, which
+  reached 3 GB on a pack of 72 large blobs. `odb.DefaultChainBudget`, `docs/pack-verification.md`.
 - `scripts/bench.sh <repo>` measures against the system git and refuses to print a time unless the output matched.
 
 ## Deliberate divergences
 
 - **ext4 and ZFS `.git` aliases are reported; git checks only HFS+ and NTFS.** On by default, no opt-out. `docs/alias-detection.md`.
+- **A size in a header is refused when no stream on disk could produce it.** git reserves it and dies naming nothing; this reports the file and
+  carries on. `docs/allocation-bounds.md`.
 
-There are no known gaps otherwise. The one that used to be here -- zlib's own complaint about a corrupt object, which Go's decompressor does not
-distinguish -- is now reproduced by `internal/zlibmsg`. `docs/zlib-messages.md`.
+One known gap. git's `unpack_entry()` falls back to the wider database for a delta whose base its pack does not hold, and can produce the object
+after all; this reports the base it could not find and stops. Both print the same two error lines, so only a repository where the fallback would
+have SUCCEEDED sees a difference. `internal/odb.materializeRoot`.
 
 ## Docs
 
