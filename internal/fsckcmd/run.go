@@ -644,6 +644,16 @@ func (r *run) noteFatal(err error) {
 	r.fatalMu.Unlock()
 }
 
+// noteFatalMsg records a fatal condition the caller found itself, rather than
+// one that came back from the object database.
+func (r *run) noteFatalMsg(msg string) {
+	r.fatalMu.Lock()
+	if r.fatalMsg == "" {
+		r.fatalMsg = msg
+	}
+	r.fatalMu.Unlock()
+}
+
 // died reports whether the run has hit a fatal condition.
 func (r *run) died() string {
 	r.fatalMu.Lock()

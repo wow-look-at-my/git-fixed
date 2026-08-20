@@ -3,6 +3,7 @@ package fsckcmd
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -14,8 +15,10 @@ import (
 // git's "multi-pack-index verify" does.
 //
 // see docs/multi-pack-index.md
-func (r *run) verifyMultiPackIndex(objectDir string) bool {
+func (r *run) verifyMultiPackIndex(dir *odb.Dir) bool {
+	objectDir := dir.Path
 	path := filepath.Join(objectDir, "pack", "multi-pack-index")
+	shown := filepath.Join(dir.Display, "pack", "multi-pack-index")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return true // not having one is normal
@@ -26,31 +29,41 @@ func (r *run) verifyMultiPackIndex(objectDir string) bool {
 		ok = false
 		r.rep.Errf(key, format, args...)
 	}
+	// git reads the index once itself and once inside the
+	// "multi-pack-index verify" it runs. The first read names the file the
+	// way git prints a path, the second by the --object-dir it was given.
+	tooSmall := func() bool {
+		r.rep.Errf(key, "error: multi-pack-index file %s is too small", shown)
+		r.rep.Errf(key, "error: multi-pack-index file %s is too small", path)
+		r.rep.Errf(key, "error: multi-pack-index file exists, but failed to parse")
+		return false
+	}
 	algo := r.repo.Algo
 	rawsz := algo.RawSize
 	if len(data) < 12+rawsz {
-		r.rep.Errf(key, "error: multi-pack-index file %s is too small", path)
-		return false
+		return tooSmall()
 	}
 	if string(data[0:4]) != "MIDX" {
-		r.rep.Errf(key, "fatal: multi-pack-index signature 0x%08x does not match signature 0x%08x",
-			binary.BigEndian.Uint32(data[0:4]), 0x4d494458)
+		// git dies on this one rather than reporting it, so the run
+		// stops with the exit status a die() gives.
+		r.noteFatalMsg(fmt.Sprintf("multi-pack-index signature 0x%08x does not match signature 0x%08x",
+			binary.BigEndian.Uint32(data[0:4]), 0x4d494458))
 		return false
 	}
 	if data[4] != 1 {
-		r.rep.Errf(key, "fatal: multi-pack-index version %d not recognized", data[4])
+		r.noteFatalMsg(fmt.Sprintf("multi-pack-index version %d not recognized", data[4]))
 		return false
 	}
 	if uint32(data[5]) != algo.Format {
-		r.rep.Errf(key, "error: multi-pack-index hash version %d does not match version %d", data[5], algo.Format)
+		r.noteFatalMsg(fmt.Sprintf("multi-pack-index hash version %d does not match version %d",
+			data[5], algo.Format))
 		return false
 	}
 	numChunks := int(data[6])
 	numPacks := binary.BigEndian.Uint32(data[8:12])
 	tableEnd := 12 + (numChunks+1)*12
 	if len(data) < tableEnd+rawsz {
-		r.rep.Errf(key, "error: multi-pack-index file %s is too small", path)
-		return false
+		return tooSmall()
 	}
 	chunk := func(id string) []byte {
 		for i := 0; i < numChunks; i++ {
@@ -131,8 +144,7 @@ func (r *run) verifyMultiPackIndex(objectDir string) bool {
 	}
 	if uint64(numObjects)*uint64(rawsz) > uint64(len(lookup)) ||
 		uint64(numObjects)*8 > uint64(len(offsets)) {
-		r.rep.Errf(key, "error: multi-pack-index file %s is too small", path)
-		return false
+		return tooSmall()
 	}
 	var prev gitobj.OID
 	for i := uint32(0); i < numObjects; i++ {

@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/wow-look-at-my/git-fixed/internal/gitobj"
+	"github.com/wow-look-at-my/git-fixed/internal/odb"
 )
 
 // Values the commit-graph format fixes.
@@ -42,8 +43,8 @@ type commitGraph struct {
 // reports the same lines git's "commit-graph verify" does.
 //
 // see docs/commit-graph.md
-func (r *run) verifyCommitGraphs(objectDir string) bool {
-	files := commitGraphFiles(objectDir)
+func (r *run) verifyCommitGraphs(dir *odb.Dir) bool {
+	files := commitGraphFiles(dir.Path)
 	if len(files) == 0 {
 		return true
 	}
@@ -53,6 +54,11 @@ func (r *run) verifyCommitGraphs(objectDir string) bool {
 	for _, path := range files {
 		g, msg := loadCommitGraph(path, r.repo.Algo)
 		if msg != "" {
+			// git loads the graph once itself and once inside the
+			// "commit-graph verify" it runs, so a file it cannot
+			// parse is reported twice. No path appears in the
+			// message, so both lines read the same.
+			r.rep.Errf(key, "%s", msg)
 			r.rep.Errf(key, "%s", msg)
 			return false
 		}
