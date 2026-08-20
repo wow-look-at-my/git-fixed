@@ -96,6 +96,16 @@ func (r *Result) idle() bool {
 		r.Index == nil && r.PackedRefs == nil
 }
 
+// firstScan reads the repository, skipping what the caller's own fsck has
+// already covered. Only the first scan of a run may do that: every later one
+// follows a change this run made, which nobody has checked.
+func (o *Options) firstScan(repo *gitrepo.Repo, db *odb.DB) (*Damage, error) {
+	if o.Healthy != nil && *o.Healthy {
+		return ScanTrustingFsck(repo, db)
+	}
+	return Scan(repo, db)
+}
+
 // Run repairs the repository and reports what it did.
 //
 // It never deletes: a displaced file goes to the run's quarantine directory and
@@ -110,7 +120,7 @@ func Run(o *Options) (*Result, error) {
 	}
 	defer db.Close()
 
-	damage, err := Scan(repo, db)
+	damage, err := o.firstScan(repo, db)
 	if err != nil {
 		return nil, err
 	}

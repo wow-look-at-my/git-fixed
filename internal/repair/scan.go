@@ -96,6 +96,28 @@ type queued struct {
 
 // Scan reads the repository and reports what is damaged.
 func Scan(repo *gitrepo.Repo, db *odb.DB) (*Damage, error) {
+	return scan(repo, db, false)
+}
+
+// ScanTrustingFsck is Scan without the two passes a clean fsck has already
+// made: verifying every packfile, and reading every object a reference leads
+// to. Those two are the whole cost of a scan, and over a healthy repository of
+// 229,960 objects they took it from 0.7s to 3.2s while finding nothing.
+//
+// The caller must have run a full default fsck and had it come back clean. That
+// run reads every object in every pack and reports any that is missing or will
+// not decode, which is exactly what the two passes look for. A narrower fsck
+// does not qualify: --connectivity-only reads no object and --no-full skips the
+// packs, so neither has looked.
+//
+// Everything else still runs, because fsck does not look at all of it. git
+// never verifies info/packs, which is a cache for dumb HTTP clients, so a
+// corrupt one leaves fsck happy and is still a file to put right.
+func ScanTrustingFsck(repo *gitrepo.Repo, db *odb.DB) (*Damage, error) {
+	return scan(repo, db, true)
+}
+
+func scan(repo *gitrepo.Repo, db *odb.DB, fsckWasClean bool) (*Damage, error) {
 	s := &scanner{
 		repo: repo,
 		db:   db,
@@ -104,14 +126,18 @@ func Scan(repo *gitrepo.Repo, db *odb.DB) (*Damage, error) {
 	}
 	d := &Damage{}
 	s.scanDerived(d)
-	s.scanPacks(d)
+	if !fsckWasClean {
+		s.scanPacks(d)
+	}
 	s.scanIndexes(d)
 	// scanRefs first: reading the references is what makes git's own reader
 	// pass over packed-refs, and its verdict on that file is what the check
 	// below reports.
 	s.scanRefs(d)
 	s.scanPackedRefs(d)
-	s.walk()
+	if !fsckWasClean {
+		s.walk()
+	}
 	s.collect(d)
 	return d, nil
 }
