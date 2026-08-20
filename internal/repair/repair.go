@@ -22,6 +22,15 @@ type Options struct {
 	// Run names the quarantine directory. The caller supplies it so a run is
 	// reproducible and so the name can be printed before the work starts.
 	Run string
+	// Healthy is what an fsck the caller already ran said, or nil when it ran
+	// none. The command runs one to report its findings, so on a repository
+	// with nothing wrong the answer is already known, and reading every
+	// object a second time to hear it again is half the run for nothing.
+	//
+	// It stands in only for the question verify asks. A stricter fsck, a
+	// narrower one, or one given objects to check answers a different
+	// question, so a caller that ran one of those passes nil.
+	Healthy *bool
 
 	Stdout io.Writer
 	Stderr io.Writer
@@ -112,6 +121,10 @@ func Run(o *Options) (*Result, error) {
 		// repair; fsck finds the rest. Saying "nothing to repair" off the
 		// narrower check would tell someone their repository is fine when
 		// git still refuses to use it.
+		if o.Healthy != nil {
+			res.Clean = *o.Healthy
+			return res, nil
+		}
 		res.Clean, err = verify(o.Dir)
 		return res, err
 	}
