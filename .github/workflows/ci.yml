@@ -16,7 +16,16 @@ jobs:
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
-      # The differential tests run the system git and compare against it, so
-      # the runner needs a git the tests can call.
-      - run: git --version
+      # The differential tests run the system git and compare against it, so a
+      # runner whose git is older than gittest.MinGit measures this
+      # implementation against a different specification. The distribution's
+      # own git is always some releases behind, so take the PPA's.
+      - name: Install the git the differential tests compare against
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y software-properties-common
+          sudo add-apt-repository -y ppa:git-core/ppa
+          sudo apt-get update
+          sudo apt-get install -y git
+          git --version
       - uses: wow-look-at-my/go-toolchain@v1

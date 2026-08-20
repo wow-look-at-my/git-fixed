@@ -9,6 +9,8 @@ out of `internal/fsckcmd`.
   compare. Never relax this to "close enough" -- see `docs/output-ordering.md`.
 - **Every behaviour comes from git 2.55.0's source, not from guessing.** When a check's wording or ordering is in question, build a repository that
   triggers it and run the real `git fsck`. Several bugs here were found exactly that way.
+- **The differential tests need git >= `gittest.MinGit`, and fail rather than skip below it.** An older git rewords messages, so a run against one
+  compares this implementation against a different specification. CI installs git from `ppa:git-core/ppa` for the same reason.
 - **A new check needs a differential test in the same change.** `internal/fsckcmd/differential_test.go` and `repos_test.go` hold 41 of them, and
   `refs_test.go` holds 23 more. `internal/gittest` writes the broken repositories git's porcelain refuses to produce.
 - **`go-toolchain`, bare, is the build.** It gates coverage at 80%. Never run `go build` or `go test` directly, and never pipe its output.
