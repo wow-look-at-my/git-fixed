@@ -240,9 +240,11 @@ func (r *run) loadSkiplist(path string) error {
 	return nil
 }
 
-// fsckError renders one finding the way builtin/fsck.c's callback does.
-func (r *run) fsckError(o *fsck.Options, oid gitobj.OID, objType gitobj.Type, sev fsck.Severity, _ fsck.MsgID, message string) int {
-	key := sortKey{phase: r.currentPhase(oid), oid: oid}
+// fsckError renders one finding the way builtin/fsck.c's callback does. ctx is
+// the sort key of whatever pass produced the finding.
+func (r *run) fsckError(o *fsck.Options, ctx any, oid gitobj.OID, objType gitobj.Type, sev fsck.Severity, _ fsck.MsgID, message string) int {
+	key, _ := ctx.(sortKey)
+	key.oid = oid
 	if sev == fsck.SevWarn {
 		r.rep.Errf(key, "warning in %s %s: %s", r.printableType(oid, objType), o.Describe(oid), message)
 		return 0
@@ -252,21 +254,10 @@ func (r *run) fsckError(o *fsck.Options, oid gitobj.OID, objType gitobj.Type, se
 	return 1
 }
 
-// keyFor remembers where an object was found, so its findings sort with the
-// rest of that pass.
-var _ = sort.Strings
-
-func (r *run) currentPhase(oid gitobj.OID) int {
-	if k, ok := r.keys.Load(oid); ok {
-		return k.(sortKey).phase
-	}
-	return phaseObjects
-}
-
 // printableType is git's printable_type(): the spelling of an object's type, or
-// "unknown" when nothing has told us what it is.
+// "unknown" when nothing has said what it is.
 func (r *run) printableType(oid gitobj.OID, typ gitobj.Type) string {
-	if typ == gitobj.TypeNone {
+	if typ == gitobj.TypeNone || typ == gitobj.TypeBad {
 		if e := r.objs.Get(oid); e != nil {
 			typ = e.Type()
 		}
@@ -277,5 +268,335 @@ func (r *run) printableType(oid gitobj.OID, typ gitobj.Type) string {
 	return "unknown"
 }
 
-// describePath is only used for messages that name a file rather than an object.
-func describePath(dir, name string) string { return filepath.Join(dir, name) }
+// objError is git's objerror(): a problem with an object that is not one of the
+// numbered checks.
+func (r *run) objError(key sortKey, oid gitobj.OID, text string) {
+	r.fail(ErrorObject)
+	r.rep.Errf(key, "error in %s %s: %s", r.printableType(oid, gitobj.TypeNone), r.fsck.Describe(oid), text)
+}
+
+// checkObject runs the object checks and the link walk for one object. It is
+// git's fsck_obj().
+func (r *run) checkObject(key sortKey, e *objEntry, typ gitobj.Type, buf []byte) {
+	if e.SetFlag(flagSeen) {
+		return
+	}
+	if r.o.Verbose {
+		r.rep.Verbosef("Checking %s %s", r.printableType(e.OID, typ), r.fsck.Describe(e.OID))
+	}
+	// git walks the links first, marking each target used, and complains
+	// once if any of them does not resolve to the right kind of object.
+	links, parseErrs := walkLinks(typ, e.OID, buf, r.repo.Algo, r.fsck.ObjectName(e.OID), r.o.NameObjects)
+	broken := len(parseErrs) > 0
+	for _, msg := range parseErrs {
+		r.rep.Errf(key, "error: %s", msg)
+	}
+	for _, l := range links {
+		if l.badMode {
+			r.rep.Errf(key, "error: in tree %s: entry %s has bad mode %.6o",
+				r.fsck.Describe(e.OID), l.entry, l.rawMode)
+			broken = true
+			continue
+		}
+		target, ok := r.objs.Lookup(l.oid, l.typ)
+		if !ok {
+			broken = true
+			continue
+		}
+		target.SetFlag(flagUsed)
+	}
+	if broken {
+		r.objError(key, e.OID, "broken links")
+	}
+	if r.fsck.Object(key, e.OID, typ, buf) != 0 {
+		return
+	}
+	if typ == gitobj.TypeCommit && r.o.ShowRoot && len(links) == 1 {
+		r.rep.Outf(key, "root %s", r.fsck.Describe(e.OID))
+	}
+	if typ == gitobj.TypeTag && r.o.ShowTags {
+		if _, info := r.fsck.TagWithInfo(key, e.OID, buf); info.Object.Valid() {
+			r.rep.Outf(key, "tagged %s %s (%s) in %s",
+				r.printableType(info.Object, info.TargetType),
+				r.fsck.Describe(info.Object), info.Name, r.fsck.Describe(e.OID))
+		}
+	}
+}
+
+// markReachable is git's mark_object_reachable(): a root has no parent to blame
+// for a link that leads nowhere.
+func (r *run) markReachable(e *objEntry) {
+	if e == nil || e.SetFlag(flagReachable) {
+		return
+	}
+	if e.Flags()&flagHasObj == 0 {
+		return
+	}
+	r.pending = append(r.pending, e)
+}
+
+// markLink is git's mark_object() with a parent, which reports a link that
+// leads nowhere.
+func (r *run) markLink(key sortKey, parent *objEntry, l link, target *objEntry, ok bool) {
+	if !ok || target == nil {
+		r.rep.Outf(key, "broken link from %7s %s",
+			r.printableType(parent.OID, parent.Type()), r.fsck.Describe(parent.OID))
+		r.rep.Outf(key, "broken link from %7s %s", linkTypeName(l), "unknown")
+		r.fail(ErrorReachable)
+		return
+	}
+	if !l.viaTag && target.Type() != gitobj.TypeNone && target.Type() != l.typ {
+		r.objError(key, parent.OID, "wrong object type in link")
+	}
+	if target.SetFlag(flagReachable) {
+		return
+	}
+	if target.Flags()&flagHasObj == 0 {
+		r.rep.Outf(key, "broken link from %7s %s\n              to %7s %s",
+			r.printableType(parent.OID, parent.Type()), r.fsck.Describe(parent.OID),
+			r.printableType(target.OID, target.Type()), r.fsck.Describe(target.OID))
+		r.fail(ErrorReachable)
+		return
+	}
+	r.pending = append(r.pending, target)
+}
+
+func linkTypeName(l link) string {
+	if n := l.typ.Name(); n != "" && l.typ != gitobj.TypeAny {
+		return n
+	}
+	return "unknown"
+}
+
+// checkObjectDirs walks every object directory and every pack. This is the
+// heaviest phase and the one that parallelizes best: each loose fanout
+// directory and each pack is independent work.
+func (r *run) checkObjectDirs() {
+	for i, dir := range r.db.Dirs {
+		r.checkLooseDir(i, dir.Path)
+	}
+	if !r.o.CheckFull {
+		return
+	}
+	for pi, p := range r.db.Packs() {
+		r.checkPack(pi, p)
+	}
+}
+
+// checkLooseDir checks every loose object under one object directory.
+func (r *run) checkLooseDir(group int, path string) {
+	if r.o.Verbose {
+		r.rep.Verbosef("Checking object directory")
+	}
+	hexsz := r.repo.Algo.HexSize
+	type job struct {
+		oid  gitobj.OID
+		path string
+	}
+	var (
+		mu    sync.Mutex
+		jobs  []job
+		cruft []string
+	)
+	for i := 0; i < 256; i++ {
+		sub := fmt.Sprintf("%02x", i)
+		entries, err := os.ReadDir(filepath.Join(path, sub))
+		if err != nil {
+			continue
+		}
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			full := filepath.Join(path, sub, name)
+			if oid, ok := r.repo.Algo.Parse(sub + name); ok && len(name) == hexsz-2 {
+				jobs = append(jobs, job{oid: oid, path: full})
+				continue
+			}
+			if !strings.HasPrefix(name, "tmp_obj_") {
+				cruft = append(cruft, full)
+			}
+		}
+	}
+	for _, c := range cruft {
+		r.rep.Errf(sortKey{phase: phaseObjects, group: group}, "bad sha1 file: %s", c)
+	}
+	_ = mu
+	r.parallel(len(jobs), func(i int) {
+		j := jobs[i]
+		r.checkLooseObject(sortKey{phase: phaseObjects, group: group, oid: j.oid}, j.oid, j.path)
+	})
+}
+
+// checkLooseObject reads one loose object and checks it, following git's
+// fsck_loose().
+func (r *run) checkLooseObject(key sortKey, oid gitobj.OID, path string) {
+	res := odb.ReadLoose(path, oid, r.repo.Algo, r.db.BigFileThreshold)
+	for _, msg := range res.Errors {
+		r.rep.Errf(key, "error: %s", msg)
+	}
+	failed := res.Failed
+	if failed {
+		if res.HashMismatch {
+			r.rep.Errf(key, "error: %s: hash-path mismatch, found at: %s", res.RealOID, path)
+		} else if len(res.Errors) > 0 || res.Contents == nil {
+			r.rep.Errf(key, "error: %s: object corrupt or missing: %s", oid, path)
+		}
+	}
+	if res.TypeName != "" && res.Type == gitobj.TypeBad {
+		r.rep.Errf(key, "error: %s: object is of unknown type '%s': %s", res.RealOID, res.TypeName, path)
+		failed = true
+	}
+	if failed {
+		r.fail(ErrorObject)
+		return
+	}
+	e, ok := r.objs.Lookup(oid, res.Type)
+	if !ok || !r.parsable(key, oid, res.Type, res.Contents, path) {
+		r.fail(ErrorObject)
+		r.rep.Errf(key, "error: %s: object could not be parsed: %s", oid, path)
+		return
+	}
+	e.ClearFlags(flagReachable | flagSeen)
+	e.SetFlag(flagHasObj)
+	r.checkObject(key, e, res.Type, res.Contents)
+}
+
+// parsable reports whether git's parse_object_buffer() would accept the object.
+// A commit or tag whose header cannot be read is rejected there, before any
+// fsck check runs.
+func (r *run) parsable(key sortKey, oid gitobj.OID, typ gitobj.Type, buf []byte, _ string) bool {
+	switch typ {
+	case gitobj.TypeCommit, gitobj.TypeTag:
+		_, errs := walkLinks(typ, oid, buf, r.repo.Algo, "", false)
+		for _, msg := range errs {
+			r.rep.Errf(key, "error: %s", msg)
+		}
+		return len(errs) == 0
+	}
+	return true
+}
+
+// checkPack verifies one pack and checks every object in it.
+func (r *run) checkPack(group int, p *odb.Pack) {
+	key := func(oid gitobj.OID, pos int64) sortKey {
+		return sortKey{phase: phaseObjects, group: 1 + group, pos: pos, oid: oid}
+	}
+	ok := p.Verify(odb.VerifyOpts{
+		Workers:          r.o.Workers,
+		BigFileThreshold: r.db.BigFileThreshold,
+		Emit: func(oid gitobj.OID, text string) {
+			r.rep.Errf(key(oid, 0), "error: %s", text)
+		},
+		Object: func(oid gitobj.OID, typ gitobj.Type, size int64, data []byte) {
+			e, lookupOK := r.objs.Lookup(oid, typ)
+			k := key(oid, 0)
+			if !lookupOK || !r.parsable(k, oid, typ, data, "") {
+				r.fail(ErrorObject)
+				r.rep.Errf(k, "error: %s: object corrupt or missing", oid)
+				return
+			}
+			e.ClearFlags(flagReachable | flagSeen)
+			e.SetFlag(flagHasObj)
+			r.checkObject(k, e, typ, data)
+		},
+	})
+	if !ok {
+		r.fail(ErrorPack)
+	}
+}
+
+// finishDeferredBlobs checks the .gitmodules and .gitattributes blobs a tree
+// named but whose content this run has not seen yet. It is git's fsck_finish().
+func (r *run) finishDeferredBlobs() {
+	key := sortKey{phase: phaseObjects, group: 1 << 20}
+	check := func(oids []gitobj.OID, kind string) {
+		sort.Slice(oids, func(i, j int) bool { return oids[i].Compare(oids[j]) < 0 })
+		for _, oid := range oids {
+			typ, data, err := r.db.Read(oid)
+			if err != nil {
+				if r.fsck.ReportMissingBlob(key, oid, kind) != 0 {
+					r.fail(ErrorObject)
+				}
+				continue
+			}
+			if typ != gitobj.TypeBlob {
+				if r.fsck.ReportNonBlob(key, oid, typ, kind) != 0 {
+					r.fail(ErrorObject)
+				}
+				continue
+			}
+			if r.fsck.Blob(key, oid, data) != 0 {
+				r.fail(ErrorObject)
+			}
+		}
+	}
+	gitmodules, gitattributes := r.fsck.PendingBlobs()
+	check(gitmodules, ".gitmodules")
+	check(gitattributes, ".gitattributes")
+}
+
+// markForConnectivity records every object that exists without reading it,
+// which is what --connectivity-only does.
+func (r *run) markForConnectivity() {
+	hexsz := r.repo.Algo.HexSize
+	for _, dir := range r.db.Dirs {
+		for i := 0; i < 256; i++ {
+			sub := fmt.Sprintf("%02x", i)
+			entries, err := os.ReadDir(filepath.Join(dir.Path, sub))
+			if err != nil {
+				continue
+			}
+			for _, ent := range entries {
+				if len(ent.Name()) != hexsz-2 {
+					continue
+				}
+				if oid, ok := r.repo.Algo.Parse(sub + ent.Name()); ok {
+					e, _ := r.objs.Lookup(oid, gitobj.TypeAny)
+					e.SetFlag(flagHasObj)
+				}
+			}
+		}
+	}
+	for _, p := range r.db.Packs() {
+		if p.OpenErr != nil {
+			continue
+		}
+		for i := uint32(0); i < p.Num; i++ {
+			e, _ := r.objs.Lookup(p.OIDAt(i), gitobj.TypeAny)
+			e.SetFlag(flagHasObj)
+		}
+	}
+}
+
+// parallel runs fn for every index below n, across the configured workers.
+func (r *run) parallel(n int, fn func(i int)) {
+	if n == 0 {
+		return
+	}
+	workers := r.o.Workers
+	if workers <= 0 {
+		workers = runtime.GOMAXPROCS(0)
+	}
+	if workers > n {
+		workers = n
+	}
+	var next atomic.Int64
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				i := int(next.Add(1)) - 1
+				if i >= n {
+					return
+				}
+				fn(i)
+			}
+		}()
+	}
+	wg.Wait()
+}
