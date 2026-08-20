@@ -22,6 +22,11 @@ type IndexEntry struct {
 	OID   gitobj.OID
 	Name  string
 	Stage int
+	// Stat is the 40 bytes git records before the object name: the two
+	// timestamps, the device, the inode, the mode, the uid, the gid and the
+	// size. A rewritten index keeps them, so git does not have to read every
+	// file in the worktree again to find out that nothing changed.
+	Stat [40]byte
 }
 
 // CacheTree is one node of the cached tree object the index carries.
@@ -135,6 +140,7 @@ func (r *Repo) readIndexEntry(data []byte, pos int, version uint32, prevName str
 		return IndexEntry{}, 0, &FatalError{Msg: "index file corrupt"}
 	}
 	var e IndexEntry
+	copy(e.Stat[:], data[pos:pos+40])
 	e.Mode = binary.BigEndian.Uint32(data[pos+24 : pos+28])
 	e.OID = r.Algo.FromRaw(data[pos+40:])
 	flags := binary.BigEndian.Uint16(data[pos+40+rawsz:])
