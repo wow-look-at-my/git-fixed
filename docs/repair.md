@@ -120,6 +120,19 @@ check at the end means every source produces the identical bytes or none at all.
 
 `--dry-run` stops after step 3 and prints the plan, including which source would answer for each object.
 
+## What it does not repair yet
+
+Naming these matters as much as the list above, because a run that finds nothing must not be read as a clean bill of health. So the verification step
+runs the whole `fsck`, not this package's scan, and a repository `fsck` still refuses is reported that way even when the repair had nothing to do.
+
+- **A corrupt packfile.** Objects it holds are recovered as loose copies where a source has them, but the pack itself stays broken and `fsck` keeps
+  complaining. Worse, a corrupt pack entry SHADOWS the good loose copy, because the object database answers from the pack -- so those objects read as
+  damaged however many times they are put back. That is why a run tracks what it has already recovered: without it, the repair loops forever on the
+  same object. The fix is to rewrite the pack from what can be read, and it is not written.
+- **A `.git/index` that will not parse.** The index is not derived: it holds staged content and stat information that exists nowhere else, so it is
+  not safe to displace and rebuild. Reported, not touched.
+- **A malformed `packed-refs`.** The loose refs and the reflogs together hold enough to rebuild it, and that is not written either.
+
 ## What the tool never does
 
 - Delete anything. Removal means quarantine.

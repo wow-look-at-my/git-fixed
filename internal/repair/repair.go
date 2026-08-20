@@ -7,8 +7,10 @@ import (
 	"io"
 	"sort"
 
+	"github.com/wow-look-at-my/git-fixed/internal/fsckcmd"
 	"github.com/wow-look-at-my/git-fixed/internal/gitrepo"
 	"github.com/wow-look-at-my/git-fixed/internal/odb"
+	"github.com/wow-look-at-my/go-containers/set"
 )
 
 // Options are one run's settings.
@@ -50,8 +52,17 @@ type Result struct {
 func (r *Result) Ok() bool { return len(r.Unrecovered) == 0 && r.Clean }
 
 // Nothing reports whether the run found a repository with nothing wrong.
-func (r *Result) Nothing() bool {
-	return r.Clean && len(r.Objects) == 0 && len(r.Derived) == 0 &&
+func (r *Result) Nothing() bool { return r.Clean && r.idle() }
+
+// FoundNothingToDo reports the awkward case: this tool saw nothing it repairs,
+// and fsck is still unhappy. The damage is real and belongs to something not
+// covered here -- a corrupt pack, an index that will not parse, a malformed
+// packed-refs. Reporting it is the point; a quiet exit would read as health.
+func (r *Result) FoundNothingToDo() bool { return !r.Clean && r.idle() }
+
+// idle reports whether the run changed nothing and found nothing.
+func (r *Result) idle() bool {
+	return len(r.Objects) == 0 && len(r.Derived) == 0 &&
 		len(r.Refs) == 0 && len(r.Unrecovered) == 0
 }
 
@@ -76,8 +87,12 @@ func Run(o *Options) (*Result, error) {
 
 	res := &Result{}
 	if damage.Empty() {
-		res.Clean = true
-		return res, nil
+		// Ask fsck even here. The scan finds the damage this package can
+		// repair; fsck finds the rest. Saying "nothing to repair" off the
+		// narrower check would tell someone their repository is fine when
+		// git still refuses to use it.
+		res.Clean, err = verify(o.Dir)
+		return res, err
 	}
 	if o.DryRun {
 		return plan(damage, res), nil
@@ -101,6 +116,15 @@ func Run(o *Options) (*Result, error) {
 	sources := NewSources(repo, db)
 	defer sources.Close()
 
+	// done is every object this run has already put back.
+	//
+	// It is what makes the loop terminate. An object can still read as damaged
+	// after it has been recovered: a corrupt entry in a pack shadows the good
+	// loose copy, because the database answers from the pack. Without this the
+	// run recovers that object on every pass, forever. Recovering nothing NEW
+	// is the real signal that a pass made no progress.
+	done := set.New[string]()
+
 	for pass := 0; ; pass++ {
 		if pass > 0 {
 			db.Close()
@@ -122,6 +146,14 @@ func Run(o *Options) (*Result, error) {
 		recovered := 0
 		var stuck []BadObject
 		for _, bad := range damage.Objects {
+			if done.Contains(bad.OID.String()) {
+				// Already put back, and still reading as damaged. Something
+				// other than the object itself is wrong -- a pack that will
+				// not decode is the usual one -- and recovering it again
+				// would not change that.
+				stuck = append(stuck, bad)
+				continue
+			}
 			// Read the replacement before touching anything. A source that
 			// has nothing leaves the repository exactly as it was.
 			found, err := sources.Find(bad)
@@ -143,6 +175,7 @@ func Run(o *Options) (*Result, error) {
 			if err != nil {
 				return nil, fmt.Errorf("writing the recovered %s: %w", bad.OID, err)
 			}
+			done.Add(bad.OID.String())
 			res.Objects = append(res.Objects, rec)
 			recovered++
 		}
@@ -202,22 +235,24 @@ func plan(damage *Damage, res *Result) *Result {
 	return res
 }
 
-// verify re-reads the repository from scratch and reports whether it is whole.
+// verify reports whether the repaired repository is whole.
 //
-// It opens the repository again rather than reusing the database from the
-// repair, because that one has cached which names it could not read and would
-// answer from that cache.
+// It runs the whole fsck rather than this package's scan. The scan looks for
+// the damage this package knows how to repair, which is a smaller question:
+// a corrupt pack, an index that will not parse, or a malformed packed-refs
+// would all pass it. Answering "the repository is whole" from the narrower
+// check would be a claim the run has not earned, so the broader one decides.
+//
+// fsck exits non-zero for damage and zero for a repository that merely holds
+// dangling or unreachable objects, which is the same line this package draws.
 func verify(dir string) (bool, error) {
-	repo, db, err := open(dir)
-	if err != nil {
-		return false, err
-	}
-	defer db.Close()
-	damage, err := Scan(repo, db)
-	if err != nil {
-		return false, err
-	}
-	return damage.Empty(), nil
+	o := fsckcmd.DefaultOptions()
+	o.Dir = dir
+	o.Stdout = io.Discard
+	o.Stderr = io.Discard
+	// Reflogs are roots here, as they are for git, so an object only the
+	// reflog still names does not read as damage.
+	return fsckcmd.Run(o) == 0, nil
 }
 
 // Report writes what a run did, for a person to read.

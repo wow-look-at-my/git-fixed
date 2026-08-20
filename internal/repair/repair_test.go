@@ -373,6 +373,45 @@ func TestCleanRepositoryIsLeftAlone(t *testing.T) {
 	assert.NoDirExists(t, filepath.Join(r.GitDir(), "git-fixed"))
 }
 
+// TestDamageThisToolDoesNotRepairIsStillReported is the honesty case. The scan
+// looks for what this package can put back; fsck looks for everything. A
+// repository whose damage falls outside the first set must not be reported as
+// healthy just because the repair had nothing to do.
+func TestDamageThisToolDoesNotRepairIsStillReported(t *testing.T) {
+	gittest.RequireGit(t)
+	r := history(t)
+	r.Git("repack", "-ad")
+
+	packs, err := filepath.Glob(filepath.Join(r.GitDir(), "objects", "pack", "*.pack"))
+	require.NoError(t, err)
+	require.NotEmpty(t, packs, "the test needs a pack to damage")
+
+	// Truncate the pack. Its objects are still named by the index, so this is
+	// damage, and it is not damage this tool knows how to undo.
+	data, err := os.ReadFile(packs[0])
+	require.NoError(t, err)
+	gittest.WriteOver(t, packs[0], data[:len(data)/2])
+
+	// This also pins termination. A corrupt pack entry shadows the good loose
+	// copy the repair writes, because the database answers from the pack, so
+	// the object reads as damaged however many times it is put back. The run
+	// must notice it is not getting anywhere instead of looping.
+	res := fix(t, r)
+
+	assert.False(t, res.Ok(), "a repository git still refuses must not be reported as repaired")
+	assert.False(t, res.Clean, "the pack is still truncated, so the repository is not whole")
+	assert.False(t, res.Nothing(), "this must never read as a healthy repository")
+
+	// Each object was attempted once, not once per pass.
+	seen := map[string]int{}
+	for _, rec := range res.Objects {
+		seen[rec.OID.String()]++
+	}
+	for oid, n := range seen {
+		assert.Equal(t, 1, n, "%s was recovered %d times: the run was not making progress", oid, n)
+	}
+}
+
 // mustOID parses an object name the test just read back from git.
 func mustOID(t *testing.T, r *gittest.Repo, hex string) gitobj.OID {
 	t.Helper()

@@ -83,6 +83,14 @@ func run(args []string) int {
 		fmt.Fprintln(os.Stdout, "Nothing to repair.")
 		return 0
 	}
+	if res.FoundNothingToDo() {
+		// git is still unhappy about something this tool does not know how to
+		// repair. Saying so is the whole value here: a quiet exit would read
+		// as a clean bill of health.
+		fmt.Fprintln(os.Stderr, "git fsck still reports a problem, and it is not one this tool repairs.")
+		fmt.Fprintln(os.Stderr, "Run git-fsck to see it. Nothing was changed.")
+		return 1
+	}
 	res.Report(os.Stdout, dryRun != 0)
 	if dryRun != 0 {
 		return 0
