@@ -18,7 +18,7 @@ var usage = []string{
 	"git fsck [--tags] [--root] [--unreachable] [--cache] [--no-reflogs]\n" +
 		"         [--[no-]full] [--strict] [--verbose] [--lost-found]\n" +
 		"         [--[no-]dangling] [--[no-]progress] [--connectivity-only]\n" +
-		"         [--[no-]name-objects] [<object>...]",
+		"         [--[no-]name-objects] [--[no-]references] [<object>...]",
 }
 
 func main() {
@@ -36,6 +36,7 @@ func run(args []string) int {
 		includeReflogs  = 1
 		checkFull       = 1
 		connectivity    int
+		references      = 1
 		strict          int
 		lostFound       int
 		progress        = -1
@@ -53,6 +54,7 @@ func run(args []string) int {
 			{Long: "reflogs", Help: "make reflogs head nodes (default)", Value: &includeReflogs},
 			{Long: "full", Help: "also consider packs and alternate objects", Value: &checkFull},
 			{Long: "connectivity-only", Help: "check only connectivity", Value: &connectivity},
+			{Long: "references", Help: "check reference database consistency", Value: &references},
 			{Long: "strict", Help: "enable more strict checking", Value: &strict},
 			{Long: "lost-found", Help: "write dangling objects in .git/lost-found", Value: &lostFound},
 			{Long: "progress", Help: "show progress", Value: &progress},
@@ -81,6 +83,7 @@ func run(args []string) int {
 	o.IncludeReflogs = includeReflogs != 0
 	o.CheckFull = checkFull != 0
 	o.ConnectivityOnly = connectivity != 0
+	o.CheckReferences = references != 0
 	o.Strict = strict != 0
 	o.WriteLostFound = lostFound != 0
 	o.NameObjects = nameObjects != 0

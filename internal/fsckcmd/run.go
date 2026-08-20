@@ -43,6 +43,7 @@ type Options struct {
 	ShowUnreachable  bool
 	IncludeReflogs   bool
 	CheckFull        bool
+	CheckReferences  bool
 	ConnectivityOnly bool
 	Strict           bool
 	KeepCacheObjects bool
@@ -64,12 +65,13 @@ type Options struct {
 // DefaultOptions returns the settings git starts from.
 func DefaultOptions() *Options {
 	return &Options{
-		IncludeReflogs: true,
-		CheckFull:      true,
-		ShowDangling:   true,
-		Workers:        runtime.GOMAXPROCS(0),
-		Stdout:         os.Stdout,
-		Stderr:         os.Stderr,
+		IncludeReflogs:  true,
+		CheckFull:       true,
+		CheckReferences: true,
+		ShowDangling:    true,
+		Workers:         runtime.GOMAXPROCS(0),
+		Stdout:          os.Stdout,
+		Stderr:          os.Stderr,
 	}
 }
 
@@ -129,6 +131,11 @@ func Run(o *Options) int {
 		return 128
 	}
 
+	if o.CheckReferences {
+		r.checkRefs()
+	}
+	rep.Flush()
+
 	if o.ConnectivityOnly {
 		r.markForConnectivity()
 	} else {
@@ -146,6 +153,9 @@ func Run(o *Options) int {
 		o.KeepCacheObjects = true
 	}
 	r.noteNoHeads()
+	if repo.PackedRefsFatal != "" {
+		r.noteFatalMsg(repo.PackedRefsFatal)
+	}
 	rep.Flush()
 	if r.died() != "" {
 		return die()

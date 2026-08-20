@@ -1,7 +1,6 @@
 package gitrepo
 
 import (
-	"bufio"
 	"bytes"
 	"io/fs"
 	"os"
@@ -9,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/wow-look-at-my/git-fixed/internal/fsck"
 	"github.com/wow-look-at-my/git-fixed/internal/gitobj"
 )
 
@@ -61,29 +61,68 @@ func (r *Repo) Refs(worktreeDir string) []Ref {
 	return out
 }
 
+// noteBadPackedLine records the first line of packed-refs that git's own reader
+// would refuse, as the message git dies with. The run prints it and stops, as
+// git does.
+func (r *Repo) noteBadPackedLine(kind, line string) {
+	if r.PackedRefsFatal == "" {
+		r.PackedRefsFatal = kind + " line in " + filepath.Join(r.DisplayGitDir, "packed-refs") + ": " + line
+	}
+}
+
 // packedRefs reads the packed-refs table.
 func (r *Repo) packedRefs() []Ref {
-	f, err := os.Open(filepath.Join(r.CommonDir, "packed-refs"))
+	data, err := os.ReadFile(filepath.Join(r.CommonDir, "packed-refs"))
 	if err != nil {
 		return nil
 	}
-	defer f.Close()
 	var out []Ref
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
-	for sc.Scan() {
-		line := sc.Bytes()
-		if len(line) == 0 || line[0] == '#' || line[0] == '^' {
+	for off, first := 0, true; off < len(data); first = false {
+		wasFirst := first
+		var line []byte
+		if i := bytes.IndexByte(data[off:], '\n'); i >= 0 {
+			line, off = data[off:off+i], off+i+1
+		} else {
+			// git reads the file whole, so a last line with no newline
+			// is one it refuses rather than one it ignores.
+			line, off = data[off:], len(data)
+			r.noteBadPackedLine("unterminated", string(line))
+		}
+		if len(line) == 0 {
+			continue
+		}
+		if line[0] == '#' {
+			// Only the header line may start with a comment, and only
+			// with the text git writes there.
+			if !wasFirst || !bytes.HasPrefix(line, []byte("# pack-refs with: ")) {
+				r.noteBadPackedLine("unexpected", string(line))
+			}
+			continue
+		}
+		if line[0] == '^' {
+			// A peeled line carries what the tag above it points at.
+			// Nothing here needs the value, but a line that does not
+			// hold one still stops git's reader.
+			if _, ok := r.Algo.ParseHexBytes(line[1:]); !ok || len(line) != r.Algo.HexSize+1 {
+				r.noteBadPackedLine("unexpected", string(line))
+			}
 			continue
 		}
 		if len(line) < r.Algo.HexSize+2 {
+			r.noteBadPackedLine("unexpected", string(line))
 			continue
 		}
 		oid, ok := r.Algo.ParseHexBytes(line)
 		if !ok || line[r.Algo.HexSize] != ' ' {
+			r.noteBadPackedLine("unexpected", string(line))
 			continue
 		}
-		out = append(out, Ref{Name: string(line[r.Algo.HexSize+1:]), OID: oid})
+		ref := Ref{Name: string(line[r.Algo.HexSize+1:]), OID: oid}
+		if !fsck.CheckRefnameFormat(ref.Name, 0) {
+			ref.Broken = true
+			ref.OID = r.Algo.Null()
+		}
+		out = append(out, ref)
 	}
 	return out
 }
@@ -96,21 +135,41 @@ func looseRefs(dir, prefix string, algo *gitobj.Algo, root string) []Ref {
 		if err != nil || d.IsDir() {
 			return nil //nolint:nilerr // an unreadable subtree is not a reference
 		}
+		if !d.Type().IsRegular() && d.Type()&fs.ModeSymlink == 0 {
+			// Opening a device or a pipe here would block forever.
+			// The ref check reports the file type itself.
+			return nil
+		}
+		if base := filepath.Base(path); base[0] == '.' {
+			// git's directory walk never yields a dot file, so such a
+			// file is not a reference at all. The ref check still sees
+			// it and complains about the name.
+			return nil
+		}
 		rel, err := filepath.Rel(dir, path)
 		if err != nil {
 			return nil
 		}
 		name := prefix + "/" + filepath.ToSlash(rel)
 		ref := readRefFile(path, name, algo, root, 0)
+		if !fsck.CheckRefnameFormat(name, 0) {
+			// A name no reference may carry makes the reference itself
+			// broken, whatever the file holds. git hands such a name to
+			// its callers with the null object name.
+			ref.Broken = true
+			ref.OID = algo.Null()
+		}
 		out = append(out, ref)
 		return nil
 	})
 	return out
 }
 
-// readRefFile reads one reference file, following a symbolic reference.
+// readRefFile reads one reference file, following a symbolic reference. A file
+// it cannot make sense of leaves the null object name, which is what git
+// reports for a reference that resolves to nothing.
 func readRefFile(path, name string, algo *gitobj.Algo, root string, depth int) Ref {
-	ref := Ref{Name: name, Broken: true}
+	ref := Ref{Name: name, Broken: true, OID: algo.Null()}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return ref
@@ -127,12 +186,22 @@ func readRefFile(path, name string, algo *gitobj.Algo, root string, depth int) R
 		return ref
 	}
 	oid, ok := algo.ParseHexBytes(line)
-	if !ok || len(line) != algo.HexSize {
+	if !ok {
+		return ref
+	}
+	// git accepts anything after the name as long as a space separates it:
+	// FETCH_HEAD carries a whole description there. Only a name that runs
+	// straight into other characters is broken.
+	if rest := line[algo.HexSize:]; len(rest) > 0 && !isSpace(rest[0]) {
 		return ref
 	}
 	ref.OID = oid
 	ref.Broken = false
 	return ref
+}
+
+func isSpace(c byte) bool {
+	return c == ' ' || c == '\t' || c == '\n' || c == '\v' || c == '\f' || c == '\r'
 }
 
 // Head resolves one worktree's HEAD without following it to an object.

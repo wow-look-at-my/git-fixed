@@ -123,6 +123,17 @@ func (a *Algo) Parse(s string) (OID, bool) {
 	return o, true
 }
 
+// ParsePrefix decodes an object name at the front of s and returns what follows
+// it. It is git's parse_oid_hex(), which several file formats rely on: a line
+// carries a name and then something else.
+func (a *Algo) ParsePrefix(s string) (OID, string, bool) {
+	o, ok := a.ParseHexBytes([]byte(s))
+	if !ok {
+		return OID{}, s, false
+	}
+	return o, s[a.HexSize:], true
+}
+
 // ParseHexBytes decodes the first HexSize bytes of buf as an object name.
 func (a *Algo) ParseHexBytes(buf []byte) (OID, bool) {
 	if len(buf) < a.HexSize {

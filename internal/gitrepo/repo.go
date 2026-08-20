@@ -37,6 +37,10 @@ type Repo struct {
 	// Config is every setting in effect, later entries winning.
 	Config *Config
 
+	// PackedRefsFatal is the message git dies with when its reader refuses a
+	// line of packed-refs.
+	PackedRefsFatal string
+
 	// packed caches the packed reference table, read at most once.
 	packedOnce sync.Once
 	packed     map[string]gitobj.OID

@@ -67,6 +67,23 @@ const (
 	MsgBadTagName
 	MsgMissingTaggerEntry
 	MsgExtraHeaderEntry
+	// The checks on the reference database itself, which git runs as
+	// "git refs verify".
+	MsgBadHeadTarget
+	MsgBadPackedRefEntry
+	MsgBadPackedRefHeader
+	MsgBadReferentName
+	MsgBadRefContent
+	MsgBadRefFiletype
+	MsgBadRefName
+	MsgBadRefOid
+	MsgEmptyPackedRefsFile
+	MsgPackedRefEntryNotTerminated
+	MsgPackedRefUnsorted
+	MsgRefMissingNewline
+	MsgSymlinkRef
+	MsgSymrefTargetIsNotARef
+	MsgTrailingRefContent
 	msgIDCount
 )
 
@@ -137,4 +154,20 @@ var msgInfos = [msgIDCount]msgInfo{
 	MsgBadTagName:              {Camel: "badTagName", Lower: "badtagname", Severity: SevInfo},
 	MsgMissingTaggerEntry:      {Camel: "missingTaggerEntry", Lower: "missingtaggerentry", Severity: SevInfo},
 	MsgExtraHeaderEntry:        {Camel: "extraHeaderEntry", Lower: "extraheaderentry", Severity: SevIgnore},
+
+	MsgBadHeadTarget:               {Camel: "badHeadTarget", Lower: "badheadtarget", Severity: SevError},
+	MsgBadPackedRefEntry:           {Camel: "badPackedRefEntry", Lower: "badpackedrefentry", Severity: SevError},
+	MsgBadPackedRefHeader:          {Camel: "badPackedRefHeader", Lower: "badpackedrefheader", Severity: SevError},
+	MsgBadReferentName:             {Camel: "badReferentName", Lower: "badreferentname", Severity: SevError},
+	MsgBadRefContent:               {Camel: "badRefContent", Lower: "badrefcontent", Severity: SevError},
+	MsgBadRefFiletype:              {Camel: "badRefFiletype", Lower: "badreffiletype", Severity: SevError},
+	MsgBadRefName:                  {Camel: "badRefName", Lower: "badrefname", Severity: SevError},
+	MsgBadRefOid:                   {Camel: "badRefOid", Lower: "badrefoid", Severity: SevError},
+	MsgEmptyPackedRefsFile:         {Camel: "emptyPackedRefsFile", Lower: "emptypackedrefsfile", Severity: SevInfo},
+	MsgPackedRefEntryNotTerminated: {Camel: "packedRefEntryNotTerminated", Lower: "packedrefentrynotterminated", Severity: SevError},
+	MsgPackedRefUnsorted:           {Camel: "packedRefUnsorted", Lower: "packedrefunsorted", Severity: SevError},
+	MsgRefMissingNewline:           {Camel: "refMissingNewline", Lower: "refmissingnewline", Severity: SevInfo},
+	MsgSymlinkRef:                  {Camel: "symlinkRef", Lower: "symlinkref", Severity: SevInfo},
+	MsgSymrefTargetIsNotARef:       {Camel: "symrefTargetIsNotARef", Lower: "symreftargetisnotaref", Severity: SevInfo},
+	MsgTrailingRefContent:          {Camel: "trailingRefContent", Lower: "trailingrefcontent", Severity: SevInfo},
 }

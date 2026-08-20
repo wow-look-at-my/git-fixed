@@ -221,6 +221,11 @@ type Location struct {
 
 // Find locates an object. git looks in packs before loose files, and so do we.
 func (db *DB) Find(oid gitobj.OID) (Location, bool) {
+	if !oid.Valid() {
+		// A ref file with garbage in it yields no object name at all,
+		// and nothing on disk can be named by one.
+		return Location{}, false
+	}
 	for _, p := range db.packs {
 		if p.OpenErr != nil {
 			continue

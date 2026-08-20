@@ -11,7 +11,8 @@ import (
 
 // Phases of a run, in the order git produces their output.
 const (
-	phaseObjects = iota
+	phaseRefs = iota
+	phaseObjects
 	phaseHeads
 	phaseIndex
 	phaseIndexFiles

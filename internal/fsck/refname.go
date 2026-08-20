@@ -99,3 +99,44 @@ out:
 
 // IsBranchRef reports whether a reference name lives under refs/heads/.
 func IsBranchRef(refname string) bool { return strings.HasPrefix(refname, "refs/heads/") }
+
+// irregularRootRefs are the root references whose names do not end in _HEAD.
+var irregularRootRefs = []string{
+	"HEAD", "AUTO_MERGE", "BISECT_EXPECTED_REV",
+	"NOTES_MERGE_PARTIAL", "NOTES_MERGE_REF", "MERGE_AUTOSTASH",
+}
+
+// IsRootRef reports whether a name belongs to a reference that lives beside
+// refs/ rather than under it. Such a name is one component in capitals, so the
+// ordinary refname rules do not apply to it.
+func IsRootRef(refname string) bool {
+	if !isRootRefSyntax(refname) || isPseudoRef(refname) {
+		return false
+	}
+	if strings.HasSuffix(refname, "_HEAD") {
+		return true
+	}
+	for _, name := range irregularRootRefs {
+		if refname == name {
+			return true
+		}
+	}
+	return false
+}
+
+// isRootRefSyntax reports whether every byte is one a root reference may carry.
+func isRootRefSyntax(refname string) bool {
+	for i := 0; i < len(refname); i++ {
+		c := refname[i]
+		if (c < 'A' || c > 'Z') && c != '-' && c != '_' {
+			return false
+		}
+	}
+	return true
+}
+
+// isPseudoRef names the two references git writes but does not treat as root
+// references.
+func isPseudoRef(refname string) bool {
+	return refname == "FETCH_HEAD" || refname == "MERGE_HEAD"
+}

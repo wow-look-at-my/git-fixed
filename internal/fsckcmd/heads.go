@@ -2,7 +2,6 @@ package fsckcmd
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/wow-look-at-my/git-fixed/internal/fsck"
 	"github.com/wow-look-at-my/git-fixed/internal/gitobj"
@@ -34,8 +33,11 @@ func (r *run) defaultHeads() {
 	}
 	for _, wt := range r.repo.Worktrees() {
 		name := wt.RefName("HEAD")
-		target, oid, ok := r.repo.Head(wt.Dir)
-		if r.headLink(name, target, oid, ok) && !oid.IsNull() {
+		// Whether HEAD is well formed is the ref database's business,
+		// and checkRefs has already said so. Here it is only a starting
+		// point, and one that resolves to nothing is simply not one.
+		_, oid, ok := r.repo.Head(wt.Dir)
+		if ok && !oid.IsNull() {
 			r.handleRef(name, oid, false)
 		}
 		if r.o.IncludeReflogs {
@@ -78,37 +80,6 @@ func (r *run) handleRef(refname string, oid gitobj.OID, broken bool) {
 	e.SetFlag(flagUsed)
 	r.fsck.PutObjectName(oid, "%s", refname)
 	r.markReachable(e)
-}
-
-// headLink is git's fsck_head_link(): it checks what HEAD points at without
-// caring yet whether that object exists.
-func (r *run) headLink(name, target string, oid gitobj.OID, ok bool) bool {
-	key := sortKey{phase: phaseHeads}
-	if r.o.Verbose {
-		r.rep.Verbosef("Checking %s link", name)
-	}
-	if !ok {
-		r.fail(ErrorRefs)
-		r.rep.Errf(key, "error: invalid %s", name)
-		return false
-	}
-	detached := target == "HEAD" || target == name
-	if !detached && !strings.HasPrefix(target, "refs/heads/") {
-		r.fail(ErrorRefs)
-		r.rep.Errf(key, "error: %s: badHeadTarget: HEAD points to non-branch '%s'", name, target)
-		return false
-	}
-	if oid.IsNull() {
-		if detached {
-			r.fail(ErrorRefs)
-			r.rep.Errf(key, "error: %s: badRefOid: points to invalid object ID '%s'", name, oid)
-			return false
-		}
-		// A symbolic HEAD naming a branch that does not exist yet is an
-		// unborn branch, which is the state of every new repository.
-		// git says nothing about it.
-	}
-	return true
 }
 
 // handleReflogs walks one worktree's reflogs, which are also starting points.
