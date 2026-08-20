@@ -3,7 +3,7 @@ module github.com/wow-look-at-my/git-fixed
 go 1.25.0
 
 require (
-	github.com/wow-look-at-my/go-mmap v0.0.0-20260820151903-72082560bee1 // go-toolchain:auto-branch
+	github.com/wow-look-at-my/go-mmap v0.0.0-20260820164452-9c1e07927997 // go-toolchain:auto-branch
 	golang.org/x/text v0.21.0
 )
 

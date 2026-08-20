@@ -6,8 +6,8 @@ github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu
 github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
 github.com/wow-look-at-my/go-containers v0.0.0-20260818100925-5e01414a6ac3 h1:0YbDEeJC9Cb2UsmTcx2awoUG0eVgUsSUJKIBteoMgSM=
 github.com/wow-look-at-my/go-containers v0.0.0-20260818100925-5e01414a6ac3/go.mod h1:AGGzFZheJSooQmBf0LdfoAGXr7jSGxsn7N1NrOdhmIs=
-github.com/wow-look-at-my/go-mmap v0.0.0-20260820151903-72082560bee1 h1:QWi1JwQVJGe+7Q7CiGnXCCXFHa8iDxrF2VwxBsekYbw=
-github.com/wow-look-at-my/go-mmap v0.0.0-20260820151903-72082560bee1/go.mod h1:0qM870HXhMsqIxko12aPWuwJXQKv07+rxbI3S2xnBEg=
+github.com/wow-look-at-my/go-mmap v0.0.0-20260820164452-9c1e07927997 h1:WEBCI/l9s6/w78TrAY1q3BAWrjY1cA8rOcIYdG4qXbw=
+github.com/wow-look-at-my/go-mmap v0.0.0-20260820164452-9c1e07927997/go.mod h1:l7DeblP9e9S8Y0NHpVHuTS5QYFgu37wIcY/lXX8lY2E=
 golang.org/x/sys v0.47.0 h1:o7XGOvZQCADBQQ4Y7VNq2dRWQR7JmOUW8Kxx4ZsNgWs=
 golang.org/x/sys v0.47.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=
 golang.org/x/text v0.21.0 h1:zyQAAkrwaneQ066sspRyJaG9VNi/YJ1NfzcGB3hZ/qo=

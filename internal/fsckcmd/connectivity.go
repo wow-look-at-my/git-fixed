@@ -20,15 +20,29 @@ func (r *run) checkConnectivity() {
 	if r.o.Verbose {
 		r.rep.Verbosef("Checking connectivity (%d objects)", r.objs.HashSlots())
 	}
-	for _, e := range r.objs.All() {
-		if r.o.Verbose {
+	all := r.objs.All()
+	if r.o.Verbose {
+		// The verbose line names each object as it is checked, and that
+		// order is part of what the reader is watching, so this stays on one
+		// goroutine when it is asked for.
+		for _, e := range all {
 			r.rep.Verbosef("Checking %s", r.fsck.Describe(e.OID))
+			r.checkOneObject(e)
 		}
-		if e.Flags()&flagReachable != 0 {
-			r.checkReachableObject(e)
-		} else {
-			r.checkUnreachableObject(e)
-		}
+		return
+	}
+	// Every object in the repository passes through here. The checks touch
+	// only their own entry and the reporter, both of which are safe to share,
+	// so this runs across the workers like the phases before it.
+	r.parallel(len(all), func(i int) { r.checkOneObject(all[i]) })
+}
+
+// checkOneObject reports on one object's reachability.
+func (r *run) checkOneObject(e *objEntry) {
+	if e.Flags()&flagReachable != 0 {
+		r.checkReachableObject(e)
+	} else {
+		r.checkUnreachableObject(e)
 	}
 }
 
@@ -56,43 +70,74 @@ func (r *run) traverseReachable() {
 
 	var mu sync.Mutex
 	cond := sync.NewCond(&mu)
-	// active counts the objects being walked right now. A worker that finds
-	// the stack empty must wait while any of them can still push more.
+	// active counts the workers holding objects that could still yield more.
+	// A worker that finds the stack empty must wait while any of them can.
 	active := 0
 	var wg sync.WaitGroup
 	for range workers {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			// Each worker keeps its own stack and only visits the shared one
+			// when it runs dry or has a surplus. Taking the shared lock once
+			// per object made it the limit on how many cores the walk could
+			// use: with a worker per core, every core pays for that one lock
+			// twice per object. A batch divides that traffic by its size.
+			local := make([]*objEntry, 0, walkBatch*2)
+			// holding says this worker is counted in active. It stays counted
+			// for as long as it has local work, because that work can still
+			// produce more for everyone else.
+			holding := false
 			for {
-				mu.Lock()
-				for len(stack) == 0 && active > 0 {
-					cond.Wait()
-				}
-				if len(stack) == 0 {
+				if len(local) == 0 {
+					mu.Lock()
+					if holding {
+						active--
+						holding = false
+						if len(stack) > 0 || active == 0 {
+							cond.Broadcast()
+						}
+					}
+					for len(stack) == 0 && active > 0 {
+						cond.Wait()
+					}
+					if len(stack) == 0 {
+						mu.Unlock()
+						cond.Broadcast()
+						return
+					}
+					n := min(len(stack), walkBatch)
+					local = append(local, stack[len(stack)-n:]...)
+					stack = stack[:len(stack)-n]
+					active++
+					holding = true
 					mu.Unlock()
-					cond.Broadcast()
-					return
 				}
-				e := stack[len(stack)-1]
-				stack = stack[:len(stack)-1]
-				active++
-				mu.Unlock()
 
-				found := r.traverseOne(e)
+				e := local[len(local)-1]
+				local = local[:len(local)-1]
+				local = append(local, r.traverseOne(e)...)
 
-				mu.Lock()
-				stack = append(stack, found...)
-				active--
-				if len(stack) > 0 || active == 0 {
+				// Hand back a surplus so the others have something to take.
+				// History is narrow in places, and a worker that hoarded its
+				// discoveries would leave every other core idle.
+				if len(local) > 2*walkBatch {
+					mu.Lock()
+					stack = append(stack, local[:len(local)-walkBatch]...)
 					cond.Broadcast()
+					mu.Unlock()
+					local = append(local[:0], local[len(local)-walkBatch:]...)
 				}
-				mu.Unlock()
 			}
 		}()
 	}
 	wg.Wait()
 }
+
+// walkBatch is how many objects a worker claims from the shared stack at once.
+// Large enough that the lock is not the limit on many cores, small enough that
+// a shallow history still spreads across them.
+const walkBatch = 64
 
 // traverseOne reads one object and marks everything it points at.
 func (r *run) traverseOne(e *objEntry) []*objEntry {

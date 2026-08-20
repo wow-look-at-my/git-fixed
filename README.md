@@ -22,7 +22,20 @@ object or it does not happen. See `docs/repair.md`.
 
 ## git-fsck
 
-Same options, same output, same exit status as `git fsck`, and about 1.5x faster than git 2.55.0 on a repository of 229,960 objects.
+Same options, same output, same exit status as `git fsck`, with the work spread across every core instead of one.
+
+**Read the speedup with the core count next to it.** On a four-core machine, over 229,960 objects, it is 1.93x git 2.55.0 -- and four cores is all the
+speedup four cores can buy. Reproduce it yourself: `scripts/make-bench-repo.sh <dir>` builds the repository and `scripts/bench.sh <dir>` times both
+tools, refusing to print a number unless their output matched.
+
+| workers | seconds | vs git |
+|---|---|---|
+| 1 | 1.305 | 0.97x |
+| 2 | 0.948 | 1.33x |
+| 4 | 0.655 | 1.93x |
+
+The honest limit is in that table: four workers give 1.99x of one, not 4x, so about two thirds of the run is parallel today. `docs/architecture.md`
+says what the rest is and what has already been taken off it.
 
 ```
 $ git-fsck

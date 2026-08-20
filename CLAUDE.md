@@ -51,6 +51,8 @@ Breaking one of these costs about half the run. Each is a mistake that was made 
 - **A packed read goes through the delta base cache.** Without it an object at chain depth ten costs ten inflations. `internal/odb/cache.go`.
 - **A tree is decoded once**, into a pooled slice, with entry names as `[]byte` views into the decode buffer. Copying them to strings was the single
   largest allocation source measured.
+- **`packEntry` holds no pointer, and the object table has 64 shards per core.** There is one of each per object, so a pointer or a shard collision
+  costs the whole repository. `docs/architecture.md` has the four that were measured and fixed.
 - `scripts/bench.sh <repo>` measures against the system git and refuses to print a time unless the output matched.
 
 ## Deliberate divergences
