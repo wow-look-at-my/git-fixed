@@ -53,7 +53,7 @@ func TestParseTree(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, entries, 4)
 
-	assert.Equal(t, "a", entries[0].Name)
+	assert.Equal(t, "a", string(entries[0].Name))
 	assert.Equal(t, uint32(0o100644), entries[0].Mode)
 	assert.True(t, entries[0].IsRegular())
 	assert.True(t, entries[1].IsDir())
@@ -135,8 +135,8 @@ func TestVerifyOrdered(t *testing.T) {
 	// The candidate stack carries over between adjacent pairs, so each case
 	// starts from an empty one.
 	pair := func(mode1 uint32, name1 string, mode2 uint32, name2 string) int {
-		var candidates []string
-		return verifyOrdered(mode1, name1, mode2, name2, &candidates)
+		var candidates [][]byte
+		return verifyOrdered(mode1, []byte(name1), mode2, []byte(name2), &candidates)
 	}
 	assert.Equal(t, treeOrdered, pair(0o100644, "a", 0o100644, "b"))
 	assert.Equal(t, treeUnordered, pair(0o100644, "b", 0o100644, "a"))
@@ -151,17 +151,20 @@ func TestVerifyOrdered(t *testing.T) {
 func TestVerifyOrderedNonAdjacentDuplicate(t *testing.T) {
 	// git's own comment names this sequence: the implied slash makes "foo"
 	// and "foo/" duplicates even though three entries separate them.
-	var candidates []string
-	names := [][2]any{
-		{uint32(0o100644), "foo"},
-		{uint32(0o100644), "foo.bar"},
-		{uint32(0o40000), "foo.bar"},
-		{uint32(0o40000), "foo"},
+	var candidates [][]byte
+	names := []struct {
+		mode uint32
+		name string
+	}{
+		{0o100644, "foo"},
+		{0o100644, "foo.bar"},
+		{0o40000, "foo.bar"},
+		{0o40000, "foo"},
 	}
 	last := treeOrdered
 	for i := 1; i < len(names); i++ {
-		last = verifyOrdered(names[i-1][0].(uint32), names[i-1][1].(string),
-			names[i][0].(uint32), names[i][1].(string), &candidates)
+		last = verifyOrdered(names[i-1].mode, []byte(names[i-1].name),
+			names[i].mode, []byte(names[i].name), &candidates)
 	}
 	assert.Equal(t, treeHasDups, last, "%v", candidates)
 }

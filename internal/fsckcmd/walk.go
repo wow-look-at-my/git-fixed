@@ -35,10 +35,17 @@ func walkLinks(typ gitobj.Type, oid gitobj.OID, buf []byte, algo *gitobj.Algo, n
 }
 
 func treeLinks(buf []byte, algo *gitobj.Algo, name string, named bool) ([]link, []string) {
-	entries, err := fsck.ParseTree(buf, algo)
-	var out []link
+	// git's tree walk stops at the entry it cannot decode. The object check
+	// reports the malformed tree separately, so the error is dropped here.
+	entries, _ := fsck.ParseTree(buf, algo)
+	return treeLinksFrom(entries, name, named), nil
+}
+
+// treeLinksFrom builds the links of a tree that is already decoded.
+func treeLinksFrom(entries []fsck.TreeEntry, name string, named bool) []link {
+	out := make([]link, 0, len(entries))
 	for i := range entries {
-		e := entries[i]
+		e := &entries[i]
 		switch {
 		case e.IsGitlink():
 			// A submodule commit is not part of this repository.
@@ -46,25 +53,56 @@ func treeLinks(buf []byte, algo *gitobj.Algo, name string, named bool) ([]link, 
 		case e.IsDir():
 			l := link{oid: e.OID, typ: gitobj.TypeTree}
 			if named && name != "" {
-				l.name = name + e.Name + "/"
+				l.name = name + string(e.Name) + "/"
 			}
 			out = append(out, l)
 		case e.IsRegular() || e.IsSymlink():
 			l := link{oid: e.OID, typ: gitobj.TypeBlob}
 			if named && name != "" {
-				l.name = name + e.Name
+				l.name = name + string(e.Name)
 			}
 			out = append(out, l)
 		default:
-			out = append(out, link{badMode: true, entry: e.Name, rawMode: e.Mode})
+			out = append(out, link{badMode: true, entry: string(e.Name), rawMode: e.Mode})
 		}
 	}
-	if err != nil {
-		// git's tree walk stops at the entry it cannot decode. The
-		// object check reports the malformed tree separately.
-		return out, nil
+	return out
+}
+
+// treeEdges resolves a decoded tree straight into the compact edges the
+// connectivity walk keeps, without the intermediate links. A tree entry is the
+// most numerous thing in a repository, so this is the path that decides how
+// much memory a run costs.
+func (r *run) treeEdges(key sortKey, oid gitobj.OID, entries []fsck.TreeEntry) (edges []edge, bad []link, broken bool) {
+	edges = make([]edge, 0, len(entries))
+	for i := range entries {
+		e := &entries[i]
+		var typ gitobj.Type
+		switch {
+		case e.IsGitlink():
+			// A submodule commit is not part of this repository.
+			continue
+		case e.IsDir():
+			typ = gitobj.TypeTree
+		case e.IsRegular() || e.IsSymlink():
+			typ = gitobj.TypeBlob
+		default:
+			l := link{badMode: true, entry: string(e.Name), rawMode: e.Mode}
+			r.rep.Errf(key, "error: in tree %s: entry %s has bad mode %.6o",
+				r.fsck.Describe(oid), l.entry, l.rawMode)
+			bad = append(bad, l)
+			broken = true
+			continue
+		}
+		target, ok := r.objs.Lookup(e.OID, typ)
+		if !ok {
+			broken = true
+		} else {
+			target.SetFlag(flagUsed)
+		}
+		edges = append(edges, edge{target: target, typ: typ})
 	}
-	return out, nil
+	return edges, bad, broken
 }
 
 func commitLinks(oid gitobj.OID, buf []byte, algo *gitobj.Algo, name string, named bool) ([]link, []string) {

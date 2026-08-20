@@ -10,7 +10,7 @@
 package gitpath
 
 import (
-	"strings"
+	"bytes"
 	"unicode/utf8"
 
 	"golang.org/x/text/unicode/norm"
@@ -29,29 +29,29 @@ const (
 )
 
 // IsDotGit reports whether name reaches ".git" on any filesystem git knows.
-func IsDotGit(name string) bool { return matches(name, dotGit) }
+func IsDotGit(name []byte) bool { return matches(name, dotGit) }
 
 // IsDotGitmodules reports whether name reaches ".gitmodules".
-func IsDotGitmodules(name string) bool { return matches(name, dotGitmodules) }
+func IsDotGitmodules(name []byte) bool { return matches(name, dotGitmodules) }
 
 // IsDotGitignore reports whether name reaches ".gitignore".
-func IsDotGitignore(name string) bool { return matches(name, dotGitignore) }
+func IsDotGitignore(name []byte) bool { return matches(name, dotGitignore) }
 
 // IsDotGitattributes reports whether name reaches ".gitattributes".
-func IsDotGitattributes(name string) bool { return matches(name, dotGitattrs) }
+func IsDotGitattributes(name []byte) bool { return matches(name, dotGitattrs) }
 
 // IsDotMailmap reports whether name reaches ".mailmap".
-func IsDotMailmap(name string) bool { return matches(name, dotMailmap) }
+func IsDotMailmap(name []byte) bool { return matches(name, dotMailmap) }
 
 // IsNTFSDotGit reports only the NTFS spelling of ".git". The tree check applies
 // it on its own to each segment after a backslash, because NTFS reads a
 // backslash as a directory separator and git does not.
-func IsNTFSDotGit(name string) bool { return isNTFSDotGit(name) }
+func IsNTFSDotGit(name []byte) bool { return isNTFSDotGit(name) }
 
 // IsNTFSDotGitmodules reports only the NTFS spelling of ".gitmodules".
-func IsNTFSDotGitmodules(name string) bool { return isNTFSDotGeneric(name, dotGitmodules) }
+func IsNTFSDotGitmodules(name []byte) bool { return isNTFSDotGeneric(name, dotGitmodules) }
 
-func matches(name string, n needle) bool {
+func matches(name []byte, n needle) bool {
 	if n == dotGit {
 		if isHFSDotGeneric(name, n) || isNTFSDotGit(name) {
 			return true
@@ -59,7 +59,23 @@ func matches(name string, n needle) bool {
 	} else if isHFSDotGeneric(name, n) || isNTFSDotGeneric(name, n) {
 		return true
 	}
+	if isASCII(name) {
+		// Normalization leaves an ASCII name alone, and ext4's case fold
+		// over ASCII is the fold the HFS check above already applied. So
+		// neither filesystem reaches anything new, and an ordinary
+		// repository takes this path for every entry.
+		return false
+	}
 	return isExt4DotGeneric(name, n) || isZFSDotGeneric(name, n)
+}
+
+func isASCII(b []byte) bool {
+	for _, c := range b {
+		if c >= utf8.RuneSelf {
+			return false
+		}
+	}
+	return true
 }
 
 // ntfsShortnamePrefix is the fall-back 8.3 short name NTFS derives for each
@@ -94,14 +110,14 @@ func hfsIgnorable(r rune) bool {
 // nextHFSChar returns the next code point HFS+ would compare, skipping the
 // ignorable ones. It reports ok=false on malformed UTF-8, which is enough for
 // the caller to conclude the name is not a control name.
-func nextHFSChar(s string) (r rune, rest string, ok bool) {
+func nextHFSChar(s []byte) (r rune, rest []byte, ok bool) {
 	for {
-		if s == "" {
-			return 0, "", true
+		if len(s) == 0 {
+			return 0, nil, true
 		}
-		r, size := utf8.DecodeRuneInString(s)
+		r, size := utf8.DecodeRune(s)
 		if r == utf8.RuneError && size <= 1 {
-			return 0, "", false
+			return 0, nil, false
 		}
 		s = s[size:]
 		if hfsIgnorable(r) {
@@ -111,7 +127,7 @@ func nextHFSChar(s string) (r rune, rest string, ok bool) {
 	}
 }
 
-func isHFSDotGeneric(name string, n needle) bool {
+func isHFSDotGeneric(name []byte, n needle) bool {
 	r, rest, ok := nextHFSChar(name)
 	if !ok || r != '.' {
 		return false
@@ -131,7 +147,7 @@ func isHFSDotGeneric(name string, n needle) bool {
 
 // isNTFSDotGit is git's is_ntfs_dotgit(): ".git" or the short name "git~1",
 // either one followed only by spaces and periods.
-func isNTFSDotGit(name string) bool {
+func isNTFSDotGit(name []byte) bool {
 	i := 0
 	next := func() byte {
 		if i >= len(name) {
@@ -168,7 +184,7 @@ func isNTFSDotGit(name string) bool {
 // isNTFSDotGeneric is git's is_ntfs_dot_generic(): the plain name, the regular
 // 8.3 short name, or the fall-back short name, each followed only by spaces and
 // periods.
-func isNTFSDotGeneric(name string, n needle) bool {
+func isNTFSDotGeneric(name []byte, n needle) bool {
 	prefix := ntfsShortnamePrefix(n)
 	if len(name) > 0 && name[0] == '.' && hasPrefixFold(name[1:], string(n)) {
 		return onlySpacesAndPeriods(name, len(n)+1)
@@ -204,7 +220,7 @@ func isNTFSDotGeneric(name string, n needle) bool {
 	return onlySpacesAndPeriods(name, 8)
 }
 
-func onlySpacesAndPeriods(name string, i int) bool {
+func onlySpacesAndPeriods(name []byte, i int) bool {
 	for ; i < len(name); i++ {
 		c := name[i]
 		if c == ':' {
@@ -221,11 +237,11 @@ func onlySpacesAndPeriods(name string, i int) bool {
 // would resolve name to the control name. ext4 compares names under Unicode
 // case folding, which reaches past the ASCII folding the NTFS check does: the
 // long s U+017F folds to "s", so ".gitmoduleſ" opens .gitmodules there.
-func isExt4DotGeneric(name string, n needle) bool {
-	if !utf8.ValidString(name) {
+func isExt4DotGeneric(name []byte, n needle) bool {
+	if !utf8.Valid(name) {
 		return false
 	}
-	return strings.EqualFold(name, "."+string(n))
+	return bytes.EqualFold(name, dotted(n))
 }
 
 // isZFSDotGeneric reports whether a ZFS dataset that normalizes names would
@@ -233,12 +249,29 @@ func isExt4DotGeneric(name string, n needle) bool {
 // normalization= setting at once, because two names equal under formC, formD,
 // or formKC are equal under formKD too. Folding case on top covers
 // casesensitivity=insensitive and =mixed.
-func isZFSDotGeneric(name string, n needle) bool {
-	if !utf8.ValidString(name) {
+func isZFSDotGeneric(name []byte, n needle) bool {
+	if !utf8.Valid(name) {
 		return false
 	}
-	return strings.EqualFold(norm.NFKD.String(name), "."+string(n))
+	// A name already in normal form needs no copy, which is every name in
+	// an ordinary repository.
+	if norm.NFKD.IsNormal(name) {
+		return bytes.EqualFold(name, dotted(n))
+	}
+	return bytes.EqualFold(norm.NFKD.Bytes(name), dotted(n))
 }
+
+// dottedNames holds each control name with its leading period, so the
+// comparison below allocates nothing.
+var dottedNames = map[needle][]byte{
+	dotGit:        []byte(".git"),
+	dotGitmodules: []byte(".gitmodules"),
+	dotGitignore:  []byte(".gitignore"),
+	dotGitattrs:   []byte(".gitattributes"),
+	dotMailmap:    []byte(".mailmap"),
+}
+
+func dotted(n needle) []byte { return dottedNames[n] }
 
 func eqAnyCase(c, lower byte) bool { return toLowerASCII(c) == lower }
 
@@ -249,7 +282,7 @@ func toLowerASCII(c byte) byte {
 	return c
 }
 
-func hasPrefixFold(s, prefix string) bool {
+func hasPrefixFold(s []byte, prefix string) bool {
 	if len(s) < len(prefix) {
 		return false
 	}

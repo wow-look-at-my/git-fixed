@@ -17,9 +17,14 @@ const (
 )
 
 // TreeEntry is one line of a tree object, with the mode exactly as stored.
+//
+// Name and Raw point into the buffer the entry was decoded from, so neither
+// outlives it. A tree can hold thousands of entries and a repository millions
+// of trees, and copying every name is the most expensive thing a tree check
+// could do.
 type TreeEntry struct {
 	Mode uint32
-	Name string
+	Name []byte
 	OID  gitobj.OID
 	// Raw is the entry's bytes, whose first byte tells a zero-padded mode.
 	Raw []byte
@@ -44,7 +49,13 @@ var errBadTree = errors.New("cannot be parsed as a tree")
 // ParseTree decodes a whole tree object. It stops at the first malformed entry
 // and returns what it read up to that point, which is what git reports on.
 func ParseTree(buf []byte, algo *gitobj.Algo) ([]TreeEntry, error) {
-	var out []TreeEntry
+	return ParseTreeInto(nil, buf, algo)
+}
+
+// ParseTreeInto decodes a tree into dst[:0], so a caller that reads many trees
+// reuses one allocation instead of making one per tree.
+func ParseTreeInto(dst []TreeEntry, buf []byte, algo *gitobj.Algo) ([]TreeEntry, error) {
+	out := dst[:0]
 	rest := buf
 	for len(rest) > 0 {
 		e, next, err := decodeTreeEntry(rest, algo)
@@ -88,7 +99,7 @@ func decodeTreeEntry(buf []byte, algo *gitobj.Algo) (TreeEntry, []byte, error) {
 	}
 	e := TreeEntry{
 		Mode: mode,
-		Name: string(buf[sp+1 : nameEnd]),
+		Name: buf[sp+1 : nameEnd],
 		OID:  algo.FromRaw(buf[nameEnd+1:]),
 		Raw:  buf[:sp],
 	}
@@ -97,6 +108,15 @@ func decodeTreeEntry(buf []byte, algo *gitobj.Algo) (TreeEntry, []byte, error) {
 
 // Tree runs every check git makes on a tree object.
 func (o *Options) Tree(ctx any, oid gitobj.OID, buf []byte) int {
+	entries, err := ParseTree(buf, o.Algo)
+	return o.TreeEntries(ctx, oid, entries, err)
+}
+
+// TreeEntries runs the tree checks over entries a caller already decoded, along
+// with the error ParseTree gave it. Decoding a tree is the most expensive part
+// of checking one, so a caller that needs the entries anyway passes them here
+// instead of handing back the bytes.
+func (o *Options) TreeEntries(ctx any, oid gitobj.OID, entries []TreeEntry, err error) int {
 	retval := 0
 	var (
 		hasNullSHA1   bool
@@ -111,20 +131,19 @@ func (o *Options) Tree(ctx any, oid gitobj.OID, buf []byte) int {
 		notSorted     bool
 		hasLargeName  bool
 	)
-	entries, err := ParseTree(buf, o.Algo)
 	if err != nil && len(entries) == 0 {
 		return retval + o.report(ctx, oid, gitobj.TypeTree, MsgBadTree, "cannot be parsed as a tree")
 	}
 
-	var candidates []string
+	var candidates [][]byte
 	var prev *TreeEntry
 	for i := range entries {
 		e := &entries[i]
 		hasNullSHA1 = hasNullSHA1 || e.OID.IsNull()
-		hasFullPath = hasFullPath || bytes.ContainsRune([]byte(e.Name), '/')
-		hasEmptyName = hasEmptyName || e.Name == ""
-		hasDot = hasDot || e.Name == "."
-		hasDotdot = hasDotdot || e.Name == ".."
+		hasFullPath = hasFullPath || bytes.IndexByte(e.Name, '/') >= 0
+		hasEmptyName = hasEmptyName || len(e.Name) == 0
+		hasDot = hasDot || string(e.Name) == "."
+		hasDotdot = hasDotdot || string(e.Name) == ".."
 		hasDotgit = hasDotgit || gitpath.IsDotGit(e.Name)
 		hasZeroPad = hasZeroPad || (len(e.Raw) > 0 && e.Raw[0] == '0')
 		hasLargeName = hasLargeName || len(e.Name) > o.MaxTreeEntryLen
@@ -248,9 +267,9 @@ func isLessThanSlash(c byte) bool { return c > 0 && c < '/' }
 
 // verifyOrdered is git's verify_ordered(). Tree entries sort in path order,
 // which means a directory sorts as though its name ended in a slash.
-func verifyOrdered(mode1 uint32, name1 string, mode2 uint32, name2 string, candidates *[]string) int {
+func verifyOrdered(mode1 uint32, name1 []byte, mode2 uint32, name2 []byte, candidates *[][]byte) int {
 	l := min(len(name1), len(name2))
-	switch cmp := bytes.Compare([]byte(name1[:l]), []byte(name2[:l])); {
+	switch cmp := bytes.Compare(name1[:l], name2[:l]); {
 	case cmp < 0:
 		return treeOrdered
 	case cmp > 0:
@@ -283,11 +302,11 @@ func verifyOrdered(mode1 uint32, name1 string, mode2 uint32, name2 string, candi
 		for len(*candidates) > 0 {
 			f := (*candidates)[len(*candidates)-1]
 			*candidates = (*candidates)[:len(*candidates)-1]
-			if len(name2) < len(f) || name2[:len(f)] != f {
+			if len(name2) < len(f) || !bytes.Equal(name2[:len(f)], f) {
 				continue
 			}
 			p := name2[len(f):]
-			if p == "" {
+			if len(p) == 0 {
 				return treeHasDups
 			}
 			if isLessThanSlash(p[0]) {

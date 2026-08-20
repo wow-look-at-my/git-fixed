@@ -24,7 +24,7 @@ func TestIsDotGit(t *testing.T) {
 		".\uff47it",  // ZFS folds a fullwidth g to "g"
 		"\uff0egit",  // and a fullwidth stop to "."
 	} {
-		assert.True(t, gitpath.IsDotGit(name), "%q should reach .git", name)
+		assert.True(t, gitpath.IsDotGit([]byte(name)), "%q should reach .git", name)
 	}
 	for _, name := range []string{
 		"",
@@ -38,7 +38,7 @@ func TestIsDotGit(t *testing.T) {
 		".git\xff",
 		"\xff.git",
 	} {
-		assert.False(t, gitpath.IsDotGit(name), "%q should not reach .git", name)
+		assert.False(t, gitpath.IsDotGit([]byte(name)), "%q should not reach .git", name)
 	}
 }
 
@@ -55,7 +55,7 @@ func TestIsDotGitmodules(t *testing.T) {
 		"gi7eba~9",         // any digit, as git allows
 		".gitmodule\u017f", // ext4 casefold: the long s folds to "s"
 	} {
-		assert.True(t, gitpath.IsDotGitmodules(name), "%q should reach .gitmodules", name)
+		assert.True(t, gitpath.IsDotGitmodules([]byte(name)), "%q should reach .gitmodules", name)
 	}
 	for _, name := range []string{
 		"",
@@ -66,34 +66,34 @@ func TestIsDotGitmodules(t *testing.T) {
 		"gi7eba~0",
 		"gi7ebb~1",
 	} {
-		assert.False(t, gitpath.IsDotGitmodules(name), "%q should not reach .gitmodules", name)
+		assert.False(t, gitpath.IsDotGitmodules([]byte(name)), "%q should not reach .gitmodules", name)
 	}
 }
 
 func TestIsOtherControlNames(t *testing.T) {
-	assert.True(t, gitpath.IsDotGitignore(".gitignore"))
-	assert.True(t, gitpath.IsDotGitignore("gi250a~1"))
-	assert.False(t, gitpath.IsDotGitignore(".gitignor"))
+	assert.True(t, gitpath.IsDotGitignore([]byte(".gitignore")))
+	assert.True(t, gitpath.IsDotGitignore([]byte("gi250a~1")))
+	assert.False(t, gitpath.IsDotGitignore([]byte(".gitignor")))
 
-	assert.True(t, gitpath.IsDotGitattributes(".gitattributes"))
-	assert.True(t, gitpath.IsDotGitattributes("gi7d29~1"))
-	assert.False(t, gitpath.IsDotGitattributes(".gitattribute"))
+	assert.True(t, gitpath.IsDotGitattributes([]byte(".gitattributes")))
+	assert.True(t, gitpath.IsDotGitattributes([]byte("gi7d29~1")))
+	assert.False(t, gitpath.IsDotGitattributes([]byte(".gitattribute")))
 
-	assert.True(t, gitpath.IsDotMailmap(".mailmap"))
-	assert.True(t, gitpath.IsDotMailmap("maba30~1"))
-	assert.False(t, gitpath.IsDotMailmap(".mailma"))
+	assert.True(t, gitpath.IsDotMailmap([]byte(".mailmap")))
+	assert.True(t, gitpath.IsDotMailmap([]byte("maba30~1")))
+	assert.False(t, gitpath.IsDotMailmap([]byte(".mailma")))
 }
 
 func TestNTFSOnlyChecks(t *testing.T) {
 	// The tree check applies these to each backslash-separated segment, so
 	// they must answer for the NTFS spelling alone.
-	assert.True(t, gitpath.IsNTFSDotGit(".git"))
-	assert.True(t, gitpath.IsNTFSDotGit("git~1"))
-	assert.True(t, gitpath.IsNTFSDotGit(".git:"))
-	assert.False(t, gitpath.IsNTFSDotGit(".gi\u200ct"), "the HFS spelling is not the NTFS one")
-	assert.False(t, gitpath.IsNTFSDotGit("gits"))
+	assert.True(t, gitpath.IsNTFSDotGit([]byte(".git")))
+	assert.True(t, gitpath.IsNTFSDotGit([]byte("git~1")))
+	assert.True(t, gitpath.IsNTFSDotGit([]byte(".git:")))
+	assert.False(t, gitpath.IsNTFSDotGit([]byte(".gi\u200ct")), "the HFS spelling is not the NTFS one")
+	assert.False(t, gitpath.IsNTFSDotGit([]byte("gits")))
 
-	assert.True(t, gitpath.IsNTFSDotGitmodules(".gitmodules"))
-	assert.True(t, gitpath.IsNTFSDotGitmodules("gi7eba~1"))
-	assert.False(t, gitpath.IsNTFSDotGitmodules(".gitmodule\u017f"))
+	assert.True(t, gitpath.IsNTFSDotGitmodules([]byte(".gitmodules")))
+	assert.True(t, gitpath.IsNTFSDotGitmodules([]byte("gi7eba~1")))
+	assert.False(t, gitpath.IsNTFSDotGitmodules([]byte(".gitmodule\u017f")))
 }

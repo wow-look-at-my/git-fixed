@@ -310,32 +310,58 @@ func (r *run) checkObject(key sortKey, e *objEntry, typ gitobj.Type, buf []byte)
 	}
 	// git walks the links first, marking each target used, and complains
 	// once if any of them does not resolve to the right kind of object.
-	links, parseErrs := walkLinks(typ, e.OID, buf, r.repo.Algo, r.fsck.ObjectName(e.OID), r.o.NameObjects)
-	broken := len(parseErrs) > 0
-	for _, msg := range parseErrs {
-		r.rep.Errf(key, "error: %s", msg)
-	}
-	for _, l := range links {
-		if l.badMode {
-			r.rep.Errf(key, "error: in tree %s: entry %s has bad mode %.6o",
-				r.fsck.Describe(e.OID), l.entry, l.rawMode)
-			broken = true
-			continue
+	// A tree is decoded once here and handed to both the link walk and the
+	// object checks, because decoding it twice was the single largest cost
+	// of the object pass.
+	var edges []edge
+	var badLinks []link
+	var parseErrs []string
+	broken := false
+	linkCount := 0
+	if typ == gitobj.TypeTree {
+		scratch, _ := treeScratch.Get().(*[]fsck.TreeEntry)
+		if scratch == nil {
+			scratch = new([]fsck.TreeEntry)
 		}
-		target, ok := r.objs.Lookup(l.oid, l.typ)
-		if !ok {
-			broken = true
-			continue
+		entries, treeErr := fsck.ParseTreeInto(*scratch, buf, r.repo.Algo)
+		*scratch = entries
+		edges, badLinks, broken = r.treeEdges(key, e.OID, entries)
+		linkCount = len(edges)
+		ret := r.fsck.TreeEntries(key, e.OID, entries, treeErr)
+		treeScratch.Put(scratch)
+		r.recordEdges(e, edges, badLinks, parseErrs)
+		if broken {
+			r.objError(key, e.OID, "broken links")
 		}
-		target.SetFlag(flagUsed)
+		if ret != 0 {
+			return
+		}
+	} else {
+		var links []link
+		links, parseErrs = walkLinks(typ, e.OID, buf, r.repo.Algo, r.fsck.ObjectName(e.OID), r.o.NameObjects)
+		linkCount = len(links)
+		broken = len(parseErrs) > 0
+		for _, msg := range parseErrs {
+			r.rep.Errf(key, "error: %s", msg)
+		}
+		for _, l := range links {
+			target, ok := r.objs.Lookup(l.oid, l.typ)
+			if !ok {
+				broken = true
+			} else {
+				target.SetFlag(flagUsed)
+			}
+			edges = append(edges, edge{target: target, typ: l.typ, viaTag: l.viaTag})
+		}
+		r.recordEdges(e, edges, badLinks, parseErrs)
+		if broken {
+			r.objError(key, e.OID, "broken links")
+		}
+		if r.fsck.Object(key, e.OID, typ, buf) != 0 {
+			return
+		}
 	}
-	if broken {
-		r.objError(key, e.OID, "broken links")
-	}
-	if r.fsck.Object(key, e.OID, typ, buf) != 0 {
-		return
-	}
-	if typ == gitobj.TypeCommit && r.o.ShowRoot && len(links) == 1 {
+	if typ == gitobj.TypeCommit && r.o.ShowRoot && linkCount == 1 {
 		r.rep.Outf(key, "root %s", r.fsck.Describe(e.OID))
 	}
 	if typ == gitobj.TypeTag && r.o.ShowTags {
@@ -345,6 +371,22 @@ func (r *run) checkObject(key sortKey, e *objEntry, typ gitobj.Type, buf []byte)
 				r.fsck.Describe(info.Object), info.Name, r.fsck.Describe(e.OID))
 		}
 	}
+}
+
+// treeScratch lends each worker one entry slice, so decoding a tree does not
+// allocate one per tree.
+var treeScratch sync.Pool
+
+// recordEdges keeps the references for the connectivity walk, unless the names
+// that walk prints make them useless.
+func (r *run) recordEdges(e *objEntry, edges []edge, bad []link, errs []string) {
+	if r.o.NameObjects {
+		// --name-objects builds each name from the path the walk took to
+		// reach an object, so a recorded edge cannot carry it. The walk
+		// re-reads the object in that case.
+		return
+	}
+	e.SetEdges(edges, bad, errs)
 }
 
 // markReachable is git's mark_object_reachable(): a root has no parent to blame
@@ -359,8 +401,8 @@ func (r *run) markReachable(e *objEntry) {
 	r.pending = append(r.pending, e)
 }
 
-func linkTypeName(l link) string {
-	if n := l.typ.Name(); n != "" && l.typ != gitobj.TypeAny {
+func linkTypeName(typ gitobj.Type) string {
+	if n := typ.Name(); n != "" && typ != gitobj.TypeAny {
 		return n
 	}
 	return "unknown"

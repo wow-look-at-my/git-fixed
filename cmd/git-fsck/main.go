@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"runtime/pprof"
 	"strconv"
 
 	"github.com/wow-look-at-my/git-fixed/internal/fsckcmd"
@@ -22,7 +23,12 @@ var usage = []string{
 }
 
 func main() {
-	os.Exit(run(os.Args[1:]))
+	stop := startProfile()
+	defer stop()
+	code := run(os.Args[1:])
+	stop()
+	writeMemProfile()
+	os.Exit(code)
 }
 
 func run(args []string) int {
@@ -118,4 +124,39 @@ func run(args []string) int {
 func isTerminal(f *os.File) bool {
 	st, err := f.Stat()
 	return err == nil && st.Mode()&os.ModeCharDevice != 0
+}
+
+// TEMPORARY: profiling hook for the benchmark work. Remove before commit.
+func startProfile() func() {
+	path := os.Getenv("GIT_FIXED_CPUPROFILE")
+	if path == "" {
+		return func() {}
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		panic(err)
+	}
+	if err := pprof.StartCPUProfile(f); err != nil {
+		panic(err)
+	}
+	return func() {
+		pprof.StopCPUProfile()
+		f.Close()
+	}
+}
+
+// TEMPORARY: allocation profile for the benchmark work. Remove before commit.
+func writeMemProfile() {
+	path := os.Getenv("GIT_FIXED_MEMPROFILE")
+	if path == "" {
+		return
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		panic(err)
+	}
+	defer f.Close()
+	if err := pprof.Lookup("allocs").WriteTo(f, 0); err != nil {
+		panic(err)
+	}
 }

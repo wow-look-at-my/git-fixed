@@ -22,6 +22,51 @@ type objEntry struct {
 	typ   atomic.Int32
 	flags atomic.Uint32
 	seq   int64
+
+	// edges is what the object pass found this object points at. Keeping
+	// them saves the connectivity walk from inflating and parsing every
+	// object a second time. git keeps the whole parsed object for the same
+	// reason; an edge is a fraction of the memory.
+	//
+	// see docs/architecture.md
+	edges []edge
+	// badEdges and edgeErrs carry the two rare cases, which need the
+	// strings a message prints. Keeping them out of edge is what lets a
+	// large repository hold one edge per tree entry for the whole run.
+	badEdges []link
+	edgeErrs []string
+	walked   atomic.Bool
+}
+
+// edge is one resolved reference, in the compact form the connectivity walk
+// needs. It holds no strings, so the collector has almost nothing to scan.
+type edge struct {
+	target *objEntry
+	typ    gitobj.Type
+	viaTag bool
+}
+
+// ok reports whether the reference resolved. The table hands back no entry when
+// the target's type contradicts what the reference implies, which git reports
+// as a broken link.
+func (e edge) ok() bool { return e.target != nil }
+
+// SetEdges records what the object pass found. Only the goroutine that won the
+// flagSeen race calls this.
+func (e *objEntry) SetEdges(edges []edge, bad []link, errs []string) {
+	e.edges = edges
+	e.badEdges = bad
+	e.edgeErrs = errs
+	e.walked.Store(true)
+}
+
+// Edges returns the recorded references, and reports whether the object pass
+// recorded any.
+func (e *objEntry) Edges() ([]edge, []link, []string, bool) {
+	if !e.walked.Load() {
+		return nil, nil, nil, false
+	}
+	return e.edges, e.badEdges, e.edgeErrs, true
 }
 
 // Type returns the object's type, which may be an expectation recorded by

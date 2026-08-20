@@ -60,6 +60,20 @@ func (r *run) traverseOne(e *objEntry) []*objEntry {
 		return nil
 	}
 	key := sortKey{phase: phaseConnectivity, oid: e.OID}
+	if edges, badLinks, parseErrs, cached := e.Edges(); cached {
+		for _, msg := range parseErrs {
+			r.rep.Errf(key, "error: %s", msg)
+		}
+		for _, l := range badLinks {
+			r.rep.Errf(key, "error: in tree %s: entry %s has bad mode %.6o",
+				r.fsck.Describe(e.OID), l.entry, l.rawMode)
+		}
+		var out []*objEntry
+		for _, ed := range edges {
+			out = r.markLinkInto(key, e, ed.typ, ed.viaTag, ed.target, ed.ok(), out)
+		}
+		return out
+	}
 	_, buf, err := r.readObject(e.OID)
 	if err != nil {
 		r.rep.Errf(key, "error: Unknown object type for %s", r.fsck.Describe(e.OID))
@@ -80,22 +94,22 @@ func (r *run) traverseOne(e *objEntry) []*objEntry {
 			r.fsck.PutObjectName(l.oid, "%s", l.name)
 		}
 		target, ok := r.objs.Lookup(l.oid, l.typ)
-		out = r.markLinkInto(key, e, l, target, ok, out)
+		out = r.markLinkInto(key, e, l.typ, l.viaTag, target, ok, out)
 	}
 	return out
 }
 
 // markLinkInto is markLink with the newly reachable objects collected into a
 // per-worker slice instead of a shared queue.
-func (r *run) markLinkInto(key sortKey, parent *objEntry, l link, target *objEntry, ok bool, sink []*objEntry) []*objEntry {
+func (r *run) markLinkInto(key sortKey, parent *objEntry, typ gitobj.Type, viaTag bool, target *objEntry, ok bool, sink []*objEntry) []*objEntry {
 	if !ok || target == nil {
 		r.rep.Outf(key, "broken link from %7s %s",
 			r.printableType(parent.OID, parent.Type()), r.fsck.Describe(parent.OID))
-		r.rep.Outf(key, "broken link from %7s %s", linkTypeName(l), "unknown")
+		r.rep.Outf(key, "broken link from %7s %s", linkTypeName(typ), "unknown")
 		r.fail(ErrorReachable)
 		return sink
 	}
-	if !l.viaTag && target.Type() != gitobj.TypeNone && target.Type() != l.typ {
+	if !viaTag && target.Type() != gitobj.TypeNone && target.Type() != typ {
 		r.objError(key, parent.OID, "wrong object type in link")
 	}
 	if target.SetFlag(flagReachable) {
@@ -137,6 +151,14 @@ func (r *run) markUnreachableReferents() {
 			typ = t
 		}
 		if typ == gitobj.TypeBlob {
+			return
+		}
+		if edges, _, _, cached := e.Edges(); cached {
+			for _, ed := range edges {
+				if ed.target != nil {
+					ed.target.SetFlag(flagUsed)
+				}
+			}
 			return
 		}
 		_, buf, err := r.readObject(e.OID)

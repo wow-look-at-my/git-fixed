@@ -29,10 +29,10 @@ func TestParseSize(t *testing.T) {
 }
 
 func TestLinkTypeName(t *testing.T) {
-	assert.Equal(t, "commit", linkTypeName(link{typ: gitobj.TypeCommit}))
-	assert.Equal(t, "tree", linkTypeName(link{typ: gitobj.TypeTree}))
-	assert.Equal(t, "unknown", linkTypeName(link{typ: gitobj.TypeAny}))
-	assert.Equal(t, "unknown", linkTypeName(link{typ: gitobj.TypeBad}))
+	assert.Equal(t, "commit", linkTypeName(gitobj.TypeCommit))
+	assert.Equal(t, "tree", linkTypeName(gitobj.TypeTree))
+	assert.Equal(t, "unknown", linkTypeName(gitobj.TypeAny))
+	assert.Equal(t, "unknown", linkTypeName(gitobj.TypeBad))
 }
 
 func TestHashSlots(t *testing.T) {
