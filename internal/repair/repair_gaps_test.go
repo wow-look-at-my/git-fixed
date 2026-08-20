@@ -19,6 +19,16 @@ import (
 	"github.com/wow-look-at-my/git-fixed/internal/gittest"
 )
 
+// overwrite replaces a file's content whatever mode it carries.
+//
+// git writes a packfile read-only, so a plain WriteFile over one fails for
+// every user except root. Damaging a pack is exactly what these tests do.
+func overwrite(t *testing.T, path string, data []byte) {
+	t.Helper()
+	require.NoError(t, os.Chmod(path, 0o644))
+	require.NoError(t, os.WriteFile(path, data, 0o644))
+}
+
 // packFile finds the one packfile in a repository.
 func packFile(t *testing.T, r *gittest.Repo) string {
 	t.Helper()
@@ -56,7 +66,7 @@ func TestRepairsACorruptPackfile(t *testing.T) {
 	// damage lands on an object rather than on the frame around them.
 	at := len(data) / 2
 	data[at] ^= 0xff
-	require.NoError(t, os.WriteFile(pack, data, 0o644))
+	overwrite(t, pack, data)
 	require.NotEqual(t, 0, r.GitFsck().Code, "the test did not break anything")
 
 	res := fix(t, r)
@@ -90,7 +100,7 @@ func TestACorruptPackKeepsItsUnreadableObject(t *testing.T) {
 	for i := range body {
 		body[i] ^= 0x5a
 	}
-	require.NoError(t, os.WriteFile(pack, data, 0o644))
+	overwrite(t, pack, data)
 
 	res := fix(t, r)
 
@@ -114,7 +124,7 @@ func TestRebuildsAnUnparseableIndex(t *testing.T) {
 	path := filepath.Join(r.GitDir(), "index")
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(path, data[:len(data)/2], 0o644))
+	overwrite(t, path, data[:len(data)/2])
 	require.NotEqual(t, 0, r.GitFsck().Code, "the test did not break anything")
 
 	res := fix(t, r)
@@ -143,7 +153,7 @@ func TestAnIndexRebuildKeepsStagedWork(t *testing.T) {
 	path := filepath.Join(r.GitDir(), "index")
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(path, data[:len(data)-8], 0o644))
+	overwrite(t, path, data[:len(data)-8])
 
 	res := fix(t, r)
 
@@ -171,7 +181,7 @@ func TestRewritesAMalformedPackedRefs(t *testing.T) {
 	require.Greater(t, len(lines), 1, "pack-refs wrote nothing to damage")
 	// After the header, so the references below it are the ones hidden.
 	broken := append([]string{lines[0], "this is not a reference line"}, lines[1:]...)
-	require.NoError(t, os.WriteFile(path, []byte(strings.Join(broken, "\n")+"\n"), 0o644))
+	overwrite(t, path, []byte(strings.Join(broken, "\n")+"\n"))
 	require.NotEqual(t, 0, r.GitFsck().Code, "the test did not break anything")
 
 	res := fix(t, r)
@@ -209,7 +219,7 @@ func TestAPackedRefsRewriteRestoresAMangledLine(t *testing.T) {
 	require.NoError(t, err)
 	mangled := strings.ReplaceAll(string(data), head+" refs/heads/keep-me", "zzz refs/heads/keep-me")
 	require.NotEqual(t, string(data), mangled, "the test damaged nothing")
-	require.NoError(t, os.WriteFile(path, []byte(mangled), 0o644))
+	overwrite(t, path, []byte(mangled))
 
 	res := fix(t, r)
 
