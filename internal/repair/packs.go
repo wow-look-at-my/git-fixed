@@ -83,7 +83,10 @@ func verifyPack(p *odb.Pack, m *progress.Meter) (BadPack, bool) {
 			}
 		},
 		Progress: m.Step,
-		Workers:  1,
+		// Every core, as the fsck above uses. This reads and writes
+		// nothing, so there is no ordering to keep: rescuePack is the one
+		// that needs a single worker, because it writes each object out.
+		// Verify calls Emit under its own lock.
 	})
 	if ok && first == "" {
 		return BadPack{}, false
