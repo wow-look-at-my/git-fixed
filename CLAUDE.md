@@ -12,7 +12,7 @@ out of `internal/fsckcmd`.
 - **The differential tests need git >= `gittest.MinGit`, and fail rather than skip below it.** An older git rewords messages, so a run against one
   compares this implementation against a different specification. CI installs git from `ppa:git-core/ppa` for the same reason.
 - **A new check needs a differential test in the same change.** `internal/fsckcmd/differential_test.go` and `repos_test.go` hold 41 of them, and
-  `refs_test.go` holds 23 more. `internal/gittest` writes the broken repositories git's porcelain refuses to produce.
+  `refs_test.go` and `corrupt_test.go` hold 36 more. `internal/gittest` writes the broken repositories git's porcelain refuses to produce.
 - **`go-toolchain`, bare, is the build.** It gates coverage at 80%. Never run `go build` or `go test` directly, and never pipe its output.
 
 ## Layout
@@ -41,8 +41,9 @@ Breaking one of these costs about half the run. Each is a mistake that was made 
 ## Deliberate divergences
 
 - **ext4 and ZFS `.git` aliases are reported; git checks only HFS+ and NTFS.** On by default, no opt-out. `docs/alias-detection.md`.
-- **zlib's per-error detail line is missing** for a corrupt loose object other than a bad header, because Go's decompressor collapses those cases.
-  This is the one known gap, and `docs/architecture.md` says what closing it takes.
+
+There are no known gaps otherwise. The one that used to be here -- zlib's own complaint about a corrupt object, which Go's decompressor does not
+distinguish -- is now reproduced by `internal/zlibmsg`. `docs/zlib-messages.md`.
 
 ## Docs
 
@@ -53,3 +54,4 @@ Breaking one of these costs about half the run. Each is a mistake that was made 
 - `docs/commit-graph.md` -- commit-graph checks, chains, generation numbers
 - `docs/multi-pack-index.md` -- multi-pack-index checks and its three failure vocabularies
 - `docs/ref-consistency.md` -- the ref database check, its 16 message ids, packed-refs grammar
+- `docs/zlib-messages.md` -- reproducing zlib's own complaint about a corrupt object

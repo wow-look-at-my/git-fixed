@@ -4,7 +4,7 @@ Drop-in replacements for git's own commands, written in Go, that use every core 
 
 ## git-fsck
 
-Same options, same output, same exit status as `git fsck`, and about 1.6x faster on a repository of 406,500 objects.
+Same options, same output, same exit status as `git fsck`, and about 1.5x faster than git 2.55.0 on a repository of 229,960 objects.
 
 ```
 $ git-fsck
@@ -34,16 +34,15 @@ One check goes further than git's. A tree entry whose name would reach `.git` on
 and not by git, which only knows HFS+ and NTFS. It is on by default and there is no way to turn it off. See
 [docs/alias-detection.md](docs/alias-detection.md).
 
-### One known difference
-
-For a corrupt loose object, git prints an extra line naming zlib's own complaint, such as `inflate: data stream error (invalid block type)`. Go's
-decompressor does not distinguish those cases, so that line is missing except for a bad zlib header, where the wording does match. Every other line,
-and the exit status, agree. [docs/architecture.md](docs/architecture.md) says what closing it would take.
-
 ### Is it really the same?
 
-64 differential tests build a deliberately broken repository, run the system `git fsck` and this one over it, and require the same lines and the same
-exit status. `scripts/bench.sh` refuses to report a time unless the two agreed first.
+77 differential tests build a deliberately broken repository, run the system `git fsck` and this one over it, and require the same lines and the same
+exit status. Two of them corrupt a repository one byte at a time: 328 loose objects in one repository, and a packfile at twelve points.
+`scripts/bench.sh` refuses to report a time unless the two agreed first.
+
+That includes the line git's decompressor prints for itself, such as `inflate: data stream error (invalid block type)`. Go's decompressor reports
+every one of those cases as the same error, so the reason is worked out separately, by an inflate that runs only after a read has failed. See
+[docs/zlib-messages.md](docs/zlib-messages.md).
 
 ## Documentation
 
@@ -54,3 +53,4 @@ exit status. `scripts/bench.sh` refuses to report a time unless the two agreed f
 - [docs/commit-graph.md](docs/commit-graph.md) -- commit-graph checks
 - [docs/multi-pack-index.md](docs/multi-pack-index.md) -- multi-pack-index checks
 - [docs/ref-consistency.md](docs/ref-consistency.md) -- the ref database check
+- [docs/zlib-messages.md](docs/zlib-messages.md) -- reproducing zlib's own complaint

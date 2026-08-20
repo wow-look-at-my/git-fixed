@@ -9,8 +9,8 @@ Two runs agree when they print the same SET of lines and exit with the same stat
 order and of its internal hash table, so it is not reproducible from one machine to the next. `internal/gittest/fsck.go` compares that way. It runs
 the system `git fsck` in the same repository, splits both outputs into non-empty lines, sorts them, and requires equality along with the exit code.
 
-`internal/fsckcmd/differential_test.go`, `repos_test.go` and `refs_test.go` hold 64 such comparisons. Each builds a repository that is broken in one
-specific way -- a tree entry named `.git`, a duplicate tree entry, a bad committer line, a corrupt loose object, a pack whose CRC no longer matches, a
+`internal/fsckcmd/differential_test.go`, `repos_test.go`, `refs_test.go` and `corrupt_test.go` hold 77 such comparisons. Each builds a repository
+that is broken in one specific way -- a tree entry named `.git`, a duplicate tree entry, a bad committer line, a corrupt loose object, a pack whose CRC no longer matches, a
 commit-graph with a wrong parent, a `packed-refs` line with no newline -- and then requires the two implementations to agree.
 `internal/gittest/repo.go` writes those repositories directly, because git's own porcelain refuses to produce most of them.
 
@@ -67,27 +67,25 @@ objects in reachability order rather than pack order.
 
 ## Measured
 
-On a synthetic repository of 406,500 objects, against git 2.43.0. `scripts/bench.sh` produces these numbers, and refuses to print a time unless the
-two implementations agreed on the output first.
+On a synthetic repository of 229,960 objects, built by `scripts/make-bench-repo.sh`, against git 2.55.0. `scripts/bench.sh` produces these numbers,
+and refuses to print a time unless the two implementations agreed on the output first.
 
 | run                        | git   | git-fixed | git-fixed, one worker |
 |----------------------------|-------|-----------|-----------------------|
-| `fsck`                     | 2.43s | 1.52s     | 2.84s                 |
-| `fsck --connectivity-only` | 0.89s | 1.66s     | 3.39s                 |
-| `fsck --no-full`           | 0.03s | 0.13s     |                       |
+| `fsck`                     | 1.23s | 0.82s     | 1.50s                 |
+| `fsck --connectivity-only` | 0.46s | 0.76s     | 1.32s                 |
+| `fsck --no-full`           | 0.02s | 0.07s     |                       |
 
 `--connectivity-only` is the one mode that is still slower than git. It has no object pass, so it has no edge cache to walk and pays a full object
 read per node; git's advantage there is that its parsed objects are already in memory from the mark pass. `--no-full` is far too short to say
 anything.
 
-## Known divergence: zlib error detail
+## zlib's own messages
 
-git's decompressor prints zlib's own complaint before its caller adds one, so a corrupt loose object can produce a line like `error: inflate: data
-stream error (invalid block type)`. Go's `compress/flate` collapses every one of those cases into a single corrupt-input error with a byte offset, so
-that line is missing for every failure except a bad zlib header, whose wording we do match. Every other line, and the exit status, still agree.
-
-Closing it means writing a DEFLATE decoder that carries zlib's error taxonomy -- roughly fifteen distinct messages -- and keeping it as fast as the
-standard library's. Guessing at the message from the offset would print the wrong reason, which is worse than printing none.
+git prints its decompressor's complaint before its caller adds one, so a corrupt object produces a line like `error: inflate: data stream error
+(invalid block type)`. Go's `compress/flate` reports every one of those cases as one corrupt-input error, so the reason has to be worked out
+separately. `internal/zlibmsg` is an inflate that produces nothing but the first fault, and it runs only after a read has already failed. See
+`docs/zlib-messages.md`.
 
 ## Package layout
 
