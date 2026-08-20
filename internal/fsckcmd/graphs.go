@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/wow-look-at-my/git-fixed/internal/gitobj"
@@ -169,13 +168,5 @@ func commitGraphFiles(objectDir string) []string {
 		}
 		out = append(out, filepath.Join(objectDir, "info", "commit-graphs", "graph-"+line+".graph"))
 	}
-	return out
-}
-
-// sortedOIDs returns object names in order, for a caller that has to report a
-// disordered table.
-func sortedOIDs(in []gitobj.OID) []gitobj.OID {
-	out := append([]gitobj.OID(nil), in...)
-	sort.Slice(out, func(i, j int) bool { return out[i].Compare(out[j]) < 0 })
 	return out
 }

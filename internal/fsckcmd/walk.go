@@ -14,6 +14,8 @@ type link struct {
 	name string      // the readable name, empty unless --name-objects is on
 	// badMode is set for a tree entry whose mode names no kind of object.
 	badMode bool
+	// viaTag marks a tag's target, which git accepts at any type.
+	viaTag  bool
 	entry   string
 	rawMode uint32
 }
@@ -163,7 +165,7 @@ func tagLinks(oid gitobj.OID, buf []byte, algo *gitobj.Algo, name string, named 
 			fmt.Sprintf("bad tag pointer to %s in %s", target, oid),
 		}
 	}
-	l := link{oid: target, typ: typ, name: name}
+	l := link{oid: target, typ: typ, name: name, viaTag: true}
 	if !named {
 		l.name = ""
 	}

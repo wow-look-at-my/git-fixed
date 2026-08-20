@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/wow-look-at-my/go-containers/set"
+
 	"github.com/wow-look-at-my/git-fixed/internal/gitobj"
 )
 
@@ -22,7 +24,7 @@ type ReflogEntry struct {
 // ReflogNames lists every reference that has a log, sorted by name.
 func (r *Repo) ReflogNames(worktreeDir string) []string {
 	var out []string
-	seen := map[string]bool{}
+	seen := set.New[string]()
 	walk := func(root string, perWorktreeOnly bool) {
 		logs := filepath.Join(root, "logs")
 		_ = filepath.WalkDir(logs, func(path string, d fs.DirEntry, err error) error {
@@ -40,8 +42,7 @@ func (r *Repo) ReflogNames(worktreeDir string) []string {
 			if !perWorktreeOnly && worktreeDir != root && isPerWorktree(name) {
 				return nil
 			}
-			if !seen[name] {
-				seen[name] = true
+			if seen.Add(name) {
 				out = append(out, name)
 			}
 			return nil

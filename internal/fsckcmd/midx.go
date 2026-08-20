@@ -3,10 +3,8 @@ package fsckcmd
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 
 	"github.com/wow-look-at-my/git-fixed/internal/gitobj"
 	"github.com/wow-look-at-my/git-fixed/internal/odb"
@@ -172,15 +170,3 @@ func (r *run) verifyMultiPackIndex(objectDir string) bool {
 	}
 	return ok
 }
-
-// midxPackNames lists the packs a multi-pack-index covers, in its own order.
-func midxPackNames(data []byte) []string {
-	var out []string
-	for _, n := range bytes.Split(bytes.TrimRight(data, "\x00"), []byte{0}) {
-		out = append(out, string(n))
-	}
-	sort.Strings(out)
-	return out
-}
-
-var _ = fmt.Sprintf

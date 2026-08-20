@@ -12,7 +12,6 @@ import (
 
 	"github.com/wow-look-at-my/git-fixed/internal/fsckcmd"
 	"github.com/wow-look-at-my/git-fixed/internal/parseopt"
-	"golang.org/x/term"
 )
 
 var usage = []string{
@@ -88,7 +87,7 @@ func run(args []string) int {
 	o.Args = rest
 
 	if progress == -1 {
-		o.ShowProgress = term.IsTerminal(int(os.Stderr.Fd()))
+		o.ShowProgress = isTerminal(os.Stderr)
 	} else {
 		o.ShowProgress = progress != 0
 	}
@@ -112,4 +111,11 @@ func run(args []string) int {
 	}
 	o.Dir = cwd
 	return fsckcmd.Run(o)
+}
+
+// isTerminal reports whether the stream is a character device, which is how
+// git decides to show progress when nobody said either way.
+func isTerminal(f *os.File) bool {
+	st, err := f.Stat()
+	return err == nil && st.Mode()&os.ModeCharDevice != 0
 }

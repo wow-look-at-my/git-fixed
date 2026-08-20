@@ -335,32 +335,6 @@ func (r *run) markReachable(e *objEntry) {
 	r.pending = append(r.pending, e)
 }
 
-// markLink is git's mark_object() with a parent, which reports a link that
-// leads nowhere.
-func (r *run) markLink(key sortKey, parent *objEntry, l link, target *objEntry, ok bool) {
-	if !ok || target == nil {
-		r.rep.Outf(key, "broken link from %7s %s",
-			r.printableType(parent.OID, parent.Type()), r.fsck.Describe(parent.OID))
-		r.rep.Outf(key, "broken link from %7s %s", linkTypeName(l), "unknown")
-		r.fail(ErrorReachable)
-		return
-	}
-	if !l.viaTag && target.Type() != gitobj.TypeNone && target.Type() != l.typ {
-		r.objError(key, parent.OID, "wrong object type in link")
-	}
-	if target.SetFlag(flagReachable) {
-		return
-	}
-	if target.Flags()&flagHasObj == 0 {
-		r.rep.Outf(key, "broken link from %7s %s\n              to %7s %s",
-			r.printableType(parent.OID, parent.Type()), r.fsck.Describe(parent.OID),
-			r.printableType(target.OID, target.Type()), r.fsck.Describe(target.OID))
-		r.fail(ErrorReachable)
-		return
-	}
-	r.pending = append(r.pending, target)
-}
-
 func linkTypeName(l link) string {
 	if n := l.typ.Name(); n != "" && l.typ != gitobj.TypeAny {
 		return n
