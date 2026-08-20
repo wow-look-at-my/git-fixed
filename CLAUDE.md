@@ -15,6 +15,9 @@ Not "no more than was already lost". The repository worked before it broke and m
   break these repositories.
 - **Every recovery is verified by hash.** `odb.WriteLoose` refuses content that does not hash to the name being recovered, which is what makes a
   recovery provably the original. Depth, and the six damage kinds: `docs/repair.md`.
+- **A container is emptied before it is displaced.** A corrupt pack goes to quarantine only after every object it still yields is a loose object; a
+  pack that yields none is reported and left alone. The index and `packed-refs` are salvaged line by line, never rebuilt from scratch.
+  `internal/repair/packs.go`, `index.go`, `packedrefs.go`.
 
 ## The contract
 
@@ -25,9 +28,11 @@ Not "no more than was already lost". The repository worked before it broke and m
 - **The differential tests need git >= `gittest.MinGit`, and fail rather than skip below it.** An older git rewords messages, so a run against one
   compares this implementation against a different specification. CI installs git from `ppa:git-core/ppa` for the same reason.
 - **A new check needs a differential test in the same change.** `internal/fsckcmd/differential_test.go`, `repos_test.go`, `refs_test.go` and
-  `corrupt_test.go` hold 49 test functions, most of them table-driven over several repositories each. `internal/gittest` writes the broken
+  `corrupt_test.go` hold 50 test functions, most of them table-driven over several repositories each. `internal/gittest` writes the broken
   repositories git's porcelain refuses to produce.
 - **`go-toolchain`, bare, is the build.** It gates coverage at 80%. Never run `go build` or `go test` directly, and never pipe its output.
+- **A test that writes over a file git made must chmod it first.** git writes a packfile and a loose object read-only, and the agent sandbox runs as
+  root, where the mode is ignored. Such a test passes here and fails on CI for everyone else. `overwrite` in `repair_gaps_test.go` is the helper.
 
 ## Layout
 
@@ -51,6 +56,8 @@ Breaking one of these costs about half the run. Each is a mistake that was made 
 - **A packed read goes through the delta base cache.** Without it an object at chain depth ten costs ten inflations. `internal/odb/cache.go`.
 - **A tree is decoded once**, into a pooled slice, with entry names as `[]byte` views into the decode buffer. Copying them to strings was the single
   largest allocation source measured.
+- **`packEntry` holds no pointer, and the object table has 64 shards per core.** There is one of each per object, so a pointer or a shard collision
+  costs the whole repository. `docs/architecture.md` has the four that were measured and fixed.
 - `scripts/bench.sh <repo>` measures against the system git and refuses to print a time unless the output matched.
 
 ## Deliberate divergences

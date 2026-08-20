@@ -40,14 +40,14 @@ func (r *Repo) Refs(worktreeDir string) []Ref {
 	for _, ref := range r.packedRefs() {
 		byName[ref.Name] = ref
 	}
-	for _, ref := range looseRefs(filepath.Join(r.CommonDir, "refs"), "refs", r.Algo, r.CommonDir) {
+	for _, ref := range r.looseRefs(filepath.Join(r.CommonDir, "refs"), "refs", r.Algo, r.CommonDir) {
 		if worktreeDir != r.CommonDir && isPerWorktree(ref.Name) {
 			continue
 		}
 		byName[ref.Name] = ref
 	}
 	if worktreeDir != "" && worktreeDir != r.CommonDir {
-		for _, ref := range looseRefs(filepath.Join(worktreeDir, "refs"), "refs", r.Algo, worktreeDir) {
+		for _, ref := range r.looseRefs(filepath.Join(worktreeDir, "refs"), "refs", r.Algo, worktreeDir) {
 			if isPerWorktree(ref.Name) {
 				byName[ref.Name] = ref
 			}
@@ -129,7 +129,7 @@ func (r *Repo) packedRefs() []Ref {
 
 // looseRefs walks a refs directory. root is the store the reference belongs to,
 // which is where a symbolic reference resolves against.
-func looseRefs(dir, prefix string, algo *gitobj.Algo, root string) []Ref {
+func (r *Repo) looseRefs(dir, prefix string, algo *gitobj.Algo, root string) []Ref {
 	var out []Ref
 	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
@@ -151,7 +151,7 @@ func looseRefs(dir, prefix string, algo *gitobj.Algo, root string) []Ref {
 			return nil
 		}
 		name := prefix + "/" + filepath.ToSlash(rel)
-		ref := readRefFile(path, name, algo, root, 0)
+		ref := r.readRefFile(path, name, algo, root, 0)
 		if !fsck.CheckRefnameFormat(name, 0) {
 			// A name no reference may carry makes the reference itself
 			// broken, whatever the file holds. git hands such a name to
@@ -168,7 +168,7 @@ func looseRefs(dir, prefix string, algo *gitobj.Algo, root string) []Ref {
 // readRefFile reads one reference file, following a symbolic reference. A file
 // it cannot make sense of leaves the null object name, which is what git
 // reports for a reference that resolves to nothing.
-func readRefFile(path, name string, algo *gitobj.Algo, root string, depth int) Ref {
+func (r *Repo) readRefFile(path, name string, algo *gitobj.Algo, root string, depth int) Ref {
 	ref := Ref{Name: name, Broken: true, OID: algo.Null()}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -180,7 +180,18 @@ func readRefFile(path, name string, algo *gitobj.Algo, root string, depth int) R
 		if depth > 5 {
 			return ref
 		}
-		next := readRefFile(filepath.Join(root, filepath.FromSlash(ref.Symref)), name, algo, root, depth+1)
+		next := r.readRefFile(filepath.Join(root, filepath.FromSlash(ref.Symref)), name, algo, root, depth+1)
+		if next.Broken {
+			// The target has no loose file, so the packed table is where it
+			// is. Every clone hits this: refs/remotes/origin/HEAD is a loose
+			// symref and the branch it names is packed, so stopping at the
+			// loose files reports a working clone as broken.
+			if oid, ok := r.packedMap()[ref.Symref]; ok {
+				ref.OID = oid
+				ref.Broken = false
+				return ref
+			}
+		}
 		ref.OID = next.OID
 		ref.Broken = next.Broken
 		return ref
@@ -254,7 +265,7 @@ func (r *Repo) Resolve(store, name string, depth int) (gitobj.OID, bool) {
 	if depth > 5 {
 		return gitobj.OID{}, false
 	}
-	ref := readRefFile(filepath.Join(store, filepath.FromSlash(name)), name, r.Algo, store, 0)
+	ref := r.readRefFile(filepath.Join(store, filepath.FromSlash(name)), name, r.Algo, store, 0)
 	if !ref.Broken {
 		return ref.OID, true
 	}

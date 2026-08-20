@@ -60,6 +60,13 @@ type Damage struct {
 	Objects []BadObject
 	// Refs are the references that will not resolve.
 	Refs []BadRef
+	// Packs are the packfiles that will not verify.
+	Packs []BadPack
+	// Index is .git/index when it will not parse, with the reason. The index
+	// is not a derived file: it holds staged work that exists nowhere else.
+	Index *BadIndex
+	// PackedRefs is packed-refs when it will not parse, with the reason.
+	PackedRefs *BadPackedRefs
 	// Unreachable counts the dangling and unreachable objects, which are not
 	// damage. It is carried so a report can say so out loud.
 	Unreachable int
@@ -67,7 +74,8 @@ type Damage struct {
 
 // Empty reports whether the scan found nothing to repair.
 func (d *Damage) Empty() bool {
-	return len(d.Derived) == 0 && len(d.Objects) == 0 && len(d.Refs) == 0
+	return len(d.Derived) == 0 && len(d.Objects) == 0 && len(d.Refs) == 0 &&
+		len(d.Packs) == 0 && d.Index == nil && d.PackedRefs == nil
 }
 
 // scanner holds one scan's state.
@@ -96,7 +104,13 @@ func Scan(repo *gitrepo.Repo, db *odb.DB) (*Damage, error) {
 	}
 	d := &Damage{}
 	s.scanDerived(d)
+	s.scanPacks(d)
+	s.scanIndexes(d)
+	// scanRefs first: reading the references is what makes git's own reader
+	// pass over packed-refs, and its verdict on that file is what the check
+	// below reports.
 	s.scanRefs(d)
+	s.scanPackedRefs(d)
 	s.walk()
 	s.collect(d)
 	return d, nil

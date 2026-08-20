@@ -113,6 +113,13 @@ func run(args []string) int {
 		return 128
 	}
 	o.Dir = cwd
+
+	stop, err := startProfile()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "fatal: %s\n", err)
+		return 128
+	}
+	defer stop()
 	return fsckcmd.Run(o)
 }
 

@@ -71,15 +71,35 @@ objects in reachability order rather than pack order.
 On a synthetic repository of 229,960 objects, built by `scripts/make-bench-repo.sh`, against git 2.55.0. `scripts/bench.sh` produces these numbers,
 and refuses to print a time unless the two implementations agreed on the output first.
 
+Four cores, so read every ratio against four. Each figure is the best of nine runs, because the machine's own noise is wider than several of the
+differences below.
+
 | run                        | git   | git-fixed | git-fixed, one worker |
 |----------------------------|-------|-----------|-----------------------|
-| `fsck`                     | 1.23s | 0.82s     | 1.50s                 |
-| `fsck --connectivity-only` | 0.46s | 0.76s     | 1.32s                 |
-| `fsck --no-full`           | 0.02s | 0.07s     |                       |
+| `fsck`                     | 1.27s | 0.66s     | 1.31s                 |
+| `fsck --connectivity-only` | 0.48s | 0.80s     | 1.53s                 |
+| `fsck --no-full`           | 0.03s | 0.08s     |                       |
 
 `--connectivity-only` is the one mode that is still slower than git. It has no object pass, so it has no edge cache to walk and pays a full object
 read per node; git's advantage there is that its parsed objects are already in memory from the mark pass. `--no-full` is far too short to say
 anything.
+
+## What is still serial
+
+Four workers give 1.99x of one, not 4x, so about two thirds of the run is parallel. The rest runs on the main goroutine while the workers wait, and
+it is what a machine with many cores hits first. The largest piece left is `checkPackRevIndexes`, which verifies each `.rev` file one pack at a time.
+
+Four things that used to be serial, or that scaled badly, are fixed. Each was found in a profile, not by reading the code:
+
+- **The object table used to be 256 shards.** A shard is taken once per tree entry, millions of times, so on ninety six cores a third of those takes
+  would collide. It is 64 shards per core now, and each shard's lock is padded off its neighbour's cache line.
+- **`objTable.All()` used to sort every object by name.** Nothing needed it -- the reporter sorts the whole report by `sortKey` before printing -- and
+  it was a single-threaded sort of the entire repository on the critical path.
+- **The connectivity walk used to take the shared stack once per object.** With a worker per core, that one lock was the ceiling. A worker now claims
+  `walkBatch` objects at a time and hands a surplus back, which divides the traffic by the batch size.
+- **`buildLayout` used to sort `packEntry` itself, and `packEntry` held a string.** Every swap was a write barrier and moved 48 bytes. It now sorts a
+  16-byte pointer-free pair, and the entry's one string moved to `packLayout.headerErrs`, which took the phase from 230ms of profiled CPU to 100ms.
+  This runs before any worker starts, so all of it was on the critical path.
 
 ## zlib's own messages
 

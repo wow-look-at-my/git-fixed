@@ -18,11 +18,29 @@ Dangling and unreachable objects are left alone: those are ordinary, and pruning
 
 Recovery sources, cheapest first: another copy already in the repository, the worktree file the index names, a tree rebuilt from the index, then a
 remote. Every source ends at the same check -- content that does not hash to the name being recovered is refused -- so a recovery is the original
-object or it does not happen. See `docs/repair.md`.
+object or it does not happen.
+
+A packfile, a `.git/index` and a `packed-refs` each hold many things at once, so each is emptied before it is displaced. A corrupt pack has every
+object it still yields written back as loose objects first, because a corrupt entry shadows the good copy underneath it. An index is read entry by
+entry and keeps everything staged that still parses. `packed-refs` is rewritten from the lines that read, and a line that does not read is looked up
+in the reflog and then reported rather than dropped. See `docs/repair.md`.
 
 ## git-fsck
 
-Same options, same output, same exit status as `git fsck`, and about 1.5x faster than git 2.55.0 on a repository of 229,960 objects.
+Same options, same output, same exit status as `git fsck`, with the work spread across every core instead of one.
+
+**Read the speedup with the core count next to it.** On a four-core machine, over 229,960 objects, it is 1.93x git 2.55.0 -- and four cores is all the
+speedup four cores can buy. Reproduce it yourself: `scripts/make-bench-repo.sh <dir>` builds the repository and `scripts/bench.sh <dir>` times both
+tools, refusing to print a number unless their output matched.
+
+| workers | seconds | vs git |
+|---|---|---|
+| 1 | 1.305 | 0.97x |
+| 2 | 0.948 | 1.33x |
+| 4 | 0.655 | 1.93x |
+
+The honest limit is in that table: four workers give 1.99x of one, not 4x, so about two thirds of the run is parallel today. `docs/architecture.md`
+says what the rest is and what has already been taken off it.
 
 ```
 $ git-fsck
@@ -54,9 +72,9 @@ and not by git, which only knows HFS+ and NTFS. It is on by default and there is
 
 ### Is it really the same?
 
-77 differential tests build a deliberately broken repository, run the system `git fsck` and this one over it, and require the same lines and the same
-exit status. Two of them corrupt a repository one byte at a time: 328 loose objects in one repository, and a packfile at twelve points.
-`scripts/bench.sh` refuses to report a time unless the two agreed first.
+50 differential test functions, most of them table-driven over several repositories each, build a deliberately broken repository, run the system
+`git fsck` and this one over it, and require the same lines and the same exit status. Two of them corrupt a repository one byte at a time: 328 loose
+objects in one repository, and a packfile at twelve points. `scripts/bench.sh` refuses to report a time unless the two agreed first.
 
 That includes the line git's decompressor prints for itself, such as `inflate: data stream error (invalid block type)`. Go's decompressor reports
 every one of those cases as the same error, so the reason is worked out separately, by an inflate that runs only after a read has failed. See
@@ -64,6 +82,7 @@ every one of those cases as the same error, so the reason is worked out separate
 
 ## Documentation
 
+- [docs/repair.md](docs/repair.md) -- the damage kinds, the recovery ladder, why nothing is ever deleted
 - [docs/architecture.md](docs/architecture.md) -- the phases, where the parallelism is, what is measured
 - [docs/alias-detection.md](docs/alias-detection.md) -- names that reach `.git` on four filesystems
 - [docs/pack-verification.md](docs/pack-verification.md) -- the delta forest, and decoding each object once

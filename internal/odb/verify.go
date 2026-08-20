@@ -2,11 +2,13 @@ package odb
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/binary"
 	"fmt"
 	"hash/crc32"
 	"io"
 	"runtime"
+	"slices"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -108,10 +110,10 @@ func (p *Pack) validatePackHeader() (string, bool) {
 // cannotUnpack reports an entry that will not decode. Whatever stopped the read
 // says so first, and only then does its caller add the line naming the entry.
 // An entry whose own header is unreadable never reaches the decompressor.
-func cannotUnpack(emit func(gitobj.OID, string), p *Pack, oid gitobj.OID, e packEntry) {
+func cannotUnpack(emit func(gitobj.OID, string), p *Pack, l *packLayout, oid gitobj.OID, e packEntry) {
 	switch {
-	case e.badHeader != "":
-		emit(oid, e.badHeader)
+	case l.headerErr(e) != "":
+		emit(oid, l.headerErr(e))
 	default:
 		if msg := p.InflateMessage(e.dataOff, e.size); msg != "" {
 			emit(oid, msg)
@@ -120,17 +122,27 @@ func cannotUnpack(emit func(gitobj.OID, string), p *Pack, oid gitobj.OID, e pack
 	emit(oid, fmt.Sprintf("cannot unpack %s from %s at offset %d", oid, p.Path, e.off))
 }
 
-// packEntry is one object as the pack stores it, in offset order.
+// packEntry is one object as the pack stores it, in offset order. It holds no
+// pointer on purpose: there is one entry per object, so a pointer here puts
+// every allocation and every sweep of the slice through the write barrier. The
+// one string an entry could carry lives in packLayout.headerErrs instead.
 type packEntry struct {
 	off     int64
 	dataOff int64
 	size    int64
 	end     int64
 	idx     uint32 // position in index order
-	// badHeader is what stopped the entry header from being read, which
-	// happens before anything decompresses.
-	badHeader string
+	// headerErr indexes packLayout.headerErrs, whose first element is the
+	// empty string, so a zero entry means the header read fine.
+	headerErr int32
 	typ       gitobj.Type
+}
+
+// offIdx is one entry's offset and its position in index order. It exists so
+// the offset sort moves no pointers.
+type offIdx struct {
+	off int64
+	idx uint32
 }
 
 // packLayout is every entry in offset order, plus the base-to-children links
@@ -142,7 +154,13 @@ type packLayout struct {
 	childList  []int32
 	roots      []int32
 	bad        []int32
+	// headerErrs holds what stopped an entry header from being read, which
+	// happens before anything decompresses. Element 0 is the empty string.
+	headerErrs []string
 }
+
+// headerErr returns why an entry's header would not read, or the empty string.
+func (l *packLayout) headerErr(e packEntry) string { return l.headerErrs[e.headerErr] }
 
 func (l *packLayout) children(i int32) []int32 {
 	return l.childList[l.childStart[i]:l.childStart[i+1]]
@@ -151,11 +169,19 @@ func (l *packLayout) children(i int32) []int32 {
 // buildLayout reads every entry header and links each delta to its base.
 func (p *Pack) buildLayout() *packLayout {
 	n := int(p.Num)
-	l := &packLayout{ents: make([]packEntry, n)}
-	for i := 0; i < n; i++ {
-		l.ents[i] = packEntry{off: p.OffsetAt(uint32(i)), idx: uint32(i)}
+	// The sort moves a 16-byte pair, not the whole 48-byte packEntry, on a
+	// quarter of a million entries. This sort runs on the main goroutine,
+	// where a serial cost is the whole run's cost.
+	order := make([]offIdx, n)
+	for i := range order {
+		order[i] = offIdx{off: p.OffsetAt(uint32(i)), idx: uint32(i)}
 	}
-	sort.Slice(l.ents, func(a, b int) bool { return l.ents[a].off < l.ents[b].off })
+	slices.SortFunc(order, func(a, b offIdx) int { return cmp.Compare(a.off, b.off) })
+
+	l := &packLayout{ents: make([]packEntry, n), headerErrs: []string{""}}
+	for i, o := range order {
+		l.ents[i] = packEntry{off: o.off, idx: o.idx}
+	}
 
 	// posOf maps an index-order position to an offset-order position, so a
 	// ref-delta's base is found without a map.
@@ -181,7 +207,8 @@ func (p *Pack) buildLayout() *packLayout {
 		if err != nil {
 			l.bad = append(l.bad, int32(i))
 			l.ents[i].typ = gitobj.TypeBad
-			l.ents[i].badHeader = err.Error()
+			l.headerErrs = append(l.headerErrs, err.Error())
+			l.ents[i].headerErr = int32(len(l.headerErrs) - 1)
 			continue
 		}
 		l.ents[i].typ = h.Type
@@ -256,7 +283,7 @@ func (p *Pack) verifyObjects(o VerifyOpts) bool {
 	for _, i := range l.bad {
 		e := l.ents[i]
 		oid := p.OIDAt(e.idx)
-		cannotUnpack(emit, p, oid, e)
+		cannotUnpack(emit, p, l, oid, e)
 	}
 
 	// The index records a CRC over each entry's raw bytes. Checking those is
@@ -354,7 +381,7 @@ func (w *walker) walkChain(root int32, in *Inflater) {
 	typ, data, err := w.materializeRoot(e, in)
 	if err != nil {
 		oid := p.OIDAt(e.idx)
-		cannotUnpack(w.emit, p, oid, *e)
+		cannotUnpack(w.emit, p, l, oid, *e)
 		return
 	}
 	w.finish(root, typ, data)
@@ -381,7 +408,7 @@ func (w *walker) walkChain(root int32, in *Inflater) {
 		}
 		if err != nil {
 			oid := p.OIDAt(ce.idx)
-			cannotUnpack(w.emit, p, oid, *ce)
+			cannotUnpack(w.emit, p, l, oid, *ce)
 			continue
 		}
 		w.finish(child, typ, out)
@@ -416,7 +443,7 @@ func (w *walker) finishStreamed(i int32) {
 	oid := w.p.OIDAt(e.idx)
 	got, err := w.p.StreamHash(e.dataOff, e.size, e.typ)
 	if err != nil {
-		cannotUnpack(w.emit, w.p, oid, *e)
+		cannotUnpack(w.emit, w.p, w.l, oid, *e)
 		return
 	}
 	if got != oid {

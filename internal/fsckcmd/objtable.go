@@ -1,7 +1,7 @@
 package fsckcmd
 
 import (
-	"sort"
+	"runtime"
 	"sync"
 	"sync/atomic"
 
@@ -105,7 +105,8 @@ func (e *objEntry) ClearFlags(f uint32) {
 // objTable holds every object the run has heard of. It is sharded so the
 // parallel phases can insert without queueing behind one lock.
 type objTable struct {
-	shards [256]objShard
+	shards []objShard
+	mask   uint32
 	seq    atomic.Int64
 	// created counts objects the way git's object hash does, which is what
 	// its verbose "Checking connectivity (N objects)" line reports.
@@ -115,17 +116,43 @@ type objTable struct {
 type objShard struct {
 	mu sync.Mutex
 	m  map[gitobj.OID]*objEntry
+	// pad keeps one shard's lock off the cache line of the next one. Two
+	// threads on neighbouring shards otherwise fight over a cache line while
+	// holding different locks, which looks like contention that is not there.
+	_ [40]byte
+}
+
+// shardCount picks how finely to split the table.
+//
+// The table is written once per tree entry, which is millions of times in a
+// large repository, so two workers landing on one shard is a cost that scales
+// with the core count. A fixed 256 was fine on four cores and poor on ninety
+// six, where a third of accesses would collide. Sixty four shards per core
+// keeps that near one percent wherever it runs.
+func shardCount() int {
+	n := 64 * runtime.GOMAXPROCS(0)
+	size := 256
+	for size < n && size < 1<<16 {
+		size <<= 1
+	}
+	return size
 }
 
 func newObjTable() *objTable {
-	t := &objTable{}
-	for i := range t.shards {
-		t.shards[i].m = make(map[gitobj.OID]*objEntry)
-	}
+	n := shardCount()
+	t := &objTable{shards: make([]objShard, n), mask: uint32(n - 1)}
+	// The maps are made on first write. A big repository fills every shard,
+	// and a small one should not pay to build tens of thousands of empty
+	// maps it will never use.
 	return t
 }
 
-func (t *objTable) shard(oid gitobj.OID) *objShard { return &t.shards[oid.H[0]] }
+// shard picks an object's shard from the first two bytes of its name. One byte
+// only distinguishes 256 of them, which would waste every shard past that.
+func (t *objTable) shard(oid gitobj.OID) *objShard {
+	h := uint32(oid.H[0])<<8 | uint32(oid.H[1])
+	return &t.shards[h&t.mask]
+}
 
 // Get returns an object the run already knows about, or nil.
 func (t *objTable) Get(oid gitobj.OID) *objEntry {
@@ -148,6 +175,9 @@ func (t *objTable) Lookup(oid gitobj.OID, want gitobj.Type) (*objEntry, bool) {
 		if want != gitobj.TypeAny {
 			e.typ.Store(int32(want))
 		}
+		if s.m == nil {
+			s.m = make(map[gitobj.OID]*objEntry)
+		}
 		s.m[oid] = e
 		t.created.Add(1)
 		return e, true
@@ -168,9 +198,14 @@ func (t *objTable) Lookup(oid gitobj.OID, want gitobj.Type) (*objEntry, bool) {
 	return e, true
 }
 
-// All returns every object, ordered by name so a report is reproducible.
+// All returns every object, in no particular order.
+//
+// It used to sort by name, which cost a single-threaded sort of every object in
+// the repository on the critical path. Nothing needed it: every message carries
+// a sortKey and the reporter orders the whole report by that before printing, so
+// the order objects are visited in is not observable.
 func (t *objTable) All() []*objEntry {
-	var out []*objEntry
+	out := make([]*objEntry, 0, t.created.Load())
 	for i := range t.shards {
 		s := &t.shards[i]
 		s.mu.Lock()
@@ -179,7 +214,6 @@ func (t *objTable) All() []*objEntry {
 		}
 		s.mu.Unlock()
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].OID.Compare(out[j].OID) < 0 })
 	return out
 }
 

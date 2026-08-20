@@ -21,6 +21,10 @@ Two properties make lossless repair possible rather than aspirational:
 - **Nothing is deleted, only moved.** Every removal goes to `.git/git-fixed/quarantine/<run>/`, keeping its path, with a manifest that says where
   each file came from. `git fix --undo <run>` puts them all back. A repair that turns out to be wrong costs one command, not a repository.
 
+  An undo restores over what the repair wrote, because most of what a run displaces it also replaces -- a whole index over a broken one, a valid
+  `packed-refs` over a malformed one. Nothing is overwritten even so: whatever is in the way moves into that run's own `replaced/` directory first,
+  keeping its path. So an undo deletes no more than a repair does, and the two states sit side by side afterwards.
+
 ## What counts as damage
 
 Six kinds, and the sixth is the one git users get wrong most often.
@@ -111,27 +115,81 @@ check at the end means every source produces the identical bytes or none at all.
 
 ## What a run does, in order
 
-1. Scan. Read every ref, every object, and the index. Nothing is written in this phase.
+1. Scan. Read every ref, every pack, every object, and the index. Nothing is written in this phase.
 2. Classify each fault into one of the six kinds above.
-3. Recover objects, cheapest source first.
-4. Apply. Derived files are quarantined, recovered objects are written, repaired refs are updated, and every step is appended to the run manifest.
-5. Verify. Re-run the whole scan against the repaired repository. A run that does not come back clean says so.
-6. Report what was recovered, from where, and what could not be.
+3. Quarantine the derived caches, which need nothing else.
+4. Empty out and displace any packfile that will not verify, then scan again. This comes first among the repairs because a corrupt pack entry hides
+   the objects underneath it from every step below.
+5. Rewrite `packed-refs` if git's reader refuses it, then scan again. Second for the same reason: a reference nobody can read leads nowhere, so the
+   objects it needs read as unreferenced.
+6. Recover objects, cheapest source first, going round until a whole pass recovers nothing new.
+7. Restore malformed ref files from their reflogs.
+8. Rebuild the index, last, because it falls back to the commit `HEAD` names and wants the refs and objects already back.
+9. Verify. Run the whole `fsck` against the repaired repository, not this package's narrower scan. A run that does not come back clean says so.
+10. Report what was recovered, from where, and what could not be.
 
-`--dry-run` stops after step 3 and prints the plan, including which source would answer for each object.
+Every step appends to the run manifest as it goes, so an interrupted run is still undoable.
 
-## What it does not repair yet
+`--dry-run` stops after step 2 and prints the plan, including which source would answer for each object.
 
-Naming these matters as much as the list above, because a run that finds nothing must not be read as a clean bill of health. So the verification step
-runs the whole `fsck`, not this package's scan, and a repository `fsck` still refuses is reported that way even when the repair had nothing to do.
+## The three container files
 
-- **A corrupt packfile.** Objects it holds are recovered as loose copies where a source has them, but the pack itself stays broken and `fsck` keeps
-  complaining. Worse, a corrupt pack entry SHADOWS the good loose copy, because the object database answers from the pack -- so those objects read as
-  damaged however many times they are put back. That is why a run tracks what it has already recovered: without it, the repair loops forever on the
-  same object. The fix is to rewrite the pack from what can be read, and it is not written.
-- **A `.git/index` that will not parse.** The index is not derived: it holds staged content and stat information that exists nowhere else, so it is
-  not safe to displace and rebuild. Reported, not touched.
-- **A malformed `packed-refs`.** The loose refs and the reflogs together hold enough to rebuild it, and that is not written either.
+An object, a ref file and a cache each hold one thing. A packfile, an index and `packed-refs` each hold many, and that changes what repairing them
+means: the fault is in the container, and everything inside it has to survive being taken out of it.
+
+### A corrupt packfile
+
+Every object the pack still yields is written back as a loose object FIRST, and only then does the pack go to quarantine, together with its `.idx`,
+`.rev`, `.bitmap`, `.keep`, `.promisor` and `.mtimes`. The order is the whole repair, for two reasons that pull in opposite directions:
+
+- A corrupt entry in a pack **shadows** every loose copy of the object it holds, because the database answers from packs first. So the object keeps
+  reading as damaged however many times the recovery ladder puts it back, and nothing below reaches it while the pack is there. That is why a run
+  tracks what it has already recovered: without it, the repair loops on the same object forever.
+- But removing a pack removes every object in it. So each one has to be a loose object before the pack moves.
+
+Extraction goes through the same check as every other recovery: `Verify` hands over an object only once it has decoded and hashed to its recorded
+name. An object that already has a readable loose copy is left alone; a loose file that will NOT read back is quarantined first, because leaving it
+would shadow the copy about to be written.
+
+A pack that yields nothing at all is never displaced. Two faults reach that state: an index that will not map, and a pack header that stops the read
+before the first entry -- and in the second case every object is still in the file, byte for byte. Moving such a pack would take all of them out of a
+repository that has no other copy, and it would buy nothing, because there is no loose copy for it to stop shadowing. It stays exactly where it is,
+and the run reports it and fails.
+
+The decision is made from what the extraction actually produced, not from which fault was diagnosed. That distinction is the repair: judging it from
+the fault meant a pack with four bad bytes in its signature was displaced after yielding zero objects, and the run only ended well because a remote
+happened to have the history.
+
+The cost is disk: a repository whose one pack has a single bad byte comes out with every object loose. That is the price of the objects surviving,
+and `git repack` puts them back together whenever the owner wants.
+
+### A `.git/index` that will not parse
+
+The index is not a derived file, whatever its name suggests. It records which paths are staged, at which mode, holding which content, and rebuilding
+it from `HEAD` alone would silently unstage everything.
+
+So the damaged file is read as far as it goes, entry by entry, and every one that parses is kept -- the checksum is deliberately not consulted,
+because a file with a wrong checksum still holds real entries. `HEAD`'s tree then supplies only the paths the salvage did not reach. The original
+goes to quarantine whole, and a rewritten index is version 2, which every git since 1.5 reads.
+
+A salvaged entry keeps the 40 bytes of stat data git recorded for it, so git does not have to read every file in the worktree again to find out
+nothing changed. An entry that came from `HEAD` has none, so git re-reads that one file once.
+
+When the old file claimed more entries than it yielded, the report says how many paths are gone -- and says where their content still is. It is not
+lost: `git add` writes a blob before the index records it, so staged content is in the object database, unreferenced, and `git fsck --lost-found`
+writes it out.
+
+### A malformed `packed-refs`
+
+git's reader stops at the first line it refuses, so one bad line hides every reference below it. Those references are not gone, they are unreadable,
+and rewriting the file in valid grammar brings them all back: the trait header, every reference sorted by name, and a recomputed peel line under each
+tag.
+
+A line that will not read is the part that needs care, because a dropped line may have been a branch. Each one has its reference name looked up in the
+loose refs and then in the reflog, and anything that answers is restored. Anything still unaccounted for is listed in the report and keeps the run
+from claiming success -- even when `fsck` comes back clean, which it will, because a reference nobody can see is not damage git recognises. This is
+the one place where a repaired repository still reports a failure, and it is deliberate: a rewrite that quietly drops a line the owner cannot see is
+exactly how a branch disappears without anybody noticing.
 
 ## What the tool never does
 

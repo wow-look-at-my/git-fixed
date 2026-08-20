@@ -150,6 +150,9 @@ func undoRun(dir string, rest []string) int {
 		return 128
 	}
 	fmt.Fprintf(os.Stdout, "Run %s is undone.\n", name)
+	if aside := repair.ReplacedDir(gitDir, name); aside != "" {
+		fmt.Fprintf(os.Stdout, "What the repair had written is in %s.\n", aside)
+	}
 	return 0
 }
 
