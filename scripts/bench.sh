@@ -6,14 +6,17 @@
 # It runs both tools the same number of times, drops the first run of each so
 # the page cache is warm for both, and prints the best wall-clock time. It also
 # fails when the two disagree, so a fast wrong answer cannot look like a win.
+#
+# --dry-run is what makes the two comparable, and it is also what keeps the
+# repository being measured out of the tool's hands.
 set -euo pipefail
 
 repo=${1:?usage: bench.sh <repo> [runs]}
 runs=${2:-3}
-ours=$(cd "$(dirname "$0")/.." && pwd)/build/git-fsck
+ours=$(cd "$(dirname "$0")/.." && pwd)/build/git-fixed
 
 if [ ! -x "$ours" ]; then
-	echo "build/git-fsck is missing; run go-toolchain first" >&2
+	echo "build/git-fixed is missing; run go-toolchain first" >&2
 	exit 1
 fi
 
@@ -39,7 +42,7 @@ cd "$repo"
 
 # Both tools must agree before any timing means anything.
 git fsck >/tmp/bench-git.out 2>/tmp/bench-git.err || true
-"$ours" >/tmp/bench-ours.out 2>/tmp/bench-ours.err || true
+"$ours" --dry-run >/tmp/bench-ours.out 2>/tmp/bench-ours.err || true
 if ! diff <(sort /tmp/bench-git.out /tmp/bench-git.err) \
 	<(sort /tmp/bench-ours.out /tmp/bench-ours.err) >/dev/null; then
 	echo "output differs from git fsck; refusing to report a time" >&2
@@ -49,8 +52,8 @@ if ! diff <(sort /tmp/bench-git.out /tmp/bench-git.err) \
 fi
 
 git_time=$(best git fsck)
-our_time=$(best "$ours")
-one_time=$(best env GIT_FIXED_THREADS=1 "$ours")
+our_time=$(best "$ours" --dry-run)
+one_time=$(best env GIT_FIXED_THREADS=1 "$ours" --dry-run)
 
 printf 'repository: %s\n' "$repo"
 printf 'objects:    %s\n' "$(git count-objects -v | awk '/^count:|^in-pack:/ {t += $2} END {print t}')"

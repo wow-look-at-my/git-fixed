@@ -1,6 +1,6 @@
 # Repair
 
-`git fsck` finds damage. `git fix` undoes it. This document is the contract that repair works under.
+`git-fixed` finds damage and undoes it in one run. This document is the contract that repair works under.
 
 ## The rule everything else follows from
 
@@ -19,7 +19,7 @@ Two properties make lossless repair possible rather than aspirational:
 - **An object's name is the hash of its content.** So a candidate recovered from anywhere is either bit-for-bit the original object or it is
   rejected. There is no "close enough" and no judgement call. Every recovery in this document ends with the same check.
 - **Nothing is deleted, only moved.** Every removal goes to `.git/git-fixed/quarantine/<run>/`, keeping its path, with a manifest that says where
-  each file came from. `git fix --undo <run>` puts them all back. A repair that turns out to be wrong costs one command, not a repository.
+  each file came from. `git-fixed --undo <run>` puts them all back. A repair that turns out to be wrong costs one command, not a repository.
 
   An undo restores over what the repair wrote, because most of what a run displaces it also replaces -- a whole index over a broken one, a valid
   `packed-refs` over a malformed one. Nothing is overwritten even so: whatever is in the way moves into that run's own `replaced/` directory first,
@@ -115,7 +115,13 @@ check at the end means every source produces the identical bytes or none at all.
 
 ## What a run does, in order
 
+0. Diagnose. `git-fixed` runs a full fsck first and prints git's own findings, so a person sees what was wrong before anything moves.
 1. Scan. Read every ref, every pack, every object, and the index. Nothing is written in this phase.
+
+   When the fsck in step 0 came back clean, the pack verification and the object walk are skipped: that run has already read every object in every
+   pack and would have reported any that is missing or will not decode. Everything else still runs, because git does not look at all of it -- it
+   never verifies `objects/info/packs`, so a stale one leaves fsck happy and is still a file to put right. `ScanTrustingFsck` holds the rule, and
+   only the first scan of a run may use it; every later one follows a change this run made, which nobody has checked.
 2. Classify each fault into one of the six kinds above.
 3. Quarantine the derived caches, which need nothing else.
 4. Empty out and displace any packfile that will not verify, then scan again. This comes first among the repairs because a corrupt pack entry hides
@@ -130,7 +136,8 @@ check at the end means every source produces the identical bytes or none at all.
 
 Every step appends to the run manifest as it goes, so an interrupted run is still undoable.
 
-`--dry-run` stops after step 2 and prints the plan, including which source would answer for each object.
+`--dry-run` stops after step 2 and prints the plan, including which source would answer for each object. It promises to repair nothing rather than to
+write nothing: `--lost-found` is git's own option and saving dangling objects is all it does, so under a dry run it still saves them.
 
 ## The three container files
 

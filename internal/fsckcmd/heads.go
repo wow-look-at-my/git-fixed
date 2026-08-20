@@ -147,8 +147,12 @@ func (r *run) handleReflogOID(refname string, oid gitobj.OID, timestamp int64) {
 func (r *run) checkIndexes() int {
 	for _, wt := range r.repo.Worktrees() {
 		path := wt.IndexPath()
+		// Every message below names the index the way git names it. git
+		// works from the top of the worktree and writes ".git/index"; this
+		// process opened an absolute path and must not print it.
+		shown := r.repo.Shown(path)
 		if r.o.Verbose {
-			r.rep.Verbosef("Checking cache tree of %s", path)
+			r.rep.Verbosef("Checking cache tree of %s", shown)
 		}
 		idx, errs, err := r.repo.ReadIndex(path)
 		for _, e := range errs {
@@ -159,7 +163,7 @@ func (r *run) checkIndexes() int {
 			fmt.Fprintf(r.o.Stderr, "fatal: %s\n", err)
 			return 128
 		}
-		r.fsckIndex(idx, path, wt.IsMain)
+		r.fsckIndex(idx, shown, wt.IsMain)
 	}
 	return 0
 }
@@ -214,7 +218,11 @@ func (r *run) fsckCacheTree(key sortKey, ct *gitrepo.CacheTree, path string) {
 		e.SetFlag(flagUsed)
 		r.fsck.PutObjectName(ct.OID, ":")
 		r.markReachable(e)
-		if e.Type() != gitobj.TypeTree {
+		// ensureType, not Type: --connectivity-only never reads the objects,
+		// so the type is still unknown here and every cache-tree entry reads
+		// as a non-tree. git's own parse_object() resolves it at this point
+		// and reports nothing.
+		if r.ensureType(e) != gitobj.TypeTree {
 			r.objError(key, ct.OID, "non-tree in cache-tree")
 		}
 	}

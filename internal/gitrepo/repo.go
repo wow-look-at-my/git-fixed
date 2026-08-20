@@ -294,3 +294,26 @@ func loadConfig(commonDir string) (*Config, error) {
 	}
 	return c, nil
 }
+
+// Shown names a file inside the repository the way git names it in a message:
+// relative to where git would have started, not as the absolute path this
+// process opened. git writes ".git/index"; this process holds "/home/u/p/.git/index".
+//
+// The path is measured from GitDir, which is what DisplayGitDir names. In a
+// linked worktree those are the worktree's own directory, while objects and
+// packed-refs live in the common one, so the relative path climbs out with ".."
+// and Join folds it back down. Measuring from CommonDir instead named a
+// worktree's index ".git/worktrees/w/worktrees/w/index".
+func (r *Repo) Shown(path string) string {
+	rel, err := filepath.Rel(r.GitDir, path)
+	if err != nil {
+		return path
+	}
+	shown := filepath.Join(r.DisplayGitDir, rel)
+	if strings.HasPrefix(shown, "..") {
+		// Outside the repository altogether: an alternate object store, or a
+		// worktree file. An absolute path is the only unambiguous name.
+		return path
+	}
+	return filepath.ToSlash(shown)
+}

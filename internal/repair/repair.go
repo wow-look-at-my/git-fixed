@@ -22,6 +22,15 @@ type Options struct {
 	// Run names the quarantine directory. The caller supplies it so a run is
 	// reproducible and so the name can be printed before the work starts.
 	Run string
+	// Healthy is what an fsck the caller already ran said, or nil when it ran
+	// none. The command runs one to report its findings, so on a repository
+	// with nothing wrong the answer is already known, and reading every
+	// object a second time to hear it again is half the run for nothing.
+	//
+	// It stands in only for the question verify asks. A stricter fsck, a
+	// narrower one, or one given objects to check answers a different
+	// question, so a caller that ran one of those passes nil.
+	Healthy *bool
 
 	Stdout io.Writer
 	Stderr io.Writer
@@ -87,6 +96,16 @@ func (r *Result) idle() bool {
 		r.Index == nil && r.PackedRefs == nil
 }
 
+// firstScan reads the repository, skipping what the caller's own fsck has
+// already covered. Only the first scan of a run may do that: every later one
+// follows a change this run made, which nobody has checked.
+func (o *Options) firstScan(repo *gitrepo.Repo, db *odb.DB) (*Damage, error) {
+	if o.Healthy != nil && *o.Healthy {
+		return ScanTrustingFsck(repo, db)
+	}
+	return Scan(repo, db)
+}
+
 // Run repairs the repository and reports what it did.
 //
 // It never deletes: a displaced file goes to the run's quarantine directory and
@@ -101,7 +120,7 @@ func Run(o *Options) (*Result, error) {
 	}
 	defer db.Close()
 
-	damage, err := Scan(repo, db)
+	damage, err := o.firstScan(repo, db)
 	if err != nil {
 		return nil, err
 	}
@@ -112,6 +131,10 @@ func Run(o *Options) (*Result, error) {
 		// repair; fsck finds the rest. Saying "nothing to repair" off the
 		// narrower check would tell someone their repository is fine when
 		// git still refuses to use it.
+		if o.Healthy != nil {
+			res.Clean = *o.Healthy
+			return res, nil
+		}
 		res.Clean, err = verify(o.Dir)
 		return res, err
 	}
@@ -124,7 +147,7 @@ func Run(o *Options) (*Result, error) {
 		if err := q.Take(path, "a rebuildable cache that would not parse"); err != nil {
 			return nil, err
 		}
-		res.Derived = append(res.Derived, displayPath(repo, path))
+		res.Derived = append(res.Derived, repo.Shown(path))
 	}
 
 	// Packs come before objects, and before anything reopens the database.
@@ -316,16 +339,16 @@ func open(dir string) (*gitrepo.Repo, *odb.DB, error) {
 // plan fills in what a dry run would have done, without doing it.
 func plan(repo *gitrepo.Repo, damage *Damage, res *Result) *Result {
 	for _, path := range damage.Derived {
-		res.Derived = append(res.Derived, displayPath(repo, path))
+		res.Derived = append(res.Derived, repo.Shown(path))
 	}
 	res.Unrecovered = append(res.Unrecovered, damage.Objects...)
 	for _, bad := range damage.Packs {
 		// A dry run does not extract, so it cannot say yet whether the pack
 		// will yield anything -- and that is what decides whether it moves.
-		res.Packs = append(res.Packs, RescuedPack{Pack: displayPath(repo, bad.Pack)})
+		res.Packs = append(res.Packs, RescuedPack{Pack: repo.Shown(bad.Pack)})
 	}
 	if damage.Index != nil {
-		res.Index = &RepairedIndex{Path: displayPath(repo, damage.Index.Path), Why: damage.Index.Why}
+		res.Index = &RepairedIndex{Path: repo.Shown(damage.Index.Path), Why: damage.Index.Why}
 	}
 	if damage.PackedRefs != nil {
 		res.PackedRefs = &RepairedPackedRefs{Why: damage.PackedRefs.Why}
@@ -406,7 +429,7 @@ func (r *Result) Report(w io.Writer, dryRun bool) {
 		fmt.Fprintf(w, "restored: %s -> %s, from %s\n", ref.Name, ref.OID, ref.From)
 	}
 	if r.Quarantine != "" {
-		fmt.Fprintf(w, "\nDisplaced files are in %s.\nNothing was deleted; `git fix --undo` puts them back.\n", r.Quarantine)
+		fmt.Fprintf(w, "\nDisplaced files are in %s.\nNothing was deleted; `git-fixed --undo` puts them back.\n", r.Quarantine)
 	}
 	r.reportPartialRepairs(w)
 	if len(r.Refused) > 0 {
@@ -436,7 +459,7 @@ func (r *Result) Report(w io.Writer, dryRun bool) {
 			// only way back" would send someone hunting for a copy of the
 			// repository while the damaged original sat one command away.
 			fmt.Fprint(w, "\nSome of these were in a packfile this run took out. That pack is in the\n"+
-				"quarantine directory above, byte for byte, and `git fix --undo` puts it back.\n"+
+				"quarantine directory above, byte for byte, and `git-fixed --undo` puts it back.\n"+
 				"It is the only copy of those bytes, so keep it until they are recovered.\n")
 		}
 		fmt.Fprint(w, "\nThe repository still needs these. A remote, another clone, or a\n"+

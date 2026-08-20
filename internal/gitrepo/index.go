@@ -65,11 +65,11 @@ func (r *Repo) ReadIndex(path string) (*Index, []string, error) {
 		if os.IsNotExist(err) {
 			return &Index{}, nil, nil
 		}
-		return nil, nil, &FatalError{Msg: fmt.Sprintf("%s: index file open failed", path)}
+		return nil, nil, &FatalError{Msg: fmt.Sprintf("%s: index file open failed", r.Shown(path))}
 	}
 	rawsz := r.Algo.RawSize
 	if len(data) < 12+rawsz {
-		return nil, nil, &FatalError{Msg: fmt.Sprintf("%s: index file smaller than expected", path)}
+		return nil, nil, &FatalError{Msg: fmt.Sprintf("%s: index file smaller than expected", r.Shown(path))}
 	}
 	var errs []string
 	if string(data[0:4]) != "DIRC" {

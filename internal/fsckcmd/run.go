@@ -1,4 +1,5 @@
-// Package fsckcmd implements git-fsck.
+// Package fsckcmd implements the fsck half of git-fixed: git fsck's own checks,
+// its output and its exit status.
 //
 // The phases follow builtin/fsck.c, but each one runs its work in parallel and
 // puts the output back in order before printing it.
