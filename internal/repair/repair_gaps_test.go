@@ -442,3 +442,43 @@ func TestRepairsALinkedWorktreesIndex(t *testing.T) {
 	assert.FileExists(t, idx)
 	requireGitClean(t, r)
 }
+
+// TestExtractionReplacesACorruptLooseCopy covers the branch that guards a real
+// loss path.
+//
+// An object can be both loose and packed. When the pack is displaced, the loose
+// copy is what survives -- so if that copy is corrupt and extraction skips it as
+// "already here", the object is gone the moment the pack moves. The check has to
+// read the loose file rather than trust that it exists.
+//
+// The pack is flagged by damaging its INDEX checksum, which leaves every entry
+// decodable, so the only thing under test is what happens to the loose copy.
+func TestExtractionReplacesACorruptLooseCopy(t *testing.T) {
+	gittest.RequireGit(t)
+	r := packed(t)
+	before := record(t, r)
+
+	// A blob that lives only in the pack, now given a corrupt loose copy too.
+	blob := mustOID(t, r, strings.TrimSpace(r.Git("rev-parse", "HEAD:src/deep/c.txt")))
+	r.WriteObjectFile(blob, []byte("this is not a zlib stream"))
+	require.FileExists(t, r.ObjectPath(blob))
+
+	idx := strings.TrimSuffix(packFile(t, r), ".pack") + ".idx"
+	data, err := os.ReadFile(idx)
+	require.NoError(t, err)
+	// The last twenty bytes are the index's own checksum. Breaking it fails
+	// the pack without touching a single entry.
+	data[len(data)-1] ^= 0xff
+	overwrite(t, idx, data)
+
+	res := fix(t, r)
+
+	require.True(t, res.Ok(), "the repair did not finish: %+v", res)
+	requireGitClean(t, r)
+	requireSame(t, before, r)
+	assert.Equal(t, "three\n", r.Git("show", "HEAD:src/deep/c.txt"),
+		"the corrupt loose copy outlived the pack")
+	assert.FileExists(t, filepath.Join(res.Quarantine, "objects",
+		blob.String()[:2], blob.String()[2:]),
+		"the corrupt loose copy was not kept")
+}
