@@ -80,13 +80,24 @@ func (s *Sources) Close() {
 	}
 }
 
-// Recover finds the bytes for one object and writes it back into the
-// repository. It reports which source answered.
+// Found is one object's bytes, before they are written back.
+type Found struct {
+	Type    gitobj.Type
+	Content []byte
+	Source  string
+}
+
+// Find reads the bytes for one object out of the first source that has them.
+//
+// It does not write. The caller displaces the corrupt file first and writes
+// afterwards, because the other order destroys the corrupt copy: a write lands
+// on the same path, so quarantining after it would file away the repaired
+// object and leave nothing to undo.
 //
 // The order is local first. A local source costs a read and cannot fail
 // halfway, and every source yields identical bytes anyway, because the name
 // pins the content.
-func (s *Sources) Recover(b BadObject, objectsDir string) (Recovered, error) {
+func (s *Sources) Find(b BadObject) (Found, error) {
 	type attempt struct {
 		name string
 		get  func(BadObject) (gitobj.Type, []byte, bool)
@@ -101,16 +112,25 @@ func (s *Sources) Recover(b BadObject, objectsDir string) (Recovered, error) {
 		if !ok {
 			continue
 		}
-		oid, err := odb.WriteLoose(objectsDir, s.repo.Algo, typ, content, b.OID)
-		if err != nil {
-			// The source produced something that is not this object. That is
-			// the check doing its job, so try the next source rather than
-			// writing what would be a different object under this name.
+		if odb.Hash(s.repo.Algo, typ, content).Compare(b.OID) != 0 {
+			// The source produced something that is not this object. Try the
+			// next one rather than writing a different object under this name.
 			continue
 		}
-		return Recovered{OID: oid, Type: typ, Source: a.name}, nil
+		return Found{Type: typ, Content: content, Source: a.name}, nil
 	}
-	return Recovered{}, fmt.Errorf("no source has %s", b.OID)
+	return Found{}, fmt.Errorf("no source has %s", b.OID)
+}
+
+// Write puts a found object into the repository. WriteLoose hashes it again and
+// refuses anything that does not match, which is the check that makes a
+// recovery the original object rather than an approximation.
+func (s *Sources) Write(b BadObject, f Found, objectsDir string) (Recovered, error) {
+	oid, err := odb.WriteLoose(objectsDir, s.repo.Algo, f.Type, f.Content, b.OID)
+	if err != nil {
+		return Recovered{}, err
+	}
+	return Recovered{OID: oid, Type: f.Type, Source: f.Source}, nil
 }
 
 // fromDuplicate finds a second, readable copy already in the repository.

@@ -122,18 +122,26 @@ func Run(o *Options) (*Result, error) {
 		recovered := 0
 		var stuck []BadObject
 		for _, bad := range damage.Objects {
-			rec, err := sources.Recover(bad, repo.ObjectsDir)
+			// Read the replacement before touching anything. A source that
+			// has nothing leaves the repository exactly as it was.
+			found, err := sources.Find(bad)
 			if err != nil {
 				stuck = append(stuck, bad)
 				continue
 			}
-			// The corrupt file is displaced only once a good copy is in
-			// place, so an interrupted run never leaves the repository worse
-			// than it found it.
+			// Then displace the corrupt file, and only then write. The
+			// replacement lands on the same path, so writing first would
+			// overwrite the evidence and leave the quarantine holding the
+			// repaired object. If the write fails after this, the manifest
+			// still names the original and --undo brings it back.
 			for _, path := range bad.Files {
 				if err := q.Take(path, "a corrupt object file, replaced"); err != nil {
 					return nil, err
 				}
+			}
+			rec, err := sources.Write(bad, found, repo.ObjectsDir)
+			if err != nil {
+				return nil, fmt.Errorf("writing the recovered %s: %w", bad.OID, err)
 			}
 			res.Objects = append(res.Objects, rec)
 			recovered++

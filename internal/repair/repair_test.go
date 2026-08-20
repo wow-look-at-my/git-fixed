@@ -249,6 +249,38 @@ func TestQuarantineRatherThanDelete(t *testing.T) {
 	assert.NotEqual(t, string(original), string(now))
 }
 
+// TestRecoversEachObjectOnce pins the order the repair works in. Writing the
+// replacement before displacing the corrupt file leaves the quarantine holding
+// the repaired object and the repository holding nothing, so the next pass
+// recovers the same object again. That showed up as a doubled line in the
+// report, and it meant the corrupt bytes were never actually kept.
+func TestRecoversEachObjectOnce(t *testing.T) {
+	gittest.RequireGit(t)
+	r := history(t)
+
+	// A commit has no local source, so this exercises the path where the
+	// replacement can only come from somewhere else.
+	blob := strings.TrimSpace(r.Git("rev-parse", "HEAD:a.txt"))
+	path := r.ObjectPath(mustOID(t, r, blob))
+	gittest.WriteOver(t, path, []byte("garbage"))
+
+	res := fix(t, r)
+	require.True(t, res.Ok())
+
+	seen := map[string]int{}
+	for _, rec := range res.Objects {
+		seen[rec.OID.String()]++
+	}
+	for oid, n := range seen {
+		assert.Equal(t, 1, n, "%s was recovered %d times, so a pass undid the one before it", oid, n)
+	}
+
+	// The corrupt bytes are the ones in quarantine, not the repaired object.
+	kept, err := os.ReadFile(filepath.Join(res.Quarantine, "objects", blob[:2], blob[2:]))
+	require.NoError(t, err)
+	assert.Equal(t, "garbage", string(kept), "the quarantine holds the repaired object instead of the corrupt one")
+}
+
 // TestDanglingIsNotDamage holds the sixth rule: an unreachable object is
 // ordinary, and a repair must neither report it nor remove it.
 func TestDanglingIsNotDamage(t *testing.T) {
