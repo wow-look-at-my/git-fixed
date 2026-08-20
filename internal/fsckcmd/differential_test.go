@@ -307,6 +307,25 @@ func TestPackedRepository(t *testing.T) {
 	sameAsGit(t, r, "--connectivity-only")
 }
 
+// TestBigFileThreshold covers the blob git hashes by streaming rather than
+// reading into memory. It has to stay a differential test: the streamed object
+// reaches the checks with no payload, so a mistake here shows up as a missing
+// or extra line rather than as a crash.
+func TestBigFileThreshold(t *testing.T) {
+	gittest.RequireGit(t)
+	r := gittest.New(t)
+	r.Git("config", "core.bigFileThreshold", "1k")
+	big := r.Blob(strings.Repeat("payload\n", 512))
+	tree := r.WriteRaw("tree", gittest.Tree(gittest.TreeEntry{Mode: "100644", Name: "big", OID: big}))
+	commit := r.Commit(tree, nil, "one big file")
+	r.UpdateRef("refs/heads/master", commit)
+	r.SetHEAD("refs/heads/master")
+	sameAsGit(t, r)
+	r.Git("repack", "-adq")
+	sameAsGit(t, r)
+	sameAsGit(t, r, "--strict")
+}
+
 func TestUnknownObjectType(t *testing.T) {
 	gittest.RequireGit(t)
 	r := gittest.New(t)

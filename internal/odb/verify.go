@@ -327,6 +327,11 @@ func (w *walker) walkChain(root int32, in *Inflater) {
 	if e.typ == gitobj.TypeBad {
 		return
 	}
+	if e.typ == gitobj.TypeBlob && w.o.BigFileThreshold > 0 && e.size >= w.o.BigFileThreshold &&
+		len(l.children(root)) == 0 {
+		w.finishStreamed(root)
+		return
+	}
 	typ, data, err := w.materializeRoot(e, in)
 	if err != nil {
 		oid := p.OIDAt(e.idx)
@@ -380,6 +385,32 @@ func (w *walker) materializeRoot(e *packEntry, in *Inflater) (gitobj.Type, []byt
 		return gitobj.TypeBad, nil, err
 	}
 	return e.typ, data, nil
+}
+
+// finishStreamed hashes a blob past core.bigFileThreshold without holding it,
+// which is what git's verify_packfile() does. It applies only to an entry
+// nothing deltas against, because a base must be in memory to build a child
+// from it. The caller sees a nil payload, and fsck reports a .gitmodules or
+// .gitattributes blob this large as too large to parse, as git does.
+func (w *walker) finishStreamed(i int32) {
+	e := &w.l.ents[i]
+	oid := w.p.OIDAt(e.idx)
+	got, err := w.p.StreamHash(e.dataOff, e.size, e.typ)
+	if err != nil {
+		w.emit(oid, fmt.Sprintf("cannot unpack %s from %s at offset %d", oid, w.p.Path, e.off))
+		return
+	}
+	if got != oid {
+		w.emit(oid, fmt.Sprintf("packed %s from %s is corrupt", oid, w.p.Path))
+		return
+	}
+	if w.object != nil {
+		w.object(oid, e.typ, e.size, nil)
+	}
+	n := atomic.AddInt64(&w.done, 1)
+	if w.o.Progress != nil && n&1023 == 0 {
+		w.o.Progress(int(n))
+	}
 }
 
 // finish hashes one decoded object and hands it to the caller.
