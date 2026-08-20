@@ -272,15 +272,14 @@ func (db *DB) Read(oid gitobj.OID) (gitobj.Type, []byte, error) {
 	}
 	in := db.inflaters.Get().(*Inflater)
 	defer db.inflaters.Put(in)
-	typ, data, err := db.readPacked(loc.Pack, loc.Pack.OffsetAt(loc.PackIdx), in, 0)
+	off := loc.Pack.OffsetAt(loc.PackIdx)
+	typ, data, err := db.readPacked(loc.Pack, off, in, 0)
 	if err != nil {
-		// git remembers a packed object that would not decode and lets
-		// the first reader report it. The next reader of the same
-		// object finds it on that list and dies instead.
-		if db.markBad(oid) {
-			return gitobj.TypeNone, nil, corruptPacked(loc.Pack, oid)
-		}
-		return gitobj.TypeNone, nil, err
+		// A read by object name dies on a packed object that will not
+		// decode. The pack check is the one reader that does not: it
+		// reports the entry and carries on to the next one.
+		db.markBad(oid)
+		return gitobj.TypeNone, nil, corruptPacked(loc.Pack, oid, off)
 	}
 	return typ, data, nil
 }
@@ -413,12 +412,23 @@ func (db *DB) HasPacked(oid gitobj.OID) bool {
 // FatalError is a condition git reports with "fatal:" and exit status 128. A
 // packed object that will not decode is the one that matters here: git dies
 // rather than carry on with a repository it cannot read.
-type FatalError struct{ Msg string }
+type FatalError struct {
+	Msg string
+	// Inflate is what git's decompressor said on the way, which it prints
+	// as its own line before the caller dies. It is empty when the read
+	// failed for a reason zlib had no opinion about.
+	Inflate string
+}
 
 func (e *FatalError) Error() string { return e.Msg }
 
 // corruptPacked builds the message git dies with when a packed object will not
-// decode. It names the object and the pack, as git's unpack_entry() does.
-func corruptPacked(p *Pack, oid gitobj.OID) error {
-	return &FatalError{Msg: fmt.Sprintf("packed object %s (stored in %s) is corrupt", oid, p.Path)}
+// decode. It names the object and the pack, as git's unpack_entry() does, and
+// carries whatever zlib complained about first.
+func corruptPacked(p *Pack, oid gitobj.OID, off int64) error {
+	e := &FatalError{Msg: fmt.Sprintf("packed object %s (stored in %s) is corrupt", oid, p.Path)}
+	if h, err := p.ReadHeader(off); err == nil {
+		e.Inflate = p.InflateMessage(h.DataOff, h.Size)
+	}
+	return e
 }

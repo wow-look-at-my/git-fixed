@@ -5,6 +5,8 @@ import (
 	"compress/zlib"
 	"fmt"
 	"math/rand"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -88,6 +90,35 @@ func difference(want, got []string) (missing, extra []string) {
 		}
 	}
 	return missing, extra
+}
+
+// TestCorruptPackBytes breaks one byte of a packfile at a time and requires the
+// whole report to match git's. A corrupt pack produces several different
+// reports depending on where the damage is: the pack's own checksum, an
+// entry's CRC, the complaint zlib makes, the entry that will not decode, and
+// the death of whoever reads that object by name afterwards.
+func TestCorruptPackBytes(t *testing.T) {
+	gittest.RequireGit(t)
+	for _, part := range []int{2, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 95} {
+		t.Run(fmt.Sprintf("at%d%%", part), func(t *testing.T) {
+			r := gittest.New(t)
+			for i := range 4 {
+				r.Write("f", fmt.Sprintf("the quick brown fox jumps over the lazy dog %d\n", i))
+				r.Git("add", "f")
+				r.Git("commit", "-qm", fmt.Sprintf("revision %d", i))
+			}
+			r.Git("repack", "-adq")
+			packs, err := filepath.Glob(filepath.Join(r.GitDir(), "objects", "pack", "*.pack"))
+			require.NoError(t, err)
+			require.Len(t, packs, 1)
+			data, err := os.ReadFile(packs[0])
+			require.NoError(t, err)
+			at := len(data) * part / 100
+			data[at] ^= 0xff
+			gittest.WriteOver(t, packs[0], data)
+			sameAsGit(t, r)
+		})
+	}
 }
 
 // looseObject returns the name git gives a blob and the bytes of its file.

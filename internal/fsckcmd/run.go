@@ -89,6 +89,9 @@ type run struct {
 
 	fatalMu  sync.Mutex
 	fatalMsg string
+	// fatalPre is the line git prints just before it dies, which is its
+	// decompressor speaking for itself.
+	fatalPre string
 
 	pendingMu sync.Mutex
 	pending   []*objEntry
@@ -127,7 +130,11 @@ func Run(o *Options) int {
 	// the run has already found.
 	die := func() int {
 		rep.Flush()
-		fmt.Fprintf(o.Stderr, "fatal: %s\n", r.died())
+		msg, pre := r.dying()
+		if pre != "" {
+			fmt.Fprintf(o.Stderr, "error: %s\n", pre)
+		}
+		fmt.Fprintf(o.Stderr, "fatal: %s\n", msg)
 		return 128
 	}
 
@@ -135,6 +142,11 @@ func Run(o *Options) int {
 		r.checkRefs()
 	}
 	rep.Flush()
+
+	r.snapshotRefs()
+	if r.died() != "" {
+		return die()
+	}
 
 	if o.ConnectivityOnly {
 		r.markForConnectivity()
@@ -536,13 +548,11 @@ func (r *run) checkPack(group int, p *odb.Pack) {
 		BigFileThreshold: r.db.BigFileThreshold,
 		Emit: func(oid gitobj.OID, text string) {
 			if oid.Valid() && strings.HasPrefix(text, "cannot unpack ") {
-				// An object that will not decode is not a finding
-				// in git: its reader dies on the spot, and the run
-				// ends with that one message. So record the death
-				// and say nothing here.
+				// The pack check reports an entry that will not
+				// decode and carries on to the next one. It puts
+				// the object on the bad list, and whoever reads
+				// it by name afterwards dies instead.
 				r.db.MarkBadPacked(oid)
-				r.noteFatalMsg(fmt.Sprintf("packed object %s (stored in %s) is corrupt", oid, p.Path))
-				return
 			}
 			r.rep.Errf(key(oid, 0), "error: %s", text)
 		},
@@ -691,6 +701,7 @@ func (r *run) noteFatal(err error) {
 	r.fatalMu.Lock()
 	if r.fatalMsg == "" {
 		r.fatalMsg = fatal.Msg
+		r.fatalPre = fatal.Inflate
 	}
 	r.fatalMu.Unlock()
 }
@@ -710,4 +721,12 @@ func (r *run) died() string {
 	r.fatalMu.Lock()
 	defer r.fatalMu.Unlock()
 	return r.fatalMsg
+}
+
+// dying returns the message the run stops with, and the line its decompressor
+// printed first.
+func (r *run) dying() (msg, pre string) {
+	r.fatalMu.Lock()
+	defer r.fatalMu.Unlock()
+	return r.fatalMsg, r.fatalPre
 }

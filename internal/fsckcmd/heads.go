@@ -8,6 +8,35 @@ import (
 	"github.com/wow-look-at-my/git-fixed/internal/gitrepo"
 )
 
+// snapshotRefs reads the object each starting point names, which is what git
+// does before it opens the object database at all. Nothing here reports
+// anything: the later passes say what is wrong with a reference. The one thing
+// this pass does produce is git's death on a packed object that will not
+// decode, before the object pass has printed a word.
+func (r *run) snapshotRefs() {
+	read := func(oid gitobj.OID) {
+		if oid.Valid() && !oid.IsNull() {
+			_, _, _ = r.readObject(oid)
+		}
+	}
+	if len(r.o.Args) > 0 {
+		for _, arg := range r.o.Args {
+			if oid, ok := r.repo.Algo.Parse(arg); ok {
+				read(oid)
+			}
+		}
+		return
+	}
+	for _, ref := range r.repo.Refs(r.repo.CommonDir) {
+		read(ref.OID)
+	}
+	for _, wt := range r.repo.Worktrees() {
+		if _, oid, ok := r.repo.Head(wt.Dir); ok {
+			read(oid)
+		}
+	}
+}
+
 // handleArgs treats each command-line argument as a starting point.
 func (r *run) handleArgs() {
 	key := sortKey{phase: phaseHeads}

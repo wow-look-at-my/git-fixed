@@ -105,6 +105,21 @@ func (p *Pack) validatePackHeader() (string, bool) {
 	return "", true
 }
 
+// cannotUnpack reports an entry that will not decode. Whatever stopped the read
+// says so first, and only then does its caller add the line naming the entry.
+// An entry whose own header is unreadable never reaches the decompressor.
+func cannotUnpack(emit func(gitobj.OID, string), p *Pack, oid gitobj.OID, e packEntry) {
+	switch {
+	case e.badHeader != "":
+		emit(oid, e.badHeader)
+	default:
+		if msg := p.InflateMessage(e.dataOff, e.size); msg != "" {
+			emit(oid, msg)
+		}
+	}
+	emit(oid, fmt.Sprintf("cannot unpack %s from %s at offset %d", oid, p.Path, e.off))
+}
+
 // packEntry is one object as the pack stores it, in offset order.
 type packEntry struct {
 	off     int64
@@ -112,7 +127,10 @@ type packEntry struct {
 	size    int64
 	end     int64
 	idx     uint32 // position in index order
-	typ     gitobj.Type
+	// badHeader is what stopped the entry header from being read, which
+	// happens before anything decompresses.
+	badHeader string
+	typ       gitobj.Type
 }
 
 // packLayout is every entry in offset order, plus the base-to-children links
@@ -163,6 +181,7 @@ func (p *Pack) buildLayout() *packLayout {
 		if err != nil {
 			l.bad = append(l.bad, int32(i))
 			l.ents[i].typ = gitobj.TypeBad
+			l.ents[i].badHeader = err.Error()
 			continue
 		}
 		l.ents[i].typ = h.Type
@@ -237,7 +256,7 @@ func (p *Pack) verifyObjects(o VerifyOpts) bool {
 	for _, i := range l.bad {
 		e := l.ents[i]
 		oid := p.OIDAt(e.idx)
-		emit(oid, fmt.Sprintf("cannot unpack %s from %s at offset %d", oid, p.Path, e.off))
+		cannotUnpack(emit, p, oid, e)
 	}
 
 	// The index records a CRC over each entry's raw bytes. Checking those is
@@ -335,7 +354,7 @@ func (w *walker) walkChain(root int32, in *Inflater) {
 	typ, data, err := w.materializeRoot(e, in)
 	if err != nil {
 		oid := p.OIDAt(e.idx)
-		w.emit(oid, fmt.Sprintf("cannot unpack %s from %s at offset %d", oid, p.Path, e.off))
+		cannotUnpack(w.emit, p, oid, *e)
 		return
 	}
 	w.finish(root, typ, data)
@@ -362,7 +381,7 @@ func (w *walker) walkChain(root int32, in *Inflater) {
 		}
 		if err != nil {
 			oid := p.OIDAt(ce.idx)
-			w.emit(oid, fmt.Sprintf("cannot unpack %s from %s at offset %d", oid, p.Path, ce.off))
+			cannotUnpack(w.emit, p, oid, *ce)
 			continue
 		}
 		w.finish(child, typ, out)
@@ -397,7 +416,7 @@ func (w *walker) finishStreamed(i int32) {
 	oid := w.p.OIDAt(e.idx)
 	got, err := w.p.StreamHash(e.dataOff, e.size, e.typ)
 	if err != nil {
-		w.emit(oid, fmt.Sprintf("cannot unpack %s from %s at offset %d", oid, w.p.Path, e.off))
+		cannotUnpack(w.emit, w.p, oid, *e)
 		return
 	}
 	if got != oid {

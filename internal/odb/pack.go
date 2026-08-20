@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/wow-look-at-my/git-fixed/internal/gitobj"
+	"github.com/wow-look-at-my/git-fixed/internal/zlibmsg"
 )
 
 const (
@@ -266,7 +267,7 @@ func (p *Pack) ReadHeader(off int64) (ObjHeader, error) {
 		pos += int64(p.Algo.RawSize)
 	case gitobj.TypeCommit, gitobj.TypeTree, gitobj.TypeBlob, gitobj.TypeTag:
 	default:
-		return h, fmt.Errorf("unknown object type %d at %d in %s", h.Type, off, p.Path)
+		return h, fmt.Errorf("unknown object type %d at offset %d in %s", h.Type, off, p.Path)
 	}
 	h.DataOff = pos
 	return h, nil
@@ -319,6 +320,17 @@ func (in *Inflater) Inflate(p *Pack, dataOff, size int64) ([]byte, error) {
 
 // InflateStream returns a reader over the entry's payload, for an object too
 // large to hold in memory.
+// InflateMessage is the complaint git's decompressor prints when an entry will
+// not decode, before its caller adds one of its own. git gives the read one
+// byte more than the index promised, so that a payload longer than that is
+// noticed rather than cut short.
+func (p *Pack) InflateMessage(dataOff, size int64) string {
+	if dataOff < 0 || dataOff > int64(len(p.data)) {
+		return ""
+	}
+	return zlibmsg.Diagnose(p.data[dataOff:], size+1)
+}
+
 func (in *Inflater) InflateStream(p *Pack, dataOff int64) (io.Reader, error) {
 	if dataOff < 0 || dataOff > int64(len(p.data)) {
 		return nil, fmt.Errorf("read past the end of %s", p.Path)
