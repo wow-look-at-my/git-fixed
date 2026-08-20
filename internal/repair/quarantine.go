@@ -155,10 +155,21 @@ func (q *Quarantine) writeManifest() error {
 	return os.WriteFile(filepath.Join(q.Dir(), manifestName), append(data, '\n'), 0o666)
 }
 
+// replacedDir holds what an undo had to move out of the way, inside the run it
+// is undoing.
+const replacedDir = "replaced"
+
 // Undo puts a run's files back where they came from.
 //
-// It restores in reverse order and refuses to overwrite a file that is there
-// again, so an undo cannot itself destroy something a later run created.
+// Most of what a run displaces, it also replaces: it writes a whole index over
+// a broken one, a valid packed-refs over a malformed one, a recovered object
+// over a corrupt one. So the path an undo restores to is usually occupied, and
+// refusing to overwrite it -- which this used to do -- meant the undo failed on
+// every run worth undoing.
+//
+// Nothing is overwritten even so. Whatever is in the way moves into the run's
+// own "replaced" directory first, keeping its path, so an undo deletes no more
+// than a repair does and can itself be picked apart by hand.
 func Undo(gitDir, run string) ([]Displaced, error) {
 	q := NewQuarantine(gitDir, run)
 	data, err := os.ReadFile(filepath.Join(q.Dir(), manifestName))
@@ -175,8 +186,20 @@ func Undo(gitDir, run string) ([]Displaced, error) {
 		f := man.Files[i]
 		src := filepath.Join(q.Dir(), filepath.FromSlash(f.To))
 		dest := q.resolve(f.From)
+		if _, err := os.Lstat(src); err != nil {
+			// Already restored by an earlier undo of the same run. The
+			// manifest records what the run displaced, not what is still
+			// sitting here, so a second undo finds nothing to move.
+			continue
+		}
 		if _, err := os.Lstat(dest); err == nil {
-			return restored, fmt.Errorf("%s is back in place; not overwriting it", f.From)
+			aside := filepath.Join(q.Dir(), replacedDir, filepath.FromSlash(f.To))
+			if err := os.MkdirAll(filepath.Dir(aside), 0o777); err != nil {
+				return restored, err
+			}
+			if err := move(dest, aside); err != nil {
+				return restored, fmt.Errorf("setting aside the current %s: %w", f.From, err)
+			}
 		}
 		if err := os.MkdirAll(filepath.Dir(dest), 0o777); err != nil {
 			return restored, err
@@ -243,4 +266,15 @@ func copyFile(src, dest string) error {
 		return err
 	}
 	return os.Chmod(dest, info.Mode().Perm())
+}
+
+// ReplacedDir is where an undo of this run put what it had to move out of the
+// way, or empty when it moved nothing. A repair that replaced nothing -- one
+// that only displaced a derived cache, say -- leaves no such directory.
+func ReplacedDir(gitDir, run string) string {
+	dir := filepath.Join(NewQuarantine(gitDir, run).Dir(), replacedDir)
+	if _, err := os.Stat(dir); err != nil {
+		return ""
+	}
+	return dir
 }

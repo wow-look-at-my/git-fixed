@@ -21,6 +21,10 @@ Two properties make lossless repair possible rather than aspirational:
 - **Nothing is deleted, only moved.** Every removal goes to `.git/git-fixed/quarantine/<run>/`, keeping its path, with a manifest that says where
   each file came from. `git fix --undo <run>` puts them all back. A repair that turns out to be wrong costs one command, not a repository.
 
+  An undo restores over what the repair wrote, because most of what a run displaces it also replaces -- a whole index over a broken one, a valid
+  `packed-refs` over a malformed one. Nothing is overwritten even so: whatever is in the way moves into that run's own `replaced/` directory first,
+  keeping its path. So an undo deletes no more than a repair does, and the two states sit side by side afterwards.
+
 ## What counts as damage
 
 Six kinds, and the sixth is the one git users get wrong most often.
