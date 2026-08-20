@@ -94,13 +94,13 @@ func (r *run) treeEdges(key sortKey, oid gitobj.OID, entries []fsck.TreeEntry) (
 			broken = true
 			continue
 		}
-		target, ok := r.objs.Lookup(e.OID, typ)
+		target, idx, ok := r.objs.Lookup(e.OID, typ)
 		if !ok {
 			broken = true
 		} else {
 			target.SetFlag(flagUsed)
 		}
-		edges = append(edges, edge{target: target, typ: typ})
+		edges = append(edges, makeEdge(idx, ok, typ, false))
 	}
 	return edges, bad, broken
 }

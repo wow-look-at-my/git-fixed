@@ -76,13 +76,13 @@ func (r *run) checkObject(key sortKey, e *objEntry, typ gitobj.Type, buf []byte)
 			r.rep.Errf(key, "error: %s", msg)
 		}
 		for _, l := range links {
-			target, ok := r.objs.Lookup(l.oid, l.typ)
+			target, idx, ok := r.objs.Lookup(l.oid, l.typ)
 			if !ok {
 				broken = true
 			} else {
 				target.SetFlag(flagUsed)
 			}
-			edges = append(edges, edge{target: target, typ: l.typ, viaTag: l.viaTag})
+			edges = append(edges, makeEdge(idx, ok, l.typ, l.viaTag))
 		}
 		r.recordEdges(e, edges, badLinks, parseErrs)
 		if broken {
@@ -117,7 +117,42 @@ func (r *run) recordEdges(e *objEntry, edges []edge, bad []link, errs []string) 
 		// re-reads the object in that case.
 		return
 	}
-	e.SetEdges(edges, bad, errs)
+	// The rare pair goes in first: SetEdges publishes the object to the
+	// connectivity walk, which reads both.
+	if len(bad) > 0 || len(errs) > 0 {
+		r.putRare(e, bad, errs)
+	}
+	e.SetEdges(edges)
+}
+
+// rareLinks is what a very few objects carry and the rest do not: a tree entry
+// whose mode names no kind of object, and the parse errors of a commit or a tag.
+// The connectivity walk prints both again, so both have to survive the object
+// pass. Holding them in objEntry cost every object in the repository the three
+// slice headers, for something almost none of them have.
+type rareLinks struct {
+	bad  []link
+	errs []string
+}
+
+// putRare records the awkward half of one object's links, and marks the object
+// so that the walk knows to come and ask. Without that mark every object in the
+// repository would take this lock to be told there is nothing here for it.
+func (r *run) putRare(e *objEntry, bad []link, errs []string) {
+	r.rareMu.Lock()
+	if r.rare == nil {
+		r.rare = make(map[gitobj.OID]rareLinks)
+	}
+	r.rare[e.OID] = rareLinks{bad: bad, errs: errs}
+	r.rareMu.Unlock()
+	e.SetFlag(flagRare)
+}
+
+// rareFor returns what putRare recorded for an object carrying flagRare.
+func (r *run) rareFor(oid gitobj.OID) rareLinks {
+	r.rareMu.Lock()
+	defer r.rareMu.Unlock()
+	return r.rare[oid]
 }
 
 // markReachable is git's mark_object_reachable(): a root has no parent to blame

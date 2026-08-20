@@ -1,13 +1,13 @@
 module github.com/wow-look-at-my/git-fixed
 
-go 1.25.0
+go 1.26
 
 require (
 	github.com/wow-look-at-my/go-mmap v0.0.0-20260820164452-9c1e07927997 // go-toolchain:auto-branch
 	golang.org/x/text v0.21.0
 )
 
-require github.com/wow-look-at-my/go-containers v0.0.0-20260818100925-5e01414a6ac3 // go-toolchain:auto-branch
+require github.com/wow-look-at-my/go-containers v0.0.0-20260820210621-2e1261867045 // go-toolchain:auto-branch
 
 require github.com/stretchr/testify v1.11.1
 

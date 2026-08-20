@@ -18,7 +18,11 @@ import (
 // and a verify, which reads the contents. The two report differently.
 func (r *run) checkPackRevIndexes() {
 	key := sortKey{phase: phaseIndexFiles}
-	for _, p := range r.db.Packs() {
+	packs := r.db.Packs()
+	m := r.meterDelayed("Verifying reverse pack-indexes", int64(len(packs)))
+	defer m.finish()
+	for _, p := range packs {
+		m.step()
 		if p.OpenErr != nil {
 			continue
 		}

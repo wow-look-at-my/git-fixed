@@ -174,7 +174,7 @@ func (r *run) fsckIndex(idx *gitrepo.Index, path string, isCurrent bool) {
 		if ce.Mode&0o170000 == 0o160000 {
 			continue // a submodule commit is not this repository's object
 		}
-		e, ok := r.objs.Lookup(ce.OID, gitobj.TypeBlob)
+		e, _, ok := r.objs.Lookup(ce.OID, gitobj.TypeBlob)
 		if !ok || e == nil {
 			continue
 		}
