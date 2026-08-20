@@ -95,6 +95,15 @@ func newTestRun(stderr *bytes.Buffer) *run {
 	return &run{o: o, fsck: fsck.NewOptions(gitobj.SHA1)}
 }
 
+func TestNoteFatalMsg(t *testing.T) {
+	var errBuf bytes.Buffer
+	r := newTestRun(&errBuf)
+	assert.Empty(t, r.died())
+	r.noteFatalMsg("first")
+	r.noteFatalMsg("second")
+	assert.Equal(t, "first", r.died(), "the first fatal condition is the one git dies on")
+}
+
 func TestSetMsgType(t *testing.T) {
 	var errBuf bytes.Buffer
 	r := newTestRun(&errBuf)

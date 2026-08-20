@@ -180,6 +180,21 @@ func TestBlobGitattributes(t *testing.T) {
 	assert.Empty(t, check("ok\n\x00"+long))
 }
 
+func TestReportMissingAndNonBlob(t *testing.T) {
+	for _, c := range []struct{ kind, missing, nonBlob string }{
+		{".gitmodules", "gitmodulesMissing: unable to read .gitmodules blob", "gitmodulesBlob: non-blob found at .gitmodules"},
+		{".gitattributes", "gitattributesMissing: unable to read .gitattributes blob", "gitattributesBlob: non-blob found at .gitattributes"},
+	} {
+		_, msgs := collect(t, func(o *Options) int { return o.ReportMissingBlob(nil, oidN(1), c.kind) })
+		assert.Contains(t, first(msgs), c.missing)
+
+		_, msgs = collect(t, func(o *Options) int {
+			return o.ReportNonBlob(nil, oidN(1), gitobj.TypeTree, c.kind)
+		})
+		assert.Contains(t, first(msgs), c.nonBlob)
+	}
+}
+
 func TestBlobIgnoresUnnamedBlobs(t *testing.T) {
 	o := NewOptions(gitobj.SHA1)
 	o.Error = func(*Options, any, gitobj.OID, gitobj.Type, Severity, MsgID, string) int {
