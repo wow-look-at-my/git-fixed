@@ -125,11 +125,12 @@ func (r *Repo) WriteRaw(typeName string, content []byte) gitobj.OID {
 	return oid
 }
 
-// WriteLooseBytes stores exactly these bytes as the object's file, which lets a
-// test build a file whose content does not match its name.
-func (r *Repo) WriteLooseBytes(oid gitobj.OID, raw []byte) {
+// WriteLooseBytes stores these bytes, header and all, as the object named by
+// oid. git compresses them the same way, so this builds a readable file whose
+// content does not match its name.
+func (r *Repo) WriteLooseBytes(oid gitobj.OID, body []byte) {
 	r.t.Helper()
-	r.writeLoose(oid, raw)
+	r.writeLoose(oid, body)
 }
 
 func (r *Repo) writeLoose(oid gitobj.OID, uncompressed []byte) {
@@ -175,7 +176,18 @@ func (r *Repo) ObjectPath(oid gitobj.OID) string {
 // makes an object that cannot be read at all.
 func (r *Repo) Overwrite(oid gitobj.OID, raw []byte) {
 	r.t.Helper()
+	r.WriteObjectFile(oid, raw)
+}
+
+// WriteObjectFile puts raw in the file the object named by oid lives in,
+// exactly as given. Nothing compresses it, so this is how a test builds an
+// object file that zlib itself refuses.
+func (r *Repo) WriteObjectFile(oid gitobj.OID, raw []byte) {
+	r.t.Helper()
 	path := r.ObjectPath(oid)
+	if err := os.MkdirAll(filepath.Dir(path), 0o777); err != nil {
+		r.t.Fatal(err)
+	}
 	_ = os.Chmod(path, 0o666)
 	if err := os.WriteFile(path, raw, 0o444); err != nil {
 		r.t.Fatal(err)

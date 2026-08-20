@@ -9,6 +9,7 @@ import (
 	"os"
 
 	"github.com/wow-look-at-my/git-fixed/internal/gitobj"
+	"github.com/wow-look-at-my/git-fixed/internal/zlibmsg"
 )
 
 // maxHeaderLen is git's MAX_HEADER_LEN: the first inflate of a loose object
@@ -30,6 +31,15 @@ type LooseResult struct {
 	HashMismatch bool
 	// Failed is set when the object could not be read at all.
 	Failed bool
+}
+
+// inflateFailed records the complaint git's decompressor prints before its
+// caller adds one. maxOut is how much output the failed read had room for:
+// zlib stops once it has filled that, so it never reaches a fault beyond it.
+func (res *LooseResult) inflateFailed(raw []byte, maxOut int64) {
+	if msg := zlibmsg.Diagnose(raw, maxOut); msg != "" {
+		res.Errors = append(res.Errors, msg)
+	}
 }
 
 // ReadLoose decodes one loose object file and checks it against the object name
@@ -70,11 +80,8 @@ func readLooseBytes(raw []byte, shown string, expected gitobj.OID, algo *gitobj.
 	if err != nil {
 		res.Failed = true
 		// git's decompressor prints its own complaint before its caller
-		// adds one, and this is the wording zlib gives for a header that
-		// is not a zlib header at all.
-		if errors.Is(err, zlib.ErrHeader) {
-			res.Errors = append(res.Errors, "inflate: data stream error (incorrect header check)")
-		}
+		// adds one.
+		res.inflateFailed(raw, maxHeaderLen)
 		res.Errors = append(res.Errors, fmt.Sprintf("unable to unpack header of %s", shown))
 		return res
 	}
@@ -83,7 +90,20 @@ func readLooseBytes(raw []byte, shown string, expected gitobj.OID, algo *gitobj.
 	var hdr [maxHeaderLen]byte
 	n, err := readUpTo(zr, hdr[:])
 	nul := bytes.IndexByte(hdr[:n], 0)
-	if (err != nil && !errors.Is(err, io.EOF)) || nul < 0 {
+	if err != nil && !errors.Is(err, io.EOF) {
+		// Go's decompressor decodes ahead of what it was asked for, so
+		// it reports a fault that zlib has not reached yet. git reads
+		// the header into this many bytes and stops there, and gives up
+		// here only for a fault inside those. Anything further down
+		// belongs to the read of the contents.
+		if msg := zlibmsg.Diagnose(raw, maxHeaderLen); msg != "" {
+			res.Failed = true
+			res.Errors = append(res.Errors, msg,
+				fmt.Sprintf("unable to unpack header of %s", shown))
+			return res
+		}
+	}
+	if nul < 0 {
 		res.Failed = true
 		res.Errors = append(res.Errors, fmt.Sprintf("unable to unpack header of %s", shown))
 		return res
@@ -107,7 +127,7 @@ func readLooseBytes(raw []byte, shown string, expected gitobj.OID, algo *gitobj.
 	}
 
 	if res.Type == gitobj.TypeBlob && size > bigFileThreshold {
-		res.streamCheck(zr, br, hdr[:n], nul, size, shown, expected, algo)
+		res.streamCheck(zr, raw, br, hdr[:n], nul, size, shown, expected, algo)
 		return res
 	}
 
@@ -118,6 +138,9 @@ func readLooseBytes(raw []byte, shown string, expected gitobj.OID, algo *gitobj.
 	switch {
 	case readErr != nil:
 		res.Failed = true
+		// The header is behind us, so this read runs to the end of the
+		// stream and reaches whatever zlib objects to anywhere in it.
+		res.inflateFailed(raw, zlibmsg.Whole)
 		res.Errors = append(res.Errors,
 			fmt.Sprintf("corrupt loose object '%s'", expected),
 			fmt.Sprintf("unable to unpack contents of %s", shown))
@@ -147,7 +170,7 @@ func readLooseBytes(raw []byte, shown string, expected gitobj.OID, algo *gitobj.
 
 // streamCheck hashes a blob too large to hold in memory, the way git's
 // check_stream_oid() does.
-func (res *LooseResult) streamCheck(zr io.Reader, br *bytes.Reader, hdr []byte, nul int, size int64, shown string, expected gitobj.OID, algo *gitobj.Algo) {
+func (res *LooseResult) streamCheck(zr io.Reader, raw []byte, br *bytes.Reader, hdr []byte, nul int, size int64, shown string, expected gitobj.OID, algo *gitobj.Algo) {
 	h := algo.New()
 	h.Write(hdr[:nul+1])
 	pre := hdr[nul+1:]
@@ -173,6 +196,7 @@ func (res *LooseResult) streamCheck(zr io.Reader, br *bytes.Reader, hdr []byte, 
 	}
 	if readErr != nil && !errors.Is(readErr, io.EOF) || total != size {
 		res.Failed = true
+		res.inflateFailed(raw, zlibmsg.Whole)
 		res.Errors = append(res.Errors, fmt.Sprintf("corrupt loose object '%s'", expected))
 		return
 	}
