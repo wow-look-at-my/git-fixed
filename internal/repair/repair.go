@@ -32,8 +32,18 @@ type Options struct {
 	// question, so a caller that ran one of those passes nil.
 	Healthy *bool
 
+	// ShowProgress draws a meter over the two passes a scan spends its time
+	// in. A scan of a broken repository reads every pack and then every
+	// object a reference leads to, which is as long as the fsck before it.
+	ShowProgress bool
+
 	Stdout io.Writer
 	Stderr io.Writer
+}
+
+// meters is where a scan started by this run draws its progress.
+func (o *Options) meters() Meters {
+	return Meters{Stderr: o.Stderr, Show: o.ShowProgress}
 }
 
 // Result is what a run did.
@@ -103,7 +113,7 @@ func (o *Options) firstScan(repo *gitrepo.Repo, db *odb.DB) (*Damage, error) {
 	if o.Healthy != nil && *o.Healthy {
 		return ScanTrustingFsck(repo, db)
 	}
-	return Scan(repo, db)
+	return Scan(repo, db, o.meters())
 }
 
 // Run repairs the repository and reports what it did.
@@ -170,7 +180,7 @@ func Run(o *Options) (*Result, error) {
 		if err != nil {
 			return nil, err
 		}
-		damage, err = Scan(repo, db)
+		damage, err = Scan(repo, db, o.meters())
 		if err != nil {
 			return nil, err
 		}
@@ -190,7 +200,7 @@ func Run(o *Options) (*Result, error) {
 		if err != nil {
 			return nil, err
 		}
-		damage, err = Scan(repo, db)
+		damage, err = Scan(repo, db, o.meters())
 		if err != nil {
 			return nil, err
 		}
@@ -222,7 +232,7 @@ func Run(o *Options) (*Result, error) {
 			if err != nil {
 				return nil, err
 			}
-			damage, err = Scan(repo, db)
+			damage, err = Scan(repo, db, o.meters())
 			if err != nil {
 				return nil, err
 			}

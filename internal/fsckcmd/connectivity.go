@@ -60,7 +60,7 @@ func (r *run) traverseReachable() {
 	// git counts the objects it walks here, with no total to measure them
 	// against, and stays quiet for a second first.
 	m := r.meterDelayed("Checking connectivity", 0)
-	defer m.finish()
+	defer m.Finish()
 	workers := r.o.Workers
 	if workers <= 0 {
 		workers = runtime.GOMAXPROCS(0)
@@ -69,7 +69,7 @@ func (r *run) traverseReachable() {
 		for len(stack) > 0 {
 			e := stack[len(stack)-1]
 			stack = append(stack[:len(stack)-1], r.traverseOne(e)...)
-			m.step()
+			m.Step()
 		}
 		return
 	}
@@ -123,7 +123,7 @@ func (r *run) traverseReachable() {
 				e := local[len(local)-1]
 				local = local[:len(local)-1]
 				local = append(local, r.traverseOne(e)...)
-				m.step()
+				m.Step()
 
 				// Hand back a surplus so the others have something to take.
 				// History is narrow in places, and a worker that hoarded its

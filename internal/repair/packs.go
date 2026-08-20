@@ -13,6 +13,7 @@ import (
 	"github.com/wow-look-at-my/git-fixed/internal/gitobj"
 	"github.com/wow-look-at-my/git-fixed/internal/gitrepo"
 	"github.com/wow-look-at-my/git-fixed/internal/odb"
+	"github.com/wow-look-at-my/git-fixed/internal/progress"
 )
 
 // BadPack is a packfile that will not verify.
@@ -51,15 +52,24 @@ var companionSuffixes = []string{".pack", ".idx", ".rev", ".bitmap", ".keep", ".
 // accepts. It costs a full read of every pack, which is the price of knowing
 // rather than guessing.
 func (s *scanner) scanPacks(d *Damage) {
-	for _, p := range s.db.Packs() {
-		if bad, ok := verifyPack(p); ok {
+	packs := s.db.Packs()
+	total := int64(0)
+	for _, p := range packs {
+		if p.OpenErr == nil {
+			total += int64(p.Num)
+		}
+	}
+	m := s.meters.start("Verifying packs", total)
+	defer m.Finish()
+	for _, p := range packs {
+		if bad, ok := verifyPack(p, m); ok {
 			d.Packs = append(d.Packs, bad)
 		}
 	}
 }
 
 // verifyPack reports whether one pack is damaged, and how.
-func verifyPack(p *odb.Pack) (BadPack, bool) {
+func verifyPack(p *odb.Pack, m *progress.Meter) (BadPack, bool) {
 	bad := BadPack{Pack: p.File, Idx: p.IdxFile}
 	if p.OpenErr != nil {
 		bad.Why = p.OpenErr.Error()
@@ -72,7 +82,8 @@ func verifyPack(p *odb.Pack) (BadPack, bool) {
 				first = text
 			}
 		},
-		Workers: 1,
+		Progress: m.Step,
+		Workers:  1,
 	})
 	if ok && first == "" {
 		return BadPack{}, false

@@ -27,8 +27,8 @@ func (r *run) checkRefs() {
 	// to "git refs verify" and cannot see inside.
 	m := r.meterOn("Checking ref database", 1)
 	defer func() {
-		m.advance(1)
-		m.finish()
+		m.Advance(1)
+		m.Finish()
 	}()
 	for _, wt := range r.repo.Worktrees() {
 		dir := wt.Dir

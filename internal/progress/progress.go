@@ -1,13 +1,14 @@
-package fsckcmd
-
-// The progress meter, drawn the way git's progress.c draws it.
+// Package progress draws a phase's progress the way git's progress.c draws it.
 //
 // A run over a large repository spends minutes inside one phase, and until this
 // existed it printed nothing at all for the whole time. git shows a meter on
-// five phases and this shows it on the same five, with the same titles, the
-// same delays and the same wording, because --dry-run stands in for git fsck.
+// five phases of its fsck and this shows one on the same five, with the same
+// titles, the same delays and the same wording, because --dry-run stands in for
+// git fsck. The repair scan that follows gets one too, for the same reason and
+// with nothing to copy.
 //
 // see docs/progress.md
+package progress
 
 import (
 	"fmt"
@@ -18,20 +19,21 @@ import (
 	"time"
 )
 
-// progressTick is how often the meter is allowed to redraw. git arms a one
-// second SIGALRM and draws on the next call after it fires.
-const progressTick = time.Second
+// tick is how often a meter is allowed to redraw. git arms a one second
+// SIGALRM and draws on the next call after it fires.
+const tick = time.Second
 
-// progressDelay is how long a delayed meter stays quiet, as git's
-// GIT_PROGRESS_DELAY does. A phase that finishes inside it prints nothing.
-const progressDelay = time.Second
+// delay is how long a delayed meter stays quiet, as git's GIT_PROGRESS_DELAY
+// does. A phase that finishes inside it prints nothing at all.
+const delay = time.Second
 
-// meter draws one phase's progress: a title, then a count that is rewritten in
+// Meter draws one phase's progress: a title, then a count that is rewritten in
 // place, then a "done." line when the phase ends.
 //
-// Every method works on a nil meter and draws nothing, so a caller never asks
-// whether progress is on.
-type meter struct {
+// Every method works on a nil Meter and draws nothing, so a caller with
+// progress turned off keeps one nil Meter rather than a condition at every
+// place it counts.
+type Meter struct {
 	w     io.Writer
 	title string
 	total int64
@@ -53,23 +55,20 @@ type meter struct {
 	wg   sync.WaitGroup
 }
 
-// meterOn builds a meter that draws immediately, as git's start_progress does.
+// Start begins a meter that draws immediately, as git's start_progress does.
 // total is zero for a phase that counts without knowing where it ends.
-func (r *run) meterOn(title string, total int64) *meter {
-	return r.newMeter(title, total, false)
+func Start(w io.Writer, title string, total int64) *Meter {
+	return start(w, title, total, false)
 }
 
-// meterDelayed builds a meter that stays quiet for a second first, as git's
+// StartDelayed begins a meter that stays quiet for a second first, as git's
 // start_delayed_progress does. It is for a phase that is usually instant.
-func (r *run) meterDelayed(title string, total int64) *meter {
-	return r.newMeter(title, total, true)
+func StartDelayed(w io.Writer, title string, total int64) *Meter {
+	return start(w, title, total, true)
 }
 
-func (r *run) newMeter(title string, total int64, delayed bool) *meter {
-	if !r.o.ShowProgress {
-		return nil
-	}
-	m := &meter{w: r.o.Stderr, title: title, total: total, stop: make(chan struct{})}
+func start(w io.Writer, title string, total int64, delayed bool) *Meter {
+	m := &Meter{w: w, title: title, total: total, stop: make(chan struct{})}
 	m.pct.Store(-1)
 	m.quiet.Store(delayed)
 	m.wg.Add(1)
@@ -79,17 +78,17 @@ func (r *run) newMeter(title string, total int64, delayed bool) *meter {
 
 // run raises the redraw flag on a timer. The meter draws from whichever worker
 // notices the flag, so nothing here writes.
-func (m *meter) run(delayed bool) {
+func (m *Meter) run(delayed bool) {
 	defer m.wg.Done()
 	if delayed {
 		select {
 		case <-m.stop:
 			return
-		case <-time.After(progressDelay):
+		case <-time.After(delay):
 			m.quiet.Store(false)
 		}
 	}
-	t := time.NewTicker(progressTick)
+	t := time.NewTicker(tick)
 	defer t.Stop()
 	m.due.Store(true)
 	for {
@@ -102,18 +101,18 @@ func (m *meter) run(delayed bool) {
 	}
 }
 
-// step counts one unit of work. Workers call it once per object, so the path
+// Step counts one unit of work. Workers call it once per object, so the path
 // that draws nothing must stay to a couple of atomics.
-func (m *meter) step() {
+func (m *Meter) Step() {
 	if m == nil {
 		return
 	}
 	m.report(m.count.Add(1))
 }
 
-// advance moves the count to n, unless it is already past it. Work that
+// Advance moves the count to n, unless it is already past it. Work that
 // finishes out of order still leaves a meter that only ever goes forwards.
-func (m *meter) advance(n int64) {
+func (m *Meter) Advance(n int64) {
 	if m == nil {
 		return
 	}
@@ -132,7 +131,7 @@ func (m *meter) advance(n int64) {
 
 // report draws when the count has moved the percentage or the timer has come
 // round, which is what git's display() decides.
-func (m *meter) report(n int64) {
+func (m *Meter) report(n int64) {
 	if m.quiet.Load() {
 		return
 	}
@@ -152,7 +151,7 @@ func (m *meter) report(n int64) {
 
 // draw writes one line. end is empty for an update, which returns the cursor to
 // the start of the line, and ", done." for the last one.
-func (m *meter) draw(n int64, end string) {
+func (m *Meter) draw(n int64, end string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var counters string
@@ -178,9 +177,9 @@ func (m *meter) draw(n int64, end string) {
 	m.shown = true
 }
 
-// finish stops the meter and leaves the last count on screen. A meter that
+// Finish stops the meter and leaves the last count on screen. A meter that
 // never drew anything, because its phase beat its delay, prints nothing at all.
-func (m *meter) finish() {
+func (m *Meter) Finish() {
 	if m == nil {
 		return
 	}

@@ -5,6 +5,7 @@ package repair
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -14,6 +15,7 @@ import (
 	"github.com/wow-look-at-my/git-fixed/internal/gitobj"
 	"github.com/wow-look-at-my/git-fixed/internal/gitrepo"
 	"github.com/wow-look-at-my/git-fixed/internal/odb"
+	"github.com/wow-look-at-my/git-fixed/internal/progress"
 )
 
 // Need says who wants an object that is not usable.
@@ -86,6 +88,8 @@ type scanner struct {
 	bad   map[string]*BadObject
 	seen  map[string]bool
 	queue []queued
+
+	meters Meters
 }
 
 type queued struct {
@@ -94,9 +98,29 @@ type queued struct {
 	need Need
 }
 
-// Scan reads the repository and reports what is damaged.
-func Scan(repo *gitrepo.Repo, db *odb.DB) (*Damage, error) {
-	return scan(repo, db, false)
+// Scan reads the repository and reports what is damaged. meters draws the two
+// passes that take the time, or is the zero value when nobody asked.
+func Scan(repo *gitrepo.Repo, db *odb.DB, meters Meters) (*Damage, error) {
+	return scan(repo, db, meters, false)
+}
+
+// Meters is where a scan draws its progress. A scan of a broken repository
+// reads every pack and then every object a reference leads to, which is a
+// second pass over everything the fsck before it already read, and until this
+// existed it printed nothing for the whole of it.
+type Meters struct {
+	// Stderr is where the meters are drawn. A nil writer, or Show left
+	// false, means no meter is started at all.
+	Stderr io.Writer
+	Show   bool
+}
+
+// start begins one meter, or returns nil when this scan draws none.
+func (m Meters) start(title string, total int64) *progress.Meter {
+	if !m.Show || m.Stderr == nil {
+		return nil
+	}
+	return progress.Start(m.Stderr, title, total)
 }
 
 // ScanTrustingFsck is Scan without the two passes a clean fsck has already
@@ -114,15 +138,18 @@ func Scan(repo *gitrepo.Repo, db *odb.DB) (*Damage, error) {
 // never verifies info/packs, which is a cache for dumb HTTP clients, so a
 // corrupt one leaves fsck happy and is still a file to put right.
 func ScanTrustingFsck(repo *gitrepo.Repo, db *odb.DB) (*Damage, error) {
-	return scan(repo, db, true)
+	// The two passes that would draw a meter are the two this skips, so a
+	// trusting scan has nothing to show and finishes in well under a second.
+	return scan(repo, db, Meters{}, true)
 }
 
-func scan(repo *gitrepo.Repo, db *odb.DB, fsckWasClean bool) (*Damage, error) {
+func scan(repo *gitrepo.Repo, db *odb.DB, meters Meters, fsckWasClean bool) (*Damage, error) {
 	s := &scanner{
-		repo: repo,
-		db:   db,
-		bad:  map[string]*BadObject{},
-		seen: map[string]bool{},
+		repo:   repo,
+		db:     db,
+		bad:    map[string]*BadObject{},
+		seen:   map[string]bool{},
+		meters: meters,
 	}
 	d := &Damage{}
 	s.scanDerived(d)
@@ -221,9 +248,16 @@ func (s *scanner) want(oid gitobj.OID, typ gitobj.Type, need Need) {
 // walk reads every queued object and follows what it points at, so the scan
 // reaches everything a reference needs rather than only the tips.
 func (s *scanner) walk() {
+	// There is no total to count against: the queue grows as the walk finds
+	// what each object points at, so the number of objects it will reach is
+	// not known until it has reached them. git's own connectivity meter
+	// counts the same way, and for the same reason.
+	m := s.meters.start("Checking what the references reach", 0)
+	defer m.Finish()
 	for len(s.queue) > 0 {
 		q := s.queue[len(s.queue)-1]
 		s.queue = s.queue[:len(s.queue)-1]
+		m.Step()
 
 		typ, data, err := s.db.Read(q.oid)
 		if err != nil {

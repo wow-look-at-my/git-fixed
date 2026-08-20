@@ -20,9 +20,9 @@ func (r *run) checkPackRevIndexes() {
 	key := sortKey{phase: phaseIndexFiles}
 	packs := r.db.Packs()
 	m := r.meterDelayed("Verifying reverse pack-indexes", int64(len(packs)))
-	defer m.finish()
+	defer m.Finish()
 	for _, p := range packs {
-		m.step()
+		m.Step()
 		if p.OpenErr != nil {
 			continue
 		}

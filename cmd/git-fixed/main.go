@@ -113,12 +113,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	res, err := repair.Run(&repair.Options{
-		Dir:     dir,
-		DryRun:  dryRun != 0,
-		Run:     runName(),
-		Healthy: healthy,
-		Stdout:  stdout,
-		Stderr:  stderr,
+		Dir:          dir,
+		DryRun:       dryRun != 0,
+		Run:          runName(),
+		Healthy:      healthy,
+		ShowProgress: o.ShowProgress,
+		Stdout:       stdout,
+		Stderr:       stderr,
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "fatal: %s\n", err)

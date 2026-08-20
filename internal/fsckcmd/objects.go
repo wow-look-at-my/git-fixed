@@ -14,6 +14,7 @@ import (
 
 	"github.com/wow-look-at-my/git-fixed/internal/gitobj"
 	"github.com/wow-look-at-my/git-fixed/internal/odb"
+	"github.com/wow-look-at-my/git-fixed/internal/progress"
 )
 
 // checkObjectDirs walks every object directory and every pack. This is the
@@ -36,7 +37,7 @@ func (r *run) checkObjectDirs() {
 		}
 	}
 	m := r.meterOn("Checking objects", total)
-	defer m.finish()
+	defer m.Finish()
 	for pi, p := range packs {
 		r.checkPack(pi, p, m)
 	}
@@ -91,10 +92,10 @@ func (r *run) checkLooseDir(group int, path, shown string) {
 	r.parallel(len(jobs), func(i int) {
 		j := jobs[i]
 		r.checkLooseObject(sortKey{phase: phaseObjects, group: group, oid: j.oid}, j.oid, j.path, j.shown)
-		m.advance(int64(j.sub) + 1)
+		m.Advance(int64(j.sub) + 1)
 	})
-	m.advance(256)
-	m.finish()
+	m.Advance(256)
+	m.Finish()
 }
 
 // checkLooseObject reads one loose object and checks it, following git's
@@ -143,14 +144,14 @@ func (r *run) parsable(key sortKey, oid gitobj.OID, typ gitobj.Type, buf []byte)
 }
 
 // checkPack verifies one pack and checks every object in it.
-func (r *run) checkPack(group int, p *odb.Pack, m *meter) {
+func (r *run) checkPack(group int, p *odb.Pack, m *progress.Meter) {
 	key := func(oid gitobj.OID, pos int64) sortKey {
 		return sortKey{phase: phaseObjects, group: 1 + group, pos: pos, oid: oid}
 	}
 	ok := p.Verify(odb.VerifyOpts{
 		Workers:          r.o.Workers,
 		BigFileThreshold: r.db.BigFileThreshold,
-		Progress:         m.step,
+		Progress:         m.Step,
 		Emit: func(oid gitobj.OID, text string) {
 			if oid.Valid() && strings.HasPrefix(text, "cannot unpack ") {
 				// The pack check reports an entry that will not
