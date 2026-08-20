@@ -276,3 +276,52 @@ func TestAnIndexRebuiltFromHeadKeepsEveryMode(t *testing.T) {
 	assert.Equal(t, wanted, r.Git("ls-files", "--stage"), "a mode did not survive")
 	assert.Empty(t, r.Git("status", "--porcelain"), "the rebuilt index disagrees with the worktree")
 }
+
+// TestRepairsASHA256Repository runs all three container repairs at once over a
+// repository whose object names are SHA-256.
+//
+// Every one of them reads or writes a hash-width-dependent format: the pack
+// index, the index's fixed-size entry prefix, and packed-refs' line grammar. A
+// width baked in anywhere would show up here and nowhere else, because every
+// other test in this package uses the default.
+func TestRepairsASHA256Repository(t *testing.T) {
+	gittest.RequireGit(t)
+	r := gittest.NewSHA256(t)
+	require.NoError(t, os.MkdirAll(filepath.Join(r.Dir, "src"), 0o777))
+	r.Write("a.txt", "one\n")
+	r.Write("src/b.txt", "two\n")
+	r.Git("add", "-A")
+	r.Git("commit", "-m", "one")
+	r.Git("branch", "keep-me")
+	r.Git("tag", "-a", "v1", "-m", "a tag")
+	r.Git("repack", "-adq")
+	r.Git("pack-refs", "--all")
+	before := record(t, r)
+	staged := r.Git("ls-files", "--stage")
+
+	// packed-refs and the index, but not the pack: damaging an object here
+	// would have no source to come back from, and this test is about the
+	// three container formats rather than about the recovery ladder.
+	refs := filepath.Join(r.GitDir(), "packed-refs")
+	data, err := os.ReadFile(refs)
+	require.NoError(t, err)
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	broken := append([]string{lines[0], "this is not a reference line"}, lines[1:]...)
+	overwrite(t, refs, []byte(strings.Join(broken, "\n")+"\n"))
+
+	idx := filepath.Join(r.GitDir(), "index")
+	data, err = os.ReadFile(idx)
+	require.NoError(t, err)
+	overwrite(t, idx, data[:len(data)-8])
+
+	res := fix(t, r)
+
+	require.NotNil(t, res.PackedRefs)
+	require.NotNil(t, res.Index)
+	assert.True(t, res.Clean, "git fsck is still unhappy")
+	requireGitClean(t, r)
+	requireSame(t, before, r)
+	assert.Equal(t, staged, r.Git("ls-files", "--stage"), "the rebuilt index lists something else")
+	assert.Contains(t, r.Git("show-ref"), "refs/heads/keep-me", "a branch was lost")
+	assert.Contains(t, r.Git("show-ref"), "refs/tags/v1", "a tag was lost")
+}

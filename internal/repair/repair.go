@@ -116,7 +116,7 @@ func Run(o *Options) (*Result, error) {
 		return res, err
 	}
 	if o.DryRun {
-		return plan(damage, res), nil
+		return plan(repo, damage, res), nil
 	}
 
 	q := NewQuarantine(repo.CommonDir, o.Run)
@@ -124,7 +124,7 @@ func Run(o *Options) (*Result, error) {
 		if err := q.Take(path, "a rebuildable cache that would not parse"); err != nil {
 			return nil, err
 		}
-		res.Derived = append(res.Derived, path)
+		res.Derived = append(res.Derived, displayPath(repo, path))
 	}
 
 	// Packs come before objects, and before anything reopens the database.
@@ -314,16 +314,18 @@ func open(dir string) (*gitrepo.Repo, *odb.DB, error) {
 }
 
 // plan fills in what a dry run would have done, without doing it.
-func plan(damage *Damage, res *Result) *Result {
-	res.Derived = append(res.Derived, damage.Derived...)
+func plan(repo *gitrepo.Repo, damage *Damage, res *Result) *Result {
+	for _, path := range damage.Derived {
+		res.Derived = append(res.Derived, displayPath(repo, path))
+	}
 	res.Unrecovered = append(res.Unrecovered, damage.Objects...)
 	for _, bad := range damage.Packs {
 		// A dry run does not extract, so it cannot say yet whether the pack
 		// will yield anything -- and that is what decides whether it moves.
-		res.Packs = append(res.Packs, RescuedPack{Pack: bad.Pack})
+		res.Packs = append(res.Packs, RescuedPack{Pack: displayPath(repo, bad.Pack)})
 	}
 	if damage.Index != nil {
-		res.Index = &RepairedIndex{Path: damage.Index.Path, Why: damage.Index.Why}
+		res.Index = &RepairedIndex{Path: displayPath(repo, damage.Index.Path), Why: damage.Index.Why}
 	}
 	if damage.PackedRefs != nil {
 		res.PackedRefs = &RepairedPackedRefs{Why: damage.PackedRefs.Why}
@@ -425,6 +427,17 @@ func (r *Result) Report(w io.Writer, dryRun bool) {
 			fmt.Fprintf(w, "\nThe remote was NOT consulted, because reaching it failed:\n  %s\n"+
 				"Fix that and run this again before believing anything is lost.\n", r.RemoteError)
 			return
+		}
+		// Only once there IS a quarantine directory. A dry run displaces
+		// nothing, so pointing at one would be pointing at nothing.
+		if len(r.Packs) > 0 && r.Quarantine != "" {
+			// Their bytes came out of a pack this run displaced, and that pack
+			// is in the quarantine directory whole. Ending on "a backup is the
+			// only way back" would send someone hunting for a copy of the
+			// repository while the damaged original sat one command away.
+			fmt.Fprint(w, "\nSome of these were in a packfile this run took out. That pack is in the\n"+
+				"quarantine directory above, byte for byte, and `git fix --undo` puts it back.\n"+
+				"It is the only copy of those bytes, so keep it until they are recovered.\n")
 		}
 		fmt.Fprint(w, "\nThe repository still needs these. A remote, another clone, or a\n"+
 			"backup that has them is the only way back.\n")

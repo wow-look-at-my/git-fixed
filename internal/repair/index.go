@@ -77,7 +77,7 @@ func (s *scanner) scanIndexes(d *Damage) {
 // far as it goes and every entry that survives is kept, HEAD supplies only the
 // paths the salvage did not reach, and the original goes to quarantine whole.
 func repairIndex(repo *gitrepo.Repo, db *odb.DB, q *Quarantine, bad *BadIndex) (RepairedIndex, error) {
-	out := RepairedIndex{Path: bad.Path, Why: bad.Why}
+	out := RepairedIndex{Path: displayPath(repo, bad.Path), Why: bad.Why}
 
 	salvaged, err := repo.SalvageIndex(bad.Path)
 	if err != nil {

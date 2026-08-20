@@ -95,7 +95,7 @@ func verifyPack(p *odb.Pack) (BadPack, bool) {
 // object in it out of the repository and buy nothing, since there is no loose
 // copy for it to stop shadowing. It stays where it is and the run reports it.
 func rescuePack(repo *gitrepo.Repo, q *Quarantine, bad BadPack) (RescuedPack, error) {
-	out := RescuedPack{Pack: displayPack(repo, bad.Pack)}
+	out := RescuedPack{Pack: displayPath(repo, bad.Pack)}
 
 	p, err := odb.OpenPack(bad.Idx, bad.Idx, repo.Algo, true)
 	if err != nil {
@@ -191,9 +191,9 @@ func companions(packPath string) []string {
 	return out
 }
 
-// displayPack names a pack the way a person would recognise it, relative to the
+// displayPath names a file the way a person would recognise it, relative to the
 // git directory rather than as the absolute path this process opened.
-func displayPack(repo *gitrepo.Repo, path string) string {
+func displayPath(repo *gitrepo.Repo, path string) string {
 	if rel, err := filepath.Rel(repo.CommonDir, path); err == nil && !strings.HasPrefix(rel, "..") {
 		return filepath.ToSlash(filepath.Join(repo.DisplayGitDir, rel))
 	}

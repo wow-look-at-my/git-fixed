@@ -329,7 +329,10 @@ func TestRebuildsADerivedFile(t *testing.T) {
 	gittest.WriteOver(t, graph, []byte("XXXX not a commit graph"))
 
 	res := fix(t, r)
-	assert.Contains(t, res.Derived, graph, "the corrupt graph was left in place")
+	// The report names a file the way a person would recognise it, relative
+	// to the git directory, not as the absolute path the run opened.
+	assert.Contains(t, res.Derived, ".git/objects/info/commit-graph",
+		"the corrupt graph was left in place")
 	assert.NoFileExists(t, graph, "the graph should have been displaced")
 	requireGitClean(t, r)
 	requireSame(t, before, r)
