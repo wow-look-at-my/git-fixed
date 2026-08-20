@@ -19,8 +19,10 @@ const (
 
 // Pack is one packfile and its index, both mapped read-only.
 type Pack struct {
-	Path    string // path to the .pack file, as git prints it
-	IdxPath string
+	Path    string // the .pack path as git prints it
+	IdxFile string // the index path this process opens
+	File    string // the pack path this process opens
+	IdxPath string // the index path as git prints it
 	Algo    *gitobj.Algo
 	Num     uint32
 	IdxVer  int
@@ -46,16 +48,21 @@ type Pack struct {
 	revIdx  []uint32
 }
 
-// OpenPack maps the pack named by its index path. A sequential hint tells the
-// kernel to read ahead, which is what a full object check wants.
-func OpenPack(idxPath string, algo *gitobj.Algo, sequential bool) (*Pack, error) {
+// OpenPack maps a pack. idxFile is the path this process opens; idxPath is the
+// path git would print, which differs because git works from the top of the
+// worktree and prints ".git/objects/..." where this process holds an absolute
+// name. A sequential hint tells the kernel to read ahead, which a full object
+// check wants.
+func OpenPack(idxFile, idxPath string, algo *gitobj.Algo, sequential bool) (*Pack, error) {
 	p := &Pack{
 		IdxPath: idxPath,
+		IdxFile: idxFile,
 		Path:    strings.TrimSuffix(idxPath, ".idx") + ".pack",
+		File:    strings.TrimSuffix(idxFile, ".idx") + ".pack",
 		Algo:    algo,
 	}
 	var err error
-	if p.idxMap, err = mapReadOnly(idxPath, hintRandom); err != nil {
+	if p.idxMap, err = mapReadOnly(idxFile, hintRandom); err != nil {
 		return nil, err
 	}
 	p.idx = p.idxMap.bytes()
@@ -68,7 +75,7 @@ func OpenPack(idxPath string, algo *gitobj.Algo, sequential bool) (*Pack, error)
 	if sequential {
 		hint = hintSequential
 	}
-	if p.dataMap, err = mapReadOnly(p.Path, hint); err != nil {
+	if p.dataMap, err = mapReadOnly(p.File, hint); err != nil {
 		p.Close()
 		return nil, err
 	}

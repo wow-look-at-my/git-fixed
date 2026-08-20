@@ -26,6 +26,11 @@ type Repo struct {
 	WorkTree string
 	// ObjectsDir is where loose objects and packs live.
 	ObjectsDir string
+	// DisplayGitDir and DisplayObjectsDir name the same directories the way
+	// git prints them. git works from the top of the worktree, so it writes
+	// ".git/objects/aa/bb..." where this process holds an absolute path.
+	DisplayGitDir     string
+	DisplayObjectsDir string
 	// Algo is the repository's object hash.
 	Algo *gitobj.Algo
 	// Config is every setting in effect, later entries winning.
@@ -38,11 +43,11 @@ var ErrNotARepo = errors.New("not a git repository")
 // Open finds the repository that contains dir, honouring the same environment
 // variables git does.
 func Open(dir string) (*Repo, error) {
-	gitDir, err := discover(dir)
+	gitDir, shown, err := discover(dir)
 	if err != nil {
 		return nil, err
 	}
-	r := &Repo{GitDir: gitDir, CommonDir: gitDir}
+	r := &Repo{GitDir: gitDir, CommonDir: gitDir, DisplayGitDir: shown}
 	if common, err := os.ReadFile(filepath.Join(gitDir, "commondir")); err == nil {
 		p := strings.TrimSpace(string(common))
 		if !filepath.IsAbs(p) {
@@ -51,8 +56,10 @@ func Open(dir string) (*Repo, error) {
 		r.CommonDir = filepath.Clean(p)
 	}
 	r.ObjectsDir = filepath.Join(r.CommonDir, "objects")
+	r.DisplayObjectsDir = filepath.Join(r.DisplayGitDir, "objects")
 	if v := os.Getenv("GIT_OBJECT_DIRECTORY"); v != "" {
 		r.ObjectsDir = v
+		r.DisplayObjectsDir = v
 	}
 	r.Config, err = loadConfig(r.CommonDir)
 	if err != nil {
@@ -71,39 +78,41 @@ func Open(dir string) (*Repo, error) {
 }
 
 // discover walks up from dir looking for a repository, the way git's
-// setup_git_directory() does.
-func discover(dir string) (string, error) {
+// setup_git_directory() does. It returns the directory to read from and the
+// name git would print for it: git changes to the top of the worktree first, so
+// it names the repository ".git" or "." rather than by an absolute path.
+func discover(dir string) (path, shown string, err error) {
 	if v := os.Getenv("GIT_DIR"); v != "" {
 		abs, err := filepath.Abs(v)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
-		return abs, nil
+		return abs, v, nil
 	}
 	abs, err := filepath.Abs(dir)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	for {
 		candidate := filepath.Join(abs, ".git")
 		st, err := os.Stat(candidate)
 		switch {
 		case err == nil && st.IsDir():
-			return candidate, nil
+			return candidate, ".git", nil
 		case err == nil && st.Mode().IsRegular():
 			target, err := readGitFile(candidate)
 			if err != nil {
-				return "", err
+				return "", "", err
 			}
-			return target, nil
+			return target, target, nil
 		}
 		// A bare repository is recognised by its own contents.
 		if isGitDir(abs) {
-			return abs, nil
+			return abs, ".", nil
 		}
 		parent := filepath.Dir(abs)
 		if parent == abs {
-			return "", ErrNotARepo
+			return "", "", ErrNotARepo
 		}
 		abs = parent
 	}

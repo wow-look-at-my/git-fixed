@@ -54,7 +54,7 @@ func (r *run) traverseReachable() {
 
 // traverseOne reads one object and marks everything it points at.
 func (r *run) traverseOne(e *objEntry) []*objEntry {
-	typ := e.Type()
+	typ := r.ensureType(e)
 	if typ == gitobj.TypeBlob || typ == gitobj.TypeNone {
 		// A blob points at nothing, so git's walk returns immediately.
 		return nil
@@ -102,10 +102,15 @@ func (r *run) markLinkInto(key sortKey, parent *objEntry, l link, target *objEnt
 		return sink
 	}
 	if target.Flags()&flagHasObj == 0 {
-		r.rep.Outf(key, "broken link from %7s %s\n              to %7s %s",
-			r.printableType(parent.OID, parent.Type()), r.fsck.Describe(parent.OID),
-			r.printableType(target.OID, target.Type()), r.fsck.Describe(target.OID))
-		r.fail(ErrorReachable)
+		// A file that is present but unreadable is not a broken link:
+		// the object check already complained about the file itself, and
+		// the report below still calls the object missing.
+		if !r.db.Has(target.OID) {
+			r.rep.Outf(key, "broken link from %7s %s\n              to %7s %s",
+				r.printableType(parent.OID, parent.Type()), r.fsck.Describe(parent.OID),
+				r.printableType(target.OID, target.Type()), r.fsck.Describe(target.OID))
+			r.fail(ErrorReachable)
+		}
 		return sink
 	}
 	return append(sink, target)
@@ -156,7 +161,10 @@ func (r *run) checkReachableObject(e *objEntry) {
 	if e.Flags()&flagHasObj != 0 {
 		return
 	}
-	if r.db.Has(e.OID) {
+	// Being in a pack is proof enough for git, which does not re-open the
+	// pack here. A loose file that exists but does not decode still counts
+	// as missing, and the object pass has already said why.
+	if r.db.HasPacked(e.OID) {
 		return
 	}
 	r.rep.Outf(sortKey{phase: phaseConnectivity, group: 1, oid: e.OID}, "missing %s %s",

@@ -34,42 +34,48 @@ type LooseResult struct {
 
 // ReadLoose decodes one loose object file and checks it against the object name
 // its path claims.
-func ReadLoose(path string, expected gitobj.OID, algo *gitobj.Algo, bigFileThreshold int64) *LooseResult {
+func ReadLoose(path, shown string, expected gitobj.OID, algo *gitobj.Algo, bigFileThreshold int64) *LooseResult {
 	res := &LooseResult{}
 	f, err := os.Open(path)
 	if err != nil {
 		res.Failed = true
-		res.Errors = append(res.Errors, fmt.Sprintf("unable to mmap %s: %s", path, errnoText(err)))
+		res.Errors = append(res.Errors, fmt.Sprintf("unable to mmap %s: %s", shown, errnoText(err)))
 		return res
 	}
 	defer f.Close()
 	st, err := f.Stat()
 	if err != nil || st.Size() == 0 {
 		res.Failed = true
-		res.Errors = append(res.Errors, fmt.Sprintf("unable to unpack header of %s", path))
+		res.Errors = append(res.Errors, fmt.Sprintf("unable to unpack header of %s", shown))
 		return res
 	}
 	m, err := mapReadOnly(path, hintSequential)
 	if err != nil {
 		res.Failed = true
-		res.Errors = append(res.Errors, fmt.Sprintf("unable to mmap %s: %s", path, errnoText(err)))
+		res.Errors = append(res.Errors, fmt.Sprintf("unable to mmap %s: %s", shown, errnoText(err)))
 		return res
 	}
 	defer m.close()
-	return readLooseBytes(m.bytes(), path, expected, algo, bigFileThreshold, res)
+	return readLooseBytes(m.bytes(), shown, expected, algo, bigFileThreshold, res)
 }
 
 // ReadLooseBytes decodes an in-memory loose object. Tests use it directly.
-func ReadLooseBytes(raw []byte, path string, expected gitobj.OID, algo *gitobj.Algo, bigFileThreshold int64) *LooseResult {
-	return readLooseBytes(raw, path, expected, algo, bigFileThreshold, &LooseResult{})
+func ReadLooseBytes(raw []byte, shown string, expected gitobj.OID, algo *gitobj.Algo, bigFileThreshold int64) *LooseResult {
+	return readLooseBytes(raw, shown, expected, algo, bigFileThreshold, &LooseResult{})
 }
 
-func readLooseBytes(raw []byte, path string, expected gitobj.OID, algo *gitobj.Algo, bigFileThreshold int64, res *LooseResult) *LooseResult {
+func readLooseBytes(raw []byte, shown string, expected gitobj.OID, algo *gitobj.Algo, bigFileThreshold int64, res *LooseResult) *LooseResult {
 	br := bytes.NewReader(raw)
 	zr, err := zlib.NewReader(br)
 	if err != nil {
 		res.Failed = true
-		res.Errors = append(res.Errors, fmt.Sprintf("unable to unpack header of %s", path))
+		// git's decompressor prints its own complaint before its caller
+		// adds one, and this is the wording zlib gives for a header that
+		// is not a zlib header at all.
+		if errors.Is(err, zlib.ErrHeader) {
+			res.Errors = append(res.Errors, "inflate: data stream error (incorrect header check)")
+		}
+		res.Errors = append(res.Errors, fmt.Sprintf("unable to unpack header of %s", shown))
 		return res
 	}
 	defer zr.Close()
@@ -79,13 +85,13 @@ func readLooseBytes(raw []byte, path string, expected gitobj.OID, algo *gitobj.A
 	nul := bytes.IndexByte(hdr[:n], 0)
 	if (err != nil && !errors.Is(err, io.EOF)) || nul < 0 {
 		res.Failed = true
-		res.Errors = append(res.Errors, fmt.Sprintf("unable to unpack header of %s", path))
+		res.Errors = append(res.Errors, fmt.Sprintf("unable to unpack header of %s", shown))
 		return res
 	}
 	typeName, size, ok := parseLooseHeader(string(hdr[:nul]))
 	if !ok {
 		res.Failed = true
-		res.Errors = append(res.Errors, fmt.Sprintf("unable to parse header of %s", path))
+		res.Errors = append(res.Errors, fmt.Sprintf("unable to parse header of %s", shown))
 		return res
 	}
 	res.TypeName = typeName
@@ -93,7 +99,7 @@ func readLooseBytes(raw []byte, path string, expected gitobj.OID, algo *gitobj.A
 	res.Size = size
 
 	if res.Type == gitobj.TypeBlob && size > bigFileThreshold {
-		res.streamCheck(zr, br, hdr[:n], nul, size, path, expected, algo)
+		res.streamCheck(zr, br, hdr[:n], nul, size, shown, expected, algo)
 		return res
 	}
 
@@ -106,20 +112,20 @@ func readLooseBytes(raw []byte, path string, expected gitobj.OID, algo *gitobj.A
 		res.Failed = true
 		res.Errors = append(res.Errors,
 			fmt.Sprintf("corrupt loose object '%s'", expected),
-			fmt.Sprintf("unable to unpack contents of %s", path))
+			fmt.Sprintf("unable to unpack contents of %s", shown))
 		return res
 	case !atStreamEnd(zr):
 		// More inflated bytes than the header promised.
 		res.Failed = true
 		res.Errors = append(res.Errors,
 			fmt.Sprintf("corrupt loose object '%s'", expected),
-			fmt.Sprintf("unable to unpack contents of %s", path))
+			fmt.Sprintf("unable to unpack contents of %s", shown))
 		return res
 	case trailing != 0:
 		res.Failed = true
 		res.Errors = append(res.Errors,
 			fmt.Sprintf("garbage at end of loose object '%s'", expected),
-			fmt.Sprintf("unable to unpack contents of %s", path))
+			fmt.Sprintf("unable to unpack contents of %s", shown))
 		return res
 	}
 	res.Contents = out
@@ -133,7 +139,7 @@ func readLooseBytes(raw []byte, path string, expected gitobj.OID, algo *gitobj.A
 
 // streamCheck hashes a blob too large to hold in memory, the way git's
 // check_stream_oid() does.
-func (res *LooseResult) streamCheck(zr io.Reader, br *bytes.Reader, hdr []byte, nul int, size int64, path string, expected gitobj.OID, algo *gitobj.Algo) {
+func (res *LooseResult) streamCheck(zr io.Reader, br *bytes.Reader, hdr []byte, nul int, size int64, shown string, expected gitobj.OID, algo *gitobj.Algo) {
 	h := algo.New()
 	h.Write(hdr[:nul+1])
 	pre := hdr[nul+1:]
@@ -171,7 +177,7 @@ func (res *LooseResult) streamCheck(zr io.Reader, br *bytes.Reader, hdr []byte, 
 	if res.RealOID != expected {
 		res.Failed = true
 		res.Errors = append(res.Errors,
-			fmt.Sprintf("hash mismatch for %s (expected %s)", path, expected))
+			fmt.Sprintf("hash mismatch for %s (expected %s)", shown, expected))
 	}
 }
 

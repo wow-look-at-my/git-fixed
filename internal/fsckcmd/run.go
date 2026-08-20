@@ -98,7 +98,7 @@ func Run(o *Options) int {
 		fmt.Fprintf(o.Stderr, "fatal: %s\n", err)
 		return 128
 	}
-	db, err := odb.Open(repo.ObjectsDir, repo.Algo, !o.ConnectivityOnly)
+	db, err := odb.Open(repo.ObjectsDir, repo.DisplayObjectsDir, repo.Algo, !o.ConnectivityOnly)
 	if err != nil {
 		fmt.Fprintf(o.Stderr, "fatal: %s\n", err)
 		return 128
@@ -347,7 +347,7 @@ func linkTypeName(l link) string {
 // directory and each pack is independent work.
 func (r *run) checkObjectDirs() {
 	for i, dir := range r.db.Dirs {
-		r.checkLooseDir(i, dir.Path)
+		r.checkLooseDir(i, dir.Path, dir.Display)
 	}
 	if !r.o.CheckFull {
 		return
@@ -358,14 +358,15 @@ func (r *run) checkObjectDirs() {
 }
 
 // checkLooseDir checks every loose object under one object directory.
-func (r *run) checkLooseDir(group int, path string) {
+func (r *run) checkLooseDir(group int, path, shown string) {
 	if r.o.Verbose {
 		r.rep.Verbosef("Checking object directory")
 	}
 	hexsz := r.repo.Algo.HexSize
 	type job struct {
-		oid  gitobj.OID
-		path string
+		oid   gitobj.OID
+		path  string
+		shown string
 	}
 	var (
 		mu    sync.Mutex
@@ -385,12 +386,13 @@ func (r *run) checkLooseDir(group int, path string) {
 		sort.Strings(names)
 		for _, name := range names {
 			full := filepath.Join(path, sub, name)
+			shownFull := filepath.Join(shown, sub, name)
 			if oid, ok := r.repo.Algo.Parse(sub + name); ok && len(name) == hexsz-2 {
-				jobs = append(jobs, job{oid: oid, path: full})
+				jobs = append(jobs, job{oid: oid, path: full, shown: shownFull})
 				continue
 			}
 			if !strings.HasPrefix(name, "tmp_obj_") {
-				cruft = append(cruft, full)
+				cruft = append(cruft, shownFull)
 			}
 		}
 	}
@@ -400,27 +402,27 @@ func (r *run) checkLooseDir(group int, path string) {
 	_ = mu
 	r.parallel(len(jobs), func(i int) {
 		j := jobs[i]
-		r.checkLooseObject(sortKey{phase: phaseObjects, group: group, oid: j.oid}, j.oid, j.path)
+		r.checkLooseObject(sortKey{phase: phaseObjects, group: group, oid: j.oid}, j.oid, j.path, j.shown)
 	})
 }
 
 // checkLooseObject reads one loose object and checks it, following git's
 // fsck_loose().
-func (r *run) checkLooseObject(key sortKey, oid gitobj.OID, path string) {
-	res := odb.ReadLoose(path, oid, r.repo.Algo, r.db.BigFileThreshold)
+func (r *run) checkLooseObject(key sortKey, oid gitobj.OID, path, shown string) {
+	res := odb.ReadLoose(path, shown, oid, r.repo.Algo, r.db.BigFileThreshold)
 	for _, msg := range res.Errors {
 		r.rep.Errf(key, "error: %s", msg)
 	}
 	failed := res.Failed
 	if failed {
 		if res.HashMismatch {
-			r.rep.Errf(key, "error: %s: hash-path mismatch, found at: %s", res.RealOID, path)
+			r.rep.Errf(key, "error: %s: hash-path mismatch, found at: %s", res.RealOID, shown)
 		} else if len(res.Errors) > 0 || res.Contents == nil {
-			r.rep.Errf(key, "error: %s: object corrupt or missing: %s", oid, path)
+			r.rep.Errf(key, "error: %s: object corrupt or missing: %s", oid, shown)
 		}
 	}
 	if res.TypeName != "" && res.Type == gitobj.TypeBad {
-		r.rep.Errf(key, "error: %s: object is of unknown type '%s': %s", res.RealOID, res.TypeName, path)
+		r.rep.Errf(key, "error: %s: object is of unknown type '%s': %s", res.RealOID, res.TypeName, shown)
 		failed = true
 	}
 	if failed {
@@ -428,9 +430,9 @@ func (r *run) checkLooseObject(key sortKey, oid gitobj.OID, path string) {
 		return
 	}
 	e, ok := r.objs.Lookup(oid, res.Type)
-	if !ok || !r.parsable(key, oid, res.Type, res.Contents, path) {
+	if !ok || !r.parsable(key, oid, res.Type, res.Contents) {
 		r.fail(ErrorObject)
-		r.rep.Errf(key, "error: %s: object could not be parsed: %s", oid, path)
+		r.rep.Errf(key, "error: %s: object could not be parsed: %s", oid, shown)
 		return
 	}
 	e.ClearFlags(flagReachable | flagSeen)
@@ -441,7 +443,7 @@ func (r *run) checkLooseObject(key sortKey, oid gitobj.OID, path string) {
 // parsable reports whether git's parse_object_buffer() would accept the object.
 // A commit or tag whose header cannot be read is rejected there, before any
 // fsck check runs.
-func (r *run) parsable(key sortKey, oid gitobj.OID, typ gitobj.Type, buf []byte, _ string) bool {
+func (r *run) parsable(key sortKey, oid gitobj.OID, typ gitobj.Type, buf []byte) bool {
 	switch typ {
 	case gitobj.TypeCommit, gitobj.TypeTag:
 		_, errs := walkLinks(typ, oid, buf, r.repo.Algo, "", false)
@@ -467,7 +469,7 @@ func (r *run) checkPack(group int, p *odb.Pack) {
 		Object: func(oid gitobj.OID, typ gitobj.Type, size int64, data []byte) {
 			e, lookupOK := r.objs.Lookup(oid, typ)
 			k := key(oid, 0)
-			if !lookupOK || !r.parsable(k, oid, typ, data, "") {
+			if !lookupOK || !r.parsable(k, oid, typ, data) {
 				r.fail(ErrorObject)
 				r.rep.Errf(k, "error: %s: object corrupt or missing", oid)
 				return
@@ -573,4 +575,20 @@ func (r *run) parallel(n int, fn func(i int)) {
 		}()
 	}
 	wg.Wait()
+}
+
+// ensureType fills in an object's type when nothing has said what it is yet.
+// Only --connectivity-only leaves types unknown, because it never reads the
+// objects; git resolves them the same way, when a reference or a walk first
+// needs to know.
+func (r *run) ensureType(e *objEntry) gitobj.Type {
+	if t := e.Type(); t != gitobj.TypeNone {
+		return t
+	}
+	t, _, err := r.db.Info(e.OID)
+	if err != nil {
+		return gitobj.TypeNone
+	}
+	e.SetType(t)
+	return t
 }

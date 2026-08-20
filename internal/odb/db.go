@@ -15,8 +15,10 @@ import (
 
 // Dir is one object directory: the repository's own, or an alternate.
 type Dir struct {
-	Path  string
-	Packs []*Pack
+	// Display is the path git would print for this directory.
+	Display string
+	Path    string
+	Packs   []*Pack
 }
 
 // DB is every object directory a repository can read from.
@@ -32,12 +34,12 @@ type DB struct {
 
 // Open maps the object directory and its alternates. The sequential flag says
 // the caller will read every pack end to end.
-func Open(objectsDir string, algo *gitobj.Algo, sequential bool) (*DB, error) {
+func Open(objectsDir, displayDir string, algo *gitobj.Algo, sequential bool) (*DB, error) {
 	db := &DB{Algo: algo, BigFileThreshold: 512 * 1024 * 1024}
 	db.inflaters.New = func() any { return &Inflater{} }
 	seen := set.New[string]()
-	var add func(path string, depth int) error
-	add = func(path string, depth int) error {
+	var add func(path, display string, depth int) error
+	add = func(path, display string, depth int) error {
 		abs, err := filepath.Abs(path)
 		if err != nil {
 			abs = path
@@ -45,16 +47,19 @@ func Open(objectsDir string, algo *gitobj.Algo, sequential bool) (*DB, error) {
 		if depth > 5 || !seen.Add(abs) {
 			return nil
 		}
-		d := &Dir{Path: path}
+		d := &Dir{Path: path, Display: display}
 		db.Dirs = append(db.Dirs, d)
+		// An alternate is named by an absolute path, or by a path
+		// relative to this directory, and git prints it as it resolved
+		// it either way.
 		for _, alt := range readAlternates(path) {
-			if err := add(alt, depth+1); err != nil {
+			if err := add(alt, alt, depth+1); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
-	if err := add(objectsDir, 0); err != nil {
+	if err := add(objectsDir, displayDir, 0); err != nil {
 		return nil, err
 	}
 	for _, d := range db.Dirs {
@@ -92,14 +97,18 @@ func (d *Dir) loadPacks(algo *gitobj.Algo, sequential bool) error {
 	}
 	sort.Strings(names)
 	for _, n := range names {
-		p, err := OpenPack(filepath.Join(d.Path, "pack", n), algo, sequential)
+		file := filepath.Join(d.Path, "pack", n)
+		shown := filepath.Join(d.Display, "pack", n)
+		p, err := OpenPack(file, shown, algo, sequential)
 		if err != nil {
 			// git skips an index it cannot map and says so once the
 			// caller asks it to verify the pack. Record the failure
-			// as a broken pack so nothing is silently dropped.
+			// as a broken pack so nothing is dropped in silence.
 			d.Packs = append(d.Packs, &Pack{
-				IdxPath: filepath.Join(d.Path, "pack", n),
-				Path:    strings.TrimSuffix(filepath.Join(d.Path, "pack", n), ".idx") + ".pack",
+				IdxPath: shown,
+				IdxFile: file,
+				Path:    strings.TrimSuffix(shown, ".idx") + ".pack",
+				File:    strings.TrimSuffix(file, ".idx") + ".pack",
 				Algo:    algo,
 				OpenErr: err,
 			})
@@ -199,6 +208,8 @@ type Location struct {
 	PackIdx   uint32
 	Loose     bool
 	LoosePath string
+	// LooseShown is the same file as git would name it in a message.
+	LooseShown string
 }
 
 // Find locates an object. git looks in packs before loose files, and so do we.
@@ -215,7 +226,11 @@ func (db *DB) Find(oid gitobj.OID) (Location, bool) {
 	for _, d := range db.Dirs {
 		path := filepath.Join(d.Path, hex[:2], hex[2:])
 		if st, err := os.Stat(path); err == nil && st.Mode().IsRegular() {
-			return Location{Loose: true, LoosePath: path}, true
+			return Location{
+				Loose:      true,
+				LoosePath:  path,
+				LooseShown: filepath.Join(d.Display, hex[:2], hex[2:]),
+			}, true
 		}
 	}
 	return Location{}, false
@@ -234,7 +249,7 @@ func (db *DB) Read(oid gitobj.OID) (gitobj.Type, []byte, error) {
 		return gitobj.TypeNone, nil, fmt.Errorf("object %s is missing", oid)
 	}
 	if loc.Loose {
-		res := ReadLoose(loc.LoosePath, oid, db.Algo, 1<<62)
+		res := ReadLoose(loc.LoosePath, loc.LooseShown, oid, db.Algo, 1<<62)
 		if res.Failed {
 			if len(res.Errors) > 0 {
 				return gitobj.TypeNone, nil, fmt.Errorf("%s", res.Errors[0])
@@ -292,4 +307,56 @@ func (db *DB) readPacked(p *Pack, off int64, in *Inflater, depth int) (gitobj.Ty
 		}
 		return h.Type, data, nil
 	}
+}
+
+// Info returns an object's type and size without decoding its payload.
+func (db *DB) Info(oid gitobj.OID) (gitobj.Type, int64, error) {
+	loc, ok := db.Find(oid)
+	if !ok {
+		return gitobj.TypeNone, 0, fmt.Errorf("object %s is missing", oid)
+	}
+	if loc.Loose {
+		res := ReadLoose(loc.LoosePath, loc.LooseShown, oid, db.Algo, 0)
+		if res.Type == gitobj.TypeNone && res.TypeName == "" {
+			return gitobj.TypeNone, 0, fmt.Errorf("object %s is corrupt", oid)
+		}
+		return res.Type, res.Size, nil
+	}
+	in := db.inflaters.Get().(*Inflater)
+	defer db.inflaters.Put(in)
+	p, off := loc.Pack, loc.Pack.OffsetAt(loc.PackIdx)
+	for depth := 0; depth <= maxDeltaChain; depth++ {
+		h, err := p.ReadHeader(off)
+		if err != nil {
+			return gitobj.TypeNone, 0, err
+		}
+		switch h.Type {
+		case gitobj.TypeOfsDelta:
+			off = h.BaseOff
+		case gitobj.TypeRefDelta:
+			i, found := p.Find(h.BaseOID)
+			if !found {
+				return db.Info(h.BaseOID)
+			}
+			off = p.OffsetAt(i)
+		default:
+			return h.Type, h.Size, nil
+		}
+	}
+	return gitobj.TypeNone, 0, fmt.Errorf("delta chain in %s is too deep", p.Path)
+}
+
+// HasPacked reports whether the object is in a pack. git treats that as proof
+// the object is really there, even when a loose file of the same name is
+// unreadable.
+func (db *DB) HasPacked(oid gitobj.OID) bool {
+	for _, p := range db.packs {
+		if p.OpenErr != nil {
+			continue
+		}
+		if _, ok := p.Find(oid); ok {
+			return true
+		}
+	}
+	return false
 }

@@ -65,7 +65,7 @@ func (r *run) handleRef(refname string, oid gitobj.OID, broken bool) {
 		r.fail(ErrorReachable)
 		return
 	}
-	if e.Type() != gitobj.TypeCommit && fsck.IsBranchRef(refname) {
+	if r.ensureType(e) != gitobj.TypeCommit && fsck.IsBranchRef(refname) {
 		r.rep.Errf(key, "error: %s: not a commit", refname)
 		r.fail(ErrorRefs)
 	}

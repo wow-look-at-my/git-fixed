@@ -60,9 +60,8 @@ func applyFlags(t *testing.T, o *fsckcmd.Options, args []string) []string {
 			o.CheckFull = true
 			o.IncludeReflogs = false
 		default:
-			if strings.HasPrefix(a, "-") {
-				t.Fatalf("test uses an option the helper does not know: %s", a)
-			}
+			require.False(t, strings.HasPrefix(a, "-"))
+
 			rest = append(rest, a)
 		}
 	}
