@@ -96,7 +96,7 @@ func decodeTreeEntry(buf []byte, algo *gitobj.Algo) (TreeEntry, []byte, error) {
 }
 
 // Tree runs every check git makes on a tree object.
-func (o *Options) Tree(oid gitobj.OID, buf []byte) int {
+func (o *Options) Tree(ctx any, oid gitobj.OID, buf []byte) int {
 	retval := 0
 	var (
 		hasNullSHA1   bool
@@ -113,7 +113,7 @@ func (o *Options) Tree(oid gitobj.OID, buf []byte) int {
 	)
 	entries, err := ParseTree(buf, o.Algo)
 	if err != nil && len(entries) == 0 {
-		return retval + o.report(oid, gitobj.TypeTree, MsgBadTree, "cannot be parsed as a tree")
+		return retval + o.report(ctx, oid, gitobj.TypeTree, MsgBadTree, "cannot be parsed as a tree")
 	}
 
 	var candidates []string
@@ -133,7 +133,7 @@ func (o *Options) Tree(oid gitobj.OID, buf []byte) int {
 			if !e.IsSymlink() {
 				o.foundGitmodules(e.OID)
 			} else {
-				retval += o.report(oid, gitobj.TypeTree, MsgGitmodulesSymlink,
+				retval += o.report(ctx, oid, gitobj.TypeTree, MsgGitmodulesSymlink,
 					".gitmodules is a symbolic link")
 			}
 		}
@@ -141,17 +141,17 @@ func (o *Options) Tree(oid gitobj.OID, buf []byte) int {
 			if !e.IsSymlink() {
 				o.foundGitattributes(e.OID)
 			} else {
-				retval += o.report(oid, gitobj.TypeTree, MsgGitattributesSymlink,
+				retval += o.report(ctx, oid, gitobj.TypeTree, MsgGitattributesSymlink,
 					".gitattributes is a symlink")
 			}
 		}
 		if e.IsSymlink() {
 			if gitpath.IsDotGitignore(e.Name) {
-				retval += o.report(oid, gitobj.TypeTree, MsgGitignoreSymlink,
+				retval += o.report(ctx, oid, gitobj.TypeTree, MsgGitignoreSymlink,
 					".gitignore is a symlink")
 			}
 			if gitpath.IsDotMailmap(e.Name) {
-				retval += o.report(oid, gitobj.TypeTree, MsgMailmapSymlink,
+				retval += o.report(ctx, oid, gitobj.TypeTree, MsgMailmapSymlink,
 					".mailmap is a symlink")
 			}
 		}
@@ -169,7 +169,7 @@ func (o *Options) Tree(oid gitobj.OID, buf []byte) int {
 				if !e.IsSymlink() {
 					o.foundGitmodules(e.OID)
 				} else {
-					retval += o.report(oid, gitobj.TypeTree, MsgGitmodulesSymlink,
+					retval += o.report(ctx, oid, gitobj.TypeTree, MsgGitmodulesSymlink,
 						".gitmodules is a symbolic link")
 				}
 			}
@@ -198,41 +198,41 @@ func (o *Options) Tree(oid gitobj.OID, buf []byte) int {
 		prev = e
 	}
 	if err != nil {
-		retval += o.report(oid, gitobj.TypeTree, MsgBadTree, "cannot be parsed as a tree")
+		retval += o.report(ctx, oid, gitobj.TypeTree, MsgBadTree, "cannot be parsed as a tree")
 	}
 
 	if hasNullSHA1 {
-		retval += o.report(oid, gitobj.TypeTree, MsgNullSha1, "contains entries pointing to null sha1")
+		retval += o.report(ctx, oid, gitobj.TypeTree, MsgNullSha1, "contains entries pointing to null sha1")
 	}
 	if hasFullPath {
-		retval += o.report(oid, gitobj.TypeTree, MsgFullPathname, "contains full pathnames")
+		retval += o.report(ctx, oid, gitobj.TypeTree, MsgFullPathname, "contains full pathnames")
 	}
 	if hasEmptyName {
-		retval += o.report(oid, gitobj.TypeTree, MsgEmptyName, "contains empty pathname")
+		retval += o.report(ctx, oid, gitobj.TypeTree, MsgEmptyName, "contains empty pathname")
 	}
 	if hasDot {
-		retval += o.report(oid, gitobj.TypeTree, MsgHasDot, "contains '.'")
+		retval += o.report(ctx, oid, gitobj.TypeTree, MsgHasDot, "contains '.'")
 	}
 	if hasDotdot {
-		retval += o.report(oid, gitobj.TypeTree, MsgHasDotdot, "contains '..'")
+		retval += o.report(ctx, oid, gitobj.TypeTree, MsgHasDotdot, "contains '..'")
 	}
 	if hasDotgit {
-		retval += o.report(oid, gitobj.TypeTree, MsgHasDotgit, "contains '.git'")
+		retval += o.report(ctx, oid, gitobj.TypeTree, MsgHasDotgit, "contains '.git'")
 	}
 	if hasZeroPad {
-		retval += o.report(oid, gitobj.TypeTree, MsgZeroPaddedFilemode, "contains zero-padded file modes")
+		retval += o.report(ctx, oid, gitobj.TypeTree, MsgZeroPaddedFilemode, "contains zero-padded file modes")
 	}
 	if hasBadModes {
-		retval += o.report(oid, gitobj.TypeTree, MsgBadFilemode, "contains bad file modes")
+		retval += o.report(ctx, oid, gitobj.TypeTree, MsgBadFilemode, "contains bad file modes")
 	}
 	if hasDupEntries {
-		retval += o.report(oid, gitobj.TypeTree, MsgDuplicateEntries, "contains duplicate file entries")
+		retval += o.report(ctx, oid, gitobj.TypeTree, MsgDuplicateEntries, "contains duplicate file entries")
 	}
 	if notSorted {
-		retval += o.report(oid, gitobj.TypeTree, MsgTreeNotSorted, "not properly sorted")
+		retval += o.report(ctx, oid, gitobj.TypeTree, MsgTreeNotSorted, "not properly sorted")
 	}
 	if hasLargeName {
-		retval += o.report(oid, gitobj.TypeTree, MsgLargePathname, "contains excessively large pathname")
+		retval += o.report(ctx, oid, gitobj.TypeTree, MsgLargePathname, "contains excessively large pathname")
 	}
 	return retval
 }

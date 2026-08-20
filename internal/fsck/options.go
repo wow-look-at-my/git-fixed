@@ -57,7 +57,7 @@ func ParseSeverity(s string) (Severity, bool) {
 
 // ErrorFunc receives one finished message. It returns 1 when the message counts
 // as an error and 0 when it does not, which is what git's callbacks return.
-type ErrorFunc func(o *Options, oid gitobj.OID, objType gitobj.Type, sev Severity, id MsgID, message string) int
+type ErrorFunc func(o *Options, ctx any, oid gitobj.OID, objType gitobj.Type, sev Severity, id MsgID, message string) int
 
 // Options carries the severity table, the skip list, and the deferred work that
 // a whole fsck run shares. Several goroutines report through one Options, so
@@ -189,7 +189,7 @@ func (o *Options) Skipped(oid gitobj.OID) bool {
 
 // report is git's report(): it applies the severity table and the skip list,
 // prefixes the camel-cased message id, and hands the line to the callback.
-func (o *Options) report(oid gitobj.OID, objType gitobj.Type, id MsgID, format string, args ...any) int {
+func (o *Options) report(ctx any, oid gitobj.OID, objType gitobj.Type, id MsgID, format string, args ...any) int {
 	sev := o.Severity(id)
 	if sev == SevIgnore {
 		return 0
@@ -204,12 +204,12 @@ func (o *Options) report(oid gitobj.OID, objType gitobj.Type, id MsgID, format s
 		sev = SevWarn
 	}
 	msg := msgInfos[id].Camel + ": " + fmt.Sprintf(format, args...)
-	return o.Error(o, oid, objType, sev, id, msg)
+	return o.Error(o, ctx, oid, objType, sev, id, msg)
 }
 
 // DefaultErrorFunc is git's fsck_error_function, used by callers that do not
 // install one of their own.
-func DefaultErrorFunc(o *Options, oid gitobj.OID, _ gitobj.Type, sev Severity, _ MsgID, message string) int {
+func DefaultErrorFunc(o *Options, _ any, oid gitobj.OID, _ gitobj.Type, sev Severity, _ MsgID, message string) int {
 	if sev == SevWarn {
 		fmt.Printf("warning: object %s: %s\n", o.Describe(oid), message)
 		return 0

@@ -19,29 +19,29 @@ const (
 // Blob checks a blob. Only a blob a tree named as .gitmodules or
 // .gitattributes has anything to check. A nil buf means the blob was too large
 // to read into memory.
-func (o *Options) Blob(oid gitobj.OID, buf []byte) int {
+func (o *Options) Blob(ctx any, oid gitobj.OID, buf []byte) int {
 	if o.Skipped(oid) {
 		return 0
 	}
 	ret := 0
 	if o.takeGitmodules(oid) {
 		if buf == nil {
-			return o.report(oid, gitobj.TypeBlob, MsgGitmodulesLarge, ".gitmodules too large to parse")
+			return o.report(ctx, oid, gitobj.TypeBlob, MsgGitmodulesLarge, ".gitmodules too large to parse")
 		}
-		ret |= o.checkGitmodules(oid, buf)
+		ret |= o.checkGitmodules(ctx, oid, buf)
 	}
 	if o.takeGitattributes(oid) {
 		if buf == nil || len(buf) > attrMaxFileSize {
-			return o.report(oid, gitobj.TypeBlob, MsgGitattributesLarge, ".gitattributes too large to parse")
+			return o.report(ctx, oid, gitobj.TypeBlob, MsgGitattributesLarge, ".gitattributes too large to parse")
 		}
-		ret |= o.checkGitattributes(oid, buf)
+		ret |= o.checkGitattributes(ctx, oid, buf)
 	}
 	return ret
 }
 
 // checkGitattributes rejects a line no attribute parser would accept. git stops
 // at the first NUL, so this does too.
-func (o *Options) checkGitattributes(oid gitobj.OID, buf []byte) int {
+func (o *Options) checkGitattributes(ctx any, oid gitobj.OID, buf []byte) int {
 	if i := bytes.IndexByte(buf, 0); i >= 0 {
 		buf = buf[:i]
 	}
@@ -52,7 +52,7 @@ func (o *Options) checkGitattributes(oid gitobj.OID, buf []byte) int {
 			length = eol
 		}
 		if length >= attrMaxLineLength {
-			return o.report(oid, gitobj.TypeBlob, MsgGitattributesLineLength,
+			return o.report(ctx, oid, gitobj.TypeBlob, MsgGitattributesLineLength,
 				".gitattributes has too long lines to parse")
 		}
 		if eol < 0 {
@@ -65,7 +65,7 @@ func (o *Options) checkGitattributes(oid gitobj.OID, buf []byte) int {
 
 // checkGitmodules reads a .gitmodules blob and refuses the settings that have
 // been used to attack a checkout.
-func (o *Options) checkGitmodules(oid gitobj.OID, buf []byte) int {
+func (o *Options) checkGitmodules(ctx any, oid gitobj.OID, buf []byte) int {
 	ret := 0
 	entries, err := gitconfig.Parse(buf)
 	for _, e := range entries {
@@ -74,7 +74,7 @@ func (o *Options) checkGitmodules(oid gitobj.OID, buf []byte) int {
 			continue
 		}
 		if checkSubmoduleName(name) != nil {
-			ret |= o.report(oid, gitobj.TypeBlob, MsgGitmodulesName,
+			ret |= o.report(ctx, oid, gitobj.TypeBlob, MsgGitmodulesName,
 				"disallowed submodule name: %s", name)
 		}
 		if e.Value == nil {
@@ -84,23 +84,23 @@ func (o *Options) checkGitmodules(oid gitobj.OID, buf []byte) int {
 		switch key {
 		case "url":
 			if checkSubmoduleURL(value) != nil {
-				ret |= o.report(oid, gitobj.TypeBlob, MsgGitmodulesUrl,
+				ret |= o.report(ctx, oid, gitobj.TypeBlob, MsgGitmodulesUrl,
 					"disallowed submodule url: %s", value)
 			}
 		case "path":
 			if looksLikeCommandLineOption(value) {
-				ret |= o.report(oid, gitobj.TypeBlob, MsgGitmodulesPath,
+				ret |= o.report(ctx, oid, gitobj.TypeBlob, MsgGitmodulesPath,
 					"disallowed submodule path: %s", value)
 			}
 		case "update":
 			if strings.HasPrefix(value, "!") {
-				ret |= o.report(oid, gitobj.TypeBlob, MsgGitmodulesUpdate,
+				ret |= o.report(ctx, oid, gitobj.TypeBlob, MsgGitmodulesUpdate,
 					"disallowed submodule update setting: %s", value)
 			}
 		}
 	}
 	if err != nil {
-		ret |= o.report(oid, gitobj.TypeBlob, MsgGitmodulesParse, "could not parse gitmodules blob")
+		ret |= o.report(ctx, oid, gitobj.TypeBlob, MsgGitmodulesParse, "could not parse gitmodules blob")
 	}
 	return ret
 }
@@ -320,19 +320,19 @@ func (o *Options) PendingBlobs() (gitmodules, gitattributes []gitobj.OID) {
 
 // ReportMissingBlob reports a named .gitmodules or .gitattributes blob that
 // could not be read.
-func (o *Options) ReportMissingBlob(oid gitobj.OID, kind string) int {
+func (o *Options) ReportMissingBlob(ctx any, oid gitobj.OID, kind string) int {
 	id := MsgGitmodulesMissing
 	if kind == ".gitattributes" {
 		id = MsgGitattributesMissing
 	}
-	return o.report(oid, gitobj.TypeBlob, id, "unable to read %s blob", kind)
+	return o.report(ctx, oid, gitobj.TypeBlob, id, "unable to read %s blob", kind)
 }
 
 // ReportNonBlob reports that a name that must be a blob is some other type.
-func (o *Options) ReportNonBlob(oid gitobj.OID, typ gitobj.Type, kind string) int {
+func (o *Options) ReportNonBlob(ctx any, oid gitobj.OID, typ gitobj.Type, kind string) int {
 	id := MsgGitmodulesBlob
 	if kind == ".gitattributes" {
 		id = MsgGitattributesBlob
 	}
-	return o.report(oid, typ, id, "non-blob found at %s", kind)
+	return o.report(ctx, oid, typ, id, "non-blob found at %s", kind)
 }
