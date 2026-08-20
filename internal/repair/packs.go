@@ -193,9 +193,22 @@ func companions(packPath string) []string {
 
 // displayPath names a file the way a person would recognise it, relative to the
 // git directory rather than as the absolute path this process opened.
+//
+// The path is measured from GitDir, which is what DisplayGitDir names. In a
+// linked worktree those are the worktree's own directory, while objects and
+// packed-refs live in the common one, so the relative path climbs out with ".."
+// and Join folds it back down. Measuring from CommonDir instead named a
+// worktree's index ".git/worktrees/w/worktrees/w/index".
 func displayPath(repo *gitrepo.Repo, path string) string {
-	if rel, err := filepath.Rel(repo.CommonDir, path); err == nil && !strings.HasPrefix(rel, "..") {
-		return filepath.ToSlash(filepath.Join(repo.DisplayGitDir, rel))
+	rel, err := filepath.Rel(repo.GitDir, path)
+	if err != nil {
+		return path
 	}
-	return path
+	shown := filepath.Join(repo.DisplayGitDir, rel)
+	if strings.HasPrefix(shown, "..") {
+		// Outside the repository altogether: an alternate object store, or a
+		// worktree file. An absolute path is the only unambiguous name.
+		return path
+	}
+	return filepath.ToSlash(shown)
 }

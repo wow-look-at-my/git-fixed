@@ -411,3 +411,34 @@ func TestUndoTwiceIsNotAnError(t *testing.T) {
 	require.NoError(t, err, "a second undo of the same run must not fail")
 	assert.FileExists(t, graph, "the first undo did not put the graph back")
 }
+
+// TestRepairsALinkedWorktreesIndex breaks the index of a linked worktree, which
+// has its own HEAD and its own git directory while sharing the objects.
+//
+// It also pins how the report names that index. Paths are measured from the
+// directory DisplayGitDir names, and measuring from the common one instead
+// printed ".git/worktrees/w/worktrees/w/index" -- a path that does not exist.
+func TestRepairsALinkedWorktreesIndex(t *testing.T) {
+	gittest.RequireGit(t)
+	r := history(t)
+	r.Git("branch", "side")
+	linked := filepath.Join(t.TempDir(), "linked")
+	r.Git("worktree", "add", "-q", linked, "side")
+
+	idx := filepath.Join(r.GitDir(), "worktrees", filepath.Base(linked), "index")
+	require.FileExists(t, idx, "the worktree has no index of its own")
+	data, err := os.ReadFile(idx)
+	require.NoError(t, err)
+	overwrite(t, idx, data[:len(data)-8])
+
+	res, err := repair.Run(&repair.Options{Dir: linked, Run: "test", Stdout: os.Stdout, Stderr: os.Stderr})
+	require.NoError(t, err)
+
+	require.NotNil(t, res.Index)
+	assert.True(t, res.Ok(), "the repair did not finish: %+v", res)
+	assert.Equal(t, "worktrees/"+filepath.Base(linked)+"/index",
+		strings.TrimPrefix(res.Index.Path, filepath.ToSlash(r.GitDir())+"/"),
+		"the report named the index a path that does not exist")
+	assert.FileExists(t, idx)
+	requireGitClean(t, r)
+}
