@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/wow-look-at-my/git-fixed/internal/gitconfig"
 	"github.com/wow-look-at-my/git-fixed/internal/gitobj"
@@ -35,6 +36,10 @@ type Repo struct {
 	Algo *gitobj.Algo
 	// Config is every setting in effect, later entries winning.
 	Config *Config
+
+	// packed caches the packed reference table, read at most once.
+	packedOnce sync.Once
+	packed     map[string]gitobj.OID
 }
 
 // ErrNotARepo is returned when no repository contains the starting directory.

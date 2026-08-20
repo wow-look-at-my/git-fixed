@@ -30,12 +30,17 @@ type DB struct {
 	packs []*Pack
 
 	inflaters sync.Pool
+
+	// bad lists packed objects that would not decode, the way a packed_git
+	// keeps its own bad-object list.
+	badMu sync.Mutex
+	bad   set.Set[gitobj.OID]
 }
 
 // Open maps the object directory and its alternates. The sequential flag says
 // the caller will read every pack end to end.
 func Open(objectsDir, displayDir string, algo *gitobj.Algo, sequential bool) (*DB, error) {
-	db := &DB{Algo: algo, BigFileThreshold: 512 * 1024 * 1024}
+	db := &DB{Algo: algo, BigFileThreshold: 512 * 1024 * 1024, bad: set.New[gitobj.OID]()}
 	db.inflaters.New = func() any { return &Inflater{} }
 	seen := set.New[string]()
 	var add func(path, display string, depth int) error
@@ -260,8 +265,30 @@ func (db *DB) Read(oid gitobj.OID) (gitobj.Type, []byte, error) {
 	}
 	in := db.inflaters.Get().(*Inflater)
 	defer db.inflaters.Put(in)
-	return db.readPacked(loc.Pack, loc.Pack.OffsetAt(loc.PackIdx), in, 0)
+	typ, data, err := db.readPacked(loc.Pack, loc.Pack.OffsetAt(loc.PackIdx), in, 0)
+	if err != nil {
+		// git remembers a packed object that would not decode and lets
+		// the first reader report it. The next reader of the same
+		// object finds it on that list and dies instead.
+		if db.markBad(oid) {
+			return gitobj.TypeNone, nil, corruptPacked(loc.Pack, oid)
+		}
+		return gitobj.TypeNone, nil, err
+	}
+	return typ, data, nil
 }
+
+// markBad records a packed object that would not decode, and reports whether it
+// was already on the list.
+func (db *DB) markBad(oid gitobj.OID) bool {
+	db.badMu.Lock()
+	defer db.badMu.Unlock()
+	return !db.bad.Add(oid)
+}
+
+// MarkBadPacked puts an object on the bad list without reading it, for a caller
+// that found the problem some other way, such as a full pack check.
+func (db *DB) MarkBadPacked(oid gitobj.OID) { db.markBad(oid) }
 
 // maxDeltaChain bounds delta recursion. git's own limit for writing is 50; a
 // pack that exceeds this by a wide margin is corrupt or hostile.
@@ -359,4 +386,17 @@ func (db *DB) HasPacked(oid gitobj.OID) bool {
 		}
 	}
 	return false
+}
+
+// FatalError is a condition git reports with "fatal:" and exit status 128. A
+// packed object that will not decode is the one that matters here: git dies
+// rather than carry on with a repository it cannot read.
+type FatalError struct{ Msg string }
+
+func (e *FatalError) Error() string { return e.Msg }
+
+// corruptPacked builds the message git dies with when a packed object will not
+// decode. It names the object and the pack, as git's unpack_entry() does.
+func corruptPacked(p *Pack, oid gitobj.OID) error {
+	return &FatalError{Msg: fmt.Sprintf("packed object %s (stored in %s) is corrupt", oid, p.Path)}
 }

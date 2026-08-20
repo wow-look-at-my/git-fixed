@@ -147,13 +147,16 @@ func (r *Repo) Head(worktreeDir string) (target string, oid gitobj.OID, ok bool)
 	line := strings.TrimRight(string(data), " \t\r\n")
 	if rest, found := strings.CutPrefix(line, "ref:"); found {
 		target = strings.TrimSpace(rest)
-		ref := readRefFile(filepath.Join(worktreeDir, filepath.FromSlash(target)), target, r.Algo, worktreeDir, 0)
-		if ref.Broken {
-			// The branch does not exist yet, which is not an error on
-			// its own: git calls it an unborn branch.
-			return target, r.Algo.Null(), true
+		store := worktreeDir
+		if !isPerWorktree(target) && target != "HEAD" {
+			store = r.CommonDir
 		}
-		return target, ref.OID, true
+		if oid, ok := r.Resolve(store, target, 0); ok {
+			return target, oid, true
+		}
+		// The branch does not exist yet, which is not an error on its
+		// own: git calls it an unborn branch.
+		return target, r.Algo.Null(), true
 	}
 	oid, valid := r.Algo.ParseHexBytes([]byte(line))
 	if !valid || len(line) != r.Algo.HexSize {
@@ -161,4 +164,36 @@ func (r *Repo) Head(worktreeDir string) (target string, oid gitobj.OID, ok bool)
 	}
 	// A detached HEAD resolves to itself, which is how git spots one.
 	return "HEAD", oid, true
+}
+
+// packedMap builds a lookup of the packed reference table, so a symbolic
+// reference can resolve to a target that has no file of its own.
+func (r *Repo) packedMap() map[string]gitobj.OID {
+	r.packedOnce.Do(func() {
+		r.packed = map[string]gitobj.OID{}
+		for _, ref := range r.packedRefs() {
+			r.packed[ref.Name] = ref.OID
+		}
+	})
+	return r.packed
+}
+
+// Resolve follows a reference name to an object, through symbolic references
+// and through the packed table. It reports ok=false for a name that leads
+// nowhere, which is what git calls a broken reference.
+func (r *Repo) Resolve(store, name string, depth int) (gitobj.OID, bool) {
+	if depth > 5 {
+		return gitobj.OID{}, false
+	}
+	ref := readRefFile(filepath.Join(store, filepath.FromSlash(name)), name, r.Algo, store, 0)
+	if !ref.Broken {
+		return ref.OID, true
+	}
+	if ref.Symref != "" {
+		return r.Resolve(store, ref.Symref, depth+1)
+	}
+	if oid, ok := r.packedMap()[name]; ok {
+		return oid, true
+	}
+	return gitobj.OID{}, false
 }

@@ -223,7 +223,7 @@ func (r *run) fsckCacheTree(key sortKey, ct *gitrepo.CacheTree, path string) {
 // re-parses an object every time a reference names it, so a broken object is
 // reported once per attempt rather than once in total.
 func (r *run) reparse(key sortKey, oid gitobj.OID) {
-	typ, buf, err := r.db.Read(oid)
+	typ, buf, err := r.readObject(oid)
 	if err != nil {
 		return
 	}

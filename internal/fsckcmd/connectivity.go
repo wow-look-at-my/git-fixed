@@ -60,7 +60,7 @@ func (r *run) traverseOne(e *objEntry) []*objEntry {
 		return nil
 	}
 	key := sortKey{phase: phaseConnectivity, oid: e.OID}
-	_, buf, err := r.db.Read(e.OID)
+	_, buf, err := r.readObject(e.OID)
 	if err != nil {
 		r.rep.Errf(key, "error: Unknown object type for %s", r.fsck.Describe(e.OID))
 		return nil
@@ -129,7 +129,7 @@ func (r *run) markUnreachableReferents() {
 		}
 		typ := e.Type()
 		if typ == gitobj.TypeNone {
-			t, _, err := r.db.Read(e.OID)
+			t, _, err := r.readObject(e.OID)
 			if err != nil {
 				return
 			}
@@ -139,7 +139,7 @@ func (r *run) markUnreachableReferents() {
 		if typ == gitobj.TypeBlob {
 			return
 		}
-		_, buf, err := r.db.Read(e.OID)
+		_, buf, err := r.readObject(e.OID)
 		if err != nil {
 			return
 		}
@@ -216,7 +216,7 @@ func (r *run) writeLostFound(key sortKey, e *objEntry) {
 	}
 	defer f.Close()
 	if e.Type() == gitobj.TypeBlob {
-		if _, data, err := r.db.Read(e.OID); err == nil {
+		if _, data, err := r.readObject(e.OID); err == nil {
 			if _, err := f.Write(data); err != nil {
 				fmt.Fprintf(r.o.Stderr, "fatal: could not write '%s'\n", name)
 			}

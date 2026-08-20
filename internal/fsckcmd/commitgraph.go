@@ -191,7 +191,7 @@ func (r *run) verifyOneCommitGraph(key sortKey, g *commitGraph) bool {
 	var seenGenZero, seenGenNonZero gitobj.OID
 	for i := uint32(0); i < g.numCommits; i++ {
 		cur := g.algo.FromRaw(g.lookup[int(i)*rawsz:])
-		typ, buf, err := r.db.Read(cur)
+		typ, buf, err := r.readObject(cur)
 		if err != nil || typ != gitobj.TypeCommit {
 			report("failed to parse commit %s from object database for commit-graph", cur)
 			continue

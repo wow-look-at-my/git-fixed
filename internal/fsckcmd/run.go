@@ -7,6 +7,7 @@
 package fsckcmd
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -84,6 +85,9 @@ type run struct {
 
 	defaultRefs atomic.Int64
 
+	fatalMu  sync.Mutex
+	fatalMsg string
+
 	pendingMu sync.Mutex
 	pending   []*objEntry
 }
@@ -117,6 +121,14 @@ func Run(o *Options) int {
 		return code
 	}
 
+	// die reports the one condition git exits 128 for, after printing what
+	// the run has already found.
+	die := func() int {
+		rep.Flush()
+		fmt.Fprintf(o.Stderr, "fatal: %s\n", r.died())
+		return 128
+	}
+
 	if o.ConnectivityOnly {
 		r.markForConnectivity()
 	} else {
@@ -124,6 +136,9 @@ func Run(o *Options) int {
 		r.finishDeferredBlobs()
 	}
 	rep.Flush()
+	if r.died() != "" {
+		return die()
+	}
 
 	r.handleArgs()
 	if len(o.Args) == 0 {
@@ -131,6 +146,9 @@ func Run(o *Options) int {
 		o.KeepCacheObjects = true
 	}
 	rep.Flush()
+	if r.died() != "" {
+		return die()
+	}
 
 	if o.KeepCacheObjects {
 		if code := r.checkIndexes(); code != 0 {
@@ -146,9 +164,15 @@ func Run(o *Options) int {
 
 	r.checkConnectivity()
 	rep.Flush()
+	if r.died() != "" {
+		return die()
+	}
 
 	r.verifyGraphFiles()
 	rep.Flush()
+	if r.died() != "" {
+		return die()
+	}
 
 	return int(r.errors.Load())
 }
@@ -464,6 +488,11 @@ func (r *run) checkPack(group int, p *odb.Pack) {
 		Workers:          r.o.Workers,
 		BigFileThreshold: r.db.BigFileThreshold,
 		Emit: func(oid gitobj.OID, text string) {
+			if oid.Valid() && strings.HasPrefix(text, "cannot unpack ") {
+				// git's reader has already put this object on the
+				// pack's bad list, so the next read of it dies.
+				r.db.MarkBadPacked(oid)
+			}
 			r.rep.Errf(key(oid, 0), "error: %s", text)
 		},
 		Object: func(oid gitobj.OID, typ gitobj.Type, size int64, data []byte) {
@@ -491,7 +520,7 @@ func (r *run) finishDeferredBlobs() {
 	check := func(oids []gitobj.OID, kind string) {
 		sort.Slice(oids, func(i, j int) bool { return oids[i].Compare(oids[j]) < 0 })
 		for _, oid := range oids {
-			typ, data, err := r.db.Read(oid)
+			typ, data, err := r.readObject(oid)
 			if err != nil {
 				if r.fsck.ReportMissingBlob(key, oid, kind) != 0 {
 					r.fail(ErrorObject)
@@ -591,4 +620,33 @@ func (r *run) ensureType(e *objEntry) gitobj.Type {
 	}
 	e.SetType(t)
 	return t
+}
+
+// readObject reads an object and notices the one failure git treats as fatal.
+func (r *run) readObject(oid gitobj.OID) (gitobj.Type, []byte, error) {
+	typ, buf, err := r.db.Read(oid)
+	r.noteFatal(err)
+	return typ, buf, err
+}
+
+// noteFatal remembers the first condition git would die on. Work already under
+// way finishes, and the run stops at the end of the phase, which is as close as
+// a parallel implementation gets to git's immediate exit.
+func (r *run) noteFatal(err error) {
+	var fatal *odb.FatalError
+	if err == nil || !errors.As(err, &fatal) {
+		return
+	}
+	r.fatalMu.Lock()
+	if r.fatalMsg == "" {
+		r.fatalMsg = fatal.Msg
+	}
+	r.fatalMu.Unlock()
+}
+
+// died reports whether the run has hit a fatal condition.
+func (r *run) died() string {
+	r.fatalMu.Lock()
+	defer r.fatalMu.Unlock()
+	return r.fatalMsg
 }

@@ -324,3 +324,24 @@ func TestBrokenRef(t *testing.T) {
 	r.Delete(missing)
 	sameAsGit(t, r)
 }
+
+// defaultTestOptions returns options that write into buffers instead of the
+// process's own streams.
+func defaultTestOptions(t *testing.T, dir string) *fsckcmd.Options {
+	t.Helper()
+	o := fsckcmd.DefaultOptions()
+	o.Dir = dir
+	o.Stdout = &bytes.Buffer{}
+	o.Stderr = &bytes.Buffer{}
+	return o
+}
+
+// runWith runs one configured check and collects its output.
+func runWith(o *fsckcmd.Options) gittest.Result {
+	code := fsckcmd.Run(o)
+	return gittest.Result{
+		Stdout: o.Stdout.(*bytes.Buffer).String(),
+		Stderr: o.Stderr.(*bytes.Buffer).String(),
+		Code:   code,
+	}
+}
