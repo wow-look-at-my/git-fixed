@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -157,4 +158,103 @@ func TestUnreadableIndex(t *testing.T) {
 	assert.Equal(t, 128, res.Code, "an index that will not parse is fatal, not a finding")
 	assert.Contains(t, res.Stderr, ".git/index: index file smaller than expected")
 	assert.NotContains(t, res.Stderr, r.Dir, "the message named the absolute path this process opened")
+}
+
+// TestADeltaWhoseBaseIsNotInThePack covers git's get_delta_base() finding
+// nothing.
+//
+// A pack that carries a delta on an object it does not hold is what a thin pack
+// is, and one on disk is a pack whose index was built and whose bytes then
+// moved. git reports the entry twice: once for the base it could not locate,
+// and once for the object it could not produce.
+func TestADeltaWhoseBaseIsNotInThePack(t *testing.T) {
+	gittest.RequireGit(t)
+	r := gittest.New(t)
+	r.SimpleHistory()
+	base := bytes.Repeat([]byte("a line that deltas well\n"), 400)
+	child := append(append([]byte{}, base...), []byte("child\n")...)
+	path, offsets := r.WritePack("delta", []gittest.PackObject{
+		{Type: gitobj.TypeBlob, Data: base, Base: -1},
+		{Type: gitobj.TypeBlob, Data: child, Base: 0},
+	})
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	// The base offset is a varint that follows the entry's type and size.
+	// Winding it back further than the pack is long leaves the delta with
+	// no base at all, and the index still describes the pack as it was.
+	at := afterObjHeader(data, offsets[1])
+	require.Zero(t, data[at]&0x80, "this fixture's base offset must be one byte")
+	require.Greater(t, int64(0x7f), offsets[1], "0x7f must wind back past the start")
+	data[at] = 0x7f
+	gittest.WriteOver(t, path, data)
+
+	sameAsGit(t, r)
+}
+
+// afterObjHeader returns the offset just past a pack entry's type and size,
+// which is where an offset delta records its base.
+func afterObjHeader(data []byte, off int64) int64 {
+	i := off
+	for data[i]&0x80 != 0 {
+		i++
+	}
+	return i + 1
+}
+
+// TestARefDeltaWhoseBaseIsNotInThePack is the same failure through git's other
+// delta encoding, where the base is named rather than pointed at.
+//
+// git's get_delta_base() looks the name up in this pack and in no other, so a
+// name that is not in it fails exactly as an offset that runs off the front
+// does. It reports a different offset: past the name, rather than in front of
+// it.
+func TestARefDeltaWhoseBaseIsNotInThePack(t *testing.T) {
+	gittest.RequireGit(t)
+	r := gittest.New(t)
+	r.SimpleHistory()
+	base := bytes.Repeat([]byte("a line that deltas well\n"), 400)
+	child := append(append([]byte{}, base...), []byte("child\n")...)
+	path, offsets := r.WritePack("refdelta", []gittest.PackObject{
+		{Type: gitobj.TypeBlob, Data: base, Base: -1},
+		{Type: gitobj.TypeBlob, Data: child, Base: 0, ByName: true},
+	})
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	// One byte of the base's name is enough: the pack still holds the base,
+	// and the delta now asks for an object nothing has.
+	at := afterObjHeader(data, offsets[1])
+	data[at] ^= 0xff
+	gittest.WriteOver(t, path, data)
+
+	sameAsGit(t, r)
+}
+
+// TestAPackWithAnUnusualName is about which files count as packs.
+//
+// git's prepare_pack() asks for the .idx suffix and nothing else, so a pack
+// under any name is a pack it reads. Requiring the "pack-" prefix here made
+// such a pack invisible: every object in it read as missing, and a repository
+// that is whole reported as broken.
+func TestAPackWithAnUnusualName(t *testing.T) {
+	gittest.RequireGit(t)
+	r := gittest.New(t)
+	r.SimpleHistory()
+	r.Git("repack", "-adq")
+
+	dir := filepath.Join(r.GitDir(), "objects", "pack")
+	idxs, err := filepath.Glob(filepath.Join(dir, "pack-*.idx"))
+	require.NoError(t, err)
+	require.Len(t, idxs, 1)
+	base := strings.TrimSuffix(idxs[0], ".idx")
+	for _, ext := range []string{".idx", ".pack", ".rev"} {
+		if _, err := os.Stat(base + ext); err != nil {
+			continue
+		}
+		require.NoError(t, os.Rename(base+ext, filepath.Join(dir, "odd"+ext)))
+	}
+
+	res := sameAsGit(t, r)
+	assert.Equal(t, 0, res.Code, "the repository is whole, whatever its pack is called")
 }

@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 
 	"github.com/wow-look-at-my/git-fixed/internal/gitobj"
+	"github.com/wow-look-at-my/git-fixed/internal/odb"
 )
 
 // PackObject is one object to put in a hand-built pack. Base is the position of
@@ -24,6 +25,9 @@ type PackObject struct {
 	Type gitobj.Type
 	Data []byte
 	Base int
+	// ByName stores the delta against its base's name rather than its
+	// offset, which is git's other delta encoding.
+	ByName bool
 }
 
 // WritePack writes these objects as a packfile under .git/objects/pack and has
@@ -47,9 +51,17 @@ func (r *Repo) WritePack(name string, objs []PackObject) (string, []int64) {
 		if o.Base >= 0 {
 			payload = deltaBetween(objs[o.Base].Data, o.Data)
 			typ = gitobj.TypeOfsDelta
+			if o.ByName {
+				typ = gitobj.TypeRefDelta
+			}
 		}
 		writeObjHeader(&buf, typ, int64(len(payload)))
-		if o.Base >= 0 {
+		switch {
+		case o.Base < 0:
+		case o.ByName:
+			base := objs[o.Base]
+			buf.Write(odb.HashLiteral(r.Algo, base.Type.Name(), base.Data).Raw())
+		default:
 			writeOfsDelta(&buf, offsets[i]-offsets[o.Base])
 		}
 		zw := zlib.NewWriter(&buf)

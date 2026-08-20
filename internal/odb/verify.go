@@ -265,9 +265,17 @@ func (p *Pack) buildLayout() *packLayout {
 		case gitobj.TypeRefDelta:
 			if bi, ok := p.Find(h.BaseOID); ok {
 				parent[i] = posOf[bi]
+				break
 			}
-			// A base outside this pack leaves this entry a root, and
-			// the worker resolves it through the whole database.
+			// git's get_delta_base() looks in this pack and nowhere
+			// else, so a base that is not in it is an entry nothing
+			// can produce. It reports the base it could not find and
+			// then the object it could not build, naming the offset
+			// just past the base's name.
+			l.bad = append(l.bad, int32(i))
+			l.ents[i].typ = gitobj.TypeBad
+			l.headerErrs = append(l.headerErrs, badDeltaBase(h.DataOff, p.Path).Error())
+			l.ents[i].headerErr = int32(len(l.headerErrs) - 1)
 		}
 	}
 
@@ -571,7 +579,11 @@ func (w *walker) materializeRoot(e *packEntry, in *Inflater) (gitobj.Type, []byt
 	p := w.p
 	switch e.typ {
 	case gitobj.TypeRefDelta, gitobj.TypeOfsDelta:
-		return gitobj.TypeBad, nil, fmt.Errorf("delta base is unresolved in %s", p.Path)
+		// buildLayout marks an unresolved delta bad, and walkChain drops
+		// a bad entry before it reaches here. This stands between a
+		// future mistake in either of those and a delta inflated as
+		// though it were a whole object.
+		return gitobj.TypeBad, nil, badDeltaBase(e.dataOff, p.Path)
 	}
 	data, err := in.Inflate(p, e.dataOff, e.size)
 	if err != nil {
