@@ -147,7 +147,7 @@ type objSlab = [objSlabSize]objEntry
 // objTable holds every object the run has heard of.
 //
 // It is not a Go map. An object name is itself a hash, spread uniformly by
-// construction, so a table that takes eight of its bytes as the hash needs no
+// construction, so a table that takes four of its bytes as the hash needs no
 // hash function at all: with a map, Lookup was a quarter of the whole run on a
 // million-object repository. Entries come from slabs so that a million objects
 // cost a few hundred allocations, and each one has an index an edge can hold
@@ -163,20 +163,26 @@ type objTable struct {
 	// and the phases that visit every object can just count.
 	created atomic.Int64
 
+	// start is how many slots a shard's table is made with. see newObjTable.
+	start int
+
 	// slabs is replaced rather than written in place, so a reader holding an
 	// index follows it without a lock.
 	slabs  atomic.Pointer[[]*objSlab]
 	slabMu sync.Mutex
 }
 
-// slot is one place in a shard's open-addressed table. It holds eight bytes of
+// slot is one place in a shard's open-addressed table. It holds four bytes of
 // the name, which decide whether a probe is worth following into an entry, and
 // the entry's index plus one, so the zero value is an empty slot. Nothing here
 // is a pointer, so the table costs the collector nothing either.
+//
+// Eight bytes means eight slots to a cache line and sixteen bytes an object at
+// the load factor below, which on a hundred-million-object repository is the
+// difference between one and a half gigabytes and three.
 type slot struct {
-	key uint64
+	key uint32
 	idx uint32
-	_   uint32
 }
 
 type objShard struct {
@@ -190,10 +196,10 @@ type objShard struct {
 	_ [16]byte
 }
 
-// objShardInit is where a shard's table starts. There is one table per shard
+// objShardMin is the smallest a shard's table is made. There is one per shard
 // and tens of thousands of shards on a large machine, so a repository with a
 // handful of objects must not pay for all of them.
-const objShardInit = 8
+const objShardMin = 8
 
 // shardCount picks how finely to split the table.
 //
@@ -211,12 +217,26 @@ func shardCount() int {
 	return size
 }
 
-func newObjTable() *objTable {
+// newObjTable builds the table. expect is how many objects the run already
+// knows the repository holds, from the pack indexes, or zero.
+//
+// Growing a shard means rehashing it, and a shard that starts at eight slots
+// and ends at eight thousand rehashes its contents ten times over: on a
+// million-object repository that was five percent of the whole run, spent
+// arriving at a size that was known before it started.
+func newObjTable(expect int64) *objTable {
 	n := shardCount()
-	// The slot tables are made on first write. A big repository fills every
-	// shard, and a small one should not pay to build tens of thousands of
-	// tables it will never use.
-	return &objTable{shards: make([]objShard, n), mask: uint32(n - 1)}
+	t := &objTable{shards: make([]objShard, n), mask: uint32(n - 1)}
+	t.start = objShardMin
+	// Twice the expected share of a shard, because the table doubles at half
+	// full and a shard that lands exactly on its size would double at once.
+	for want := 2 * (expect/int64(n) + 1); int64(t.start) < want && t.start < 1<<24; {
+		t.start <<= 1
+	}
+	// The slot tables themselves are made on first write. A big repository
+	// fills every shard, and a small one should not pay to build tens of
+	// thousands of tables it will never use.
+	return t
 }
 
 // shard picks an object's shard from the first two bytes of its name. One byte
@@ -226,14 +246,17 @@ func (t *objTable) shard(oid gitobj.OID) *objShard {
 	return &t.shards[h&t.mask]
 }
 
-// slotKey is the hash. An object name is already uniform, so the table takes it
-// as it is rather than running a hash function over it.
-func slotKey(oid gitobj.OID) uint64 { return binary.LittleEndian.Uint64(oid.H[:8]) }
-
-// slotPos is where a key starts probing. It uses the bytes the shard did not:
-// the first two chose the shard, and reusing them here would leave most of a
-// shard's table unreachable.
-func slotPos(key uint64) uint32 { return uint32(key >> 32) }
+// slotKey is the hash: where a name starts probing, and what a probe compares
+// before it follows a slot into an entry.
+//
+// An object name is already a uniform hash, so this takes four of its bytes as
+// they are rather than running a hash function over them. It does not take the
+// first two, which chose the shard: reusing those here would leave most of a
+// shard's table unreachable. The probe position is the low bits of the key, so
+// the bits above the table's size are what a comparison against the slot rules
+// out, and a shard has to be a hundred thousand slots wide before that leaves
+// fewer than a thousand names to one slot's worth of doubt.
+func slotKey(oid gitobj.OID) uint32 { return binary.LittleEndian.Uint32(oid.H[4:8]) }
 
 // At returns the object at an index. Indices run from zero to Len.
 func (t *objTable) At(i uint32) *objEntry {
@@ -284,7 +307,7 @@ func (t *objTable) Get(oid gitobj.OID) *objEntry {
 	if sh.slots == nil {
 		return nil
 	}
-	for i := slotPos(key) & sh.mask; ; i = (i + 1) & sh.mask {
+	for i := key & sh.mask; ; i = (i + 1) & sh.mask {
 		sl := &sh.slots[i]
 		if sl.idx == 0 {
 			return nil
@@ -306,10 +329,10 @@ func (t *objTable) Lookup(oid gitobj.OID, want gitobj.Type) (*objEntry, uint32, 
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
 	if sh.slots == nil {
-		sh.slots = make([]slot, objShardInit)
-		sh.mask = objShardInit - 1
+		sh.slots = make([]slot, t.start)
+		sh.mask = uint32(t.start - 1)
 	}
-	i := slotPos(key) & sh.mask
+	i := key & sh.mask
 	for {
 		sl := &sh.slots[i]
 		if sl.idx == 0 {
@@ -363,7 +386,7 @@ func (sh *objShard) grow() {
 		if sl.idx == 0 {
 			continue
 		}
-		i := slotPos(sl.key) & sh.mask
+		i := sl.key & sh.mask
 		for sh.slots[i].idx != 0 {
 			i = (i + 1) & sh.mask
 		}

@@ -38,7 +38,7 @@ func TestLinkTypeName(t *testing.T) {
 func TestHashSlots(t *testing.T) {
 	// git prints the size of its own object hash, which starts at 32 and
 	// doubles once it is half full.
-	tab := newObjTable()
+	tab := newObjTable(0)
 	assert.Equal(t, int64(0), tab.HashSlots())
 	for i := range 40 {
 		var oid gitobj.OID
@@ -49,6 +49,42 @@ func TestHashSlots(t *testing.T) {
 		assert.GreaterOrEqual(t, tab.HashSlots(), int64(32))
 	}
 	assert.Equal(t, int64(40), tab.Len())
+}
+
+// TestObjTableTellsNamesApartByMoreThanItsHash keeps the table honest about
+// what its four bytes are for. They pick a slot and rule a slot out; they never
+// stand in for the name. These names share every byte the table looks at, so
+// each one has to be told apart by the whole of it.
+func TestObjTableTellsNamesApartByMoreThanItsHash(t *testing.T) {
+	tab := newObjTable(0)
+	want := map[gitobj.OID]*objEntry{}
+	for i := range 500 {
+		var oid gitobj.OID
+		oid.N = 20
+		// Everything the shard and the slot are chosen from is identical.
+		oid.H[18] = byte(i)
+		oid.H[19] = byte(i >> 8)
+		e, idx, ok := tab.Lookup(oid, gitobj.TypeBlob)
+		require.True(t, ok)
+		require.Equal(t, oid, e.OID)
+		require.Same(t, e, tab.At(idx))
+		want[oid] = e
+	}
+	assert.Equal(t, int64(500), tab.Len(), "500 distinct names are 500 objects")
+	for oid, e := range want {
+		assert.Same(t, e, tab.Get(oid), "a name must find its own entry again")
+	}
+}
+
+// TestObjTableSizesItselfFromWhatItIsTold keeps the table from rehashing its way
+// up to a size that was known before it started.
+func TestObjTableSizesItselfFromWhatItIsTold(t *testing.T) {
+	small, big := newObjTable(0), newObjTable(1<<20)
+	assert.Equal(t, objShardMin, small.start, "nothing known means start small")
+	assert.Greater(t, big.start, objShardMin)
+	assert.Equal(t, 0, big.start&(big.start-1), "a mask needs a power of two")
+	assert.GreaterOrEqual(t, int64(big.start)*int64(len(big.shards)), int64(2<<20),
+		"room for twice what it was told, because the table doubles at half full")
 }
 
 func TestReporterVerbosef(t *testing.T) {

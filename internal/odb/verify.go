@@ -74,20 +74,38 @@ func (p *Pack) Verify(o VerifyOpts) bool {
 		fail(fmt.Sprintf("packfile %s cannot be accessed", p.Path))
 		return false
 	}
+	// The pack's own hash is one thread reading every byte of the pack, and
+	// on a multi-gigabyte one that is a minute of a single core with the
+	// rest of the machine waiting for it. It answers a question the object
+	// walk does not ask, so it runs alongside the walk instead of in front
+	// of it, and the run costs whichever of the two is slower.
+	sums := make(chan []string, 1)
+	go func() { sums <- p.checksumComplaints() }()
+	objectsOK := p.verifyObjects(o)
+	for _, text := range <-sums {
+		fail(text)
+	}
+	if !objectsOK {
+		ok = false
+	}
+	return ok
+}
+
+// checksumComplaints hashes the whole pack and compares it with the two copies
+// of that hash the repository keeps, in the order git compares them.
+func (p *Pack) checksumComplaints() []string {
+	var out []string
 	rawsz := int64(p.Algo.RawSize)
 	sigOff := p.dataSize - rawsz
 	h := p.Algo.New()
 	h.Write(p.data[:sigOff])
 	if !bytes.Equal(h.Sum(nil), p.data[sigOff:]) {
-		fail(fmt.Sprintf("%s pack checksum mismatch", p.Path))
+		out = append(out, fmt.Sprintf("%s pack checksum mismatch", p.Path))
 	}
 	if !bytes.Equal(p.idx[p.idxSize-2*rawsz:p.idxSize-rawsz], p.data[sigOff:]) {
-		fail(fmt.Sprintf("%s pack checksum does not match its index", p.Path))
+		out = append(out, fmt.Sprintf("%s pack checksum does not match its index", p.Path))
 	}
-	if !p.verifyObjects(o) {
-		ok = false
-	}
-	return ok
+	return out
 }
 
 // verifyIndexChecksum checks the index file's own trailing hash.
