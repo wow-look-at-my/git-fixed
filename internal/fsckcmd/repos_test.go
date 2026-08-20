@@ -150,7 +150,7 @@ func TestCorruptPackData(t *testing.T) {
 	require.NoError(t, err)
 	// Flip a byte inside the first object's compressed data.
 	data[20] ^= 0xff
-	require.NoError(t, os.WriteFile(packs[0], data, 0o666))
+	gittest.WriteOver(t, packs[0], data)
 	got := ours(t, r.Dir)
 	want := r.GitFsck()
 	assert.NotEqual(t, 0, got.Code, "a corrupt pack must not report success")
@@ -188,7 +188,7 @@ func TestTruncatedPackIndex(t *testing.T) {
 	data, err := os.ReadFile(idxs[0])
 	require.NoError(t, err)
 	data[len(data)-1] ^= 0xff
-	require.NoError(t, os.WriteFile(idxs[0], data, 0o666))
+	gittest.WriteOver(t, idxs[0], data)
 	got := ours(t, r.Dir)
 	want := r.GitFsck()
 	assert.Equal(t, want.Code, got.Code)
@@ -212,7 +212,7 @@ func TestCommitGraph(t *testing.T) {
 		data, err := os.ReadFile(path)
 		require.NoError(t, err)
 		data[len(data)-1] ^= 0xff
-		require.NoError(t, os.WriteFile(path, data, 0o666))
+		gittest.WriteOver(t, path, data)
 		got := ours(t, r.Dir)
 		want := r.GitFsck()
 		assert.Equal(t, want.Code, got.Code)
@@ -238,7 +238,7 @@ func TestMultiPackIndex(t *testing.T) {
 		data, err := os.ReadFile(path)
 		require.NoError(t, err)
 		data[len(data)-1] ^= 0xff
-		require.NoError(t, os.WriteFile(path, data, 0o666))
+		gittest.WriteOver(t, path, data)
 		got := ours(t, r.Dir)
 		want := r.GitFsck()
 		assert.Equal(t, want.Code, got.Code)

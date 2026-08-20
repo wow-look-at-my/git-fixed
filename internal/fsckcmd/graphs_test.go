@@ -38,7 +38,7 @@ func flipLastByte(t *testing.T, path string) {
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
 	data[len(data)-1] ^= 0xff
-	require.NoError(t, os.WriteFile(path, data, 0o666))
+	gittest.WriteOver(t, path, data)
 }
 
 func TestPackRevIndex(t *testing.T) {
@@ -58,7 +58,7 @@ func TestPackRevIndex(t *testing.T) {
 	})
 
 	t.Run("truncated", func(t *testing.T) {
-		require.NoError(t, os.WriteFile(rev, []byte("RIDX"), 0o666))
+		gittest.WriteOver(t, rev, []byte("RIDX"))
 		got := ours(t, r.Dir)
 		want := r.GitFsck()
 		assert.Equal(t, want.Code, got.Code)
@@ -73,7 +73,7 @@ func TestPackRevIndex(t *testing.T) {
 		data, err := os.ReadFile(path)
 		require.NoError(t, err)
 		copy(data, "XXXX")
-		require.NoError(t, os.WriteFile(path, data, 0o666))
+		gittest.WriteOver(t, path, data)
 		got := ours(t, r2.Dir)
 		want := r2.GitFsck()
 		assert.Equal(t, want.Code, got.Code)
@@ -87,7 +87,7 @@ func TestCommitGraphTruncated(t *testing.T) {
 	history(t, r, 4)
 	r.Git("commit-graph", "write", "--reachable")
 	path := filepath.Join(r.GitDir(), "objects", "info", "commit-graph")
-	require.NoError(t, os.WriteFile(path, []byte("CGPH"), 0o666))
+	gittest.WriteOver(t, path, []byte("CGPH"))
 	got := ours(t, r.Dir)
 	want := r.GitFsck()
 	assert.Equal(t, want.Code, got.Code)
@@ -122,7 +122,7 @@ func TestMultiPackIndexTruncated(t *testing.T) {
 	}
 	r.Git("multi-pack-index", "write")
 	path := filepath.Join(r.GitDir(), "objects", "pack", "multi-pack-index")
-	require.NoError(t, os.WriteFile(path, []byte("MIDX"), 0o666))
+	gittest.WriteOver(t, path, []byte("MIDX"))
 	got := ours(t, r.Dir)
 	want := r.GitFsck()
 	assert.Equal(t, want.Code, got.Code)

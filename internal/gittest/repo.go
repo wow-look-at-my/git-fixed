@@ -144,6 +144,17 @@ func (r *Repo) writeLoose(oid gitobj.OID, uncompressed []byte) {
 	}
 }
 
+// WriteOver replaces a file git wrote. git creates a pack, an index, a reverse
+// index, and a graph read-only, so a plain write to one fails for everybody
+// except root.
+func WriteOver(t *testing.T, path string, data []byte) {
+	t.Helper()
+	_ = os.Chmod(path, 0o666)
+	if err := os.WriteFile(path, data, 0o666); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // ObjectPath is where a loose object's file lives.
 func (r *Repo) ObjectPath(oid gitobj.OID) string {
 	hex := oid.String()
