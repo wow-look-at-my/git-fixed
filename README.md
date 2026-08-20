@@ -27,6 +27,9 @@ Everything git checks: loose objects and packs, tree entry names and modes, comm
 reflogs, every worktree's index, reachability, `.rev` reverse indexes, `.bitmap` files, the commit-graph, and the multi-pack-index. `fsck.<msgid>`
 severity settings and `fsck.skipList` are honoured.
 
+The reference database is checked first, the way `git refs verify` does it: the file type, the name, the content and its trailing bytes, symref
+targets, and the whole `packed-refs` grammar. `--no-references` turns that phase off. See [docs/ref-consistency.md](docs/ref-consistency.md).
+
 One check goes further than git's. A tree entry whose name would reach `.git` on ext4 with casefolding, or on ZFS with normalization, is reported here
 and not by git, which only knows HFS+ and NTFS. It is on by default and there is no way to turn it off. See
 [docs/alias-detection.md](docs/alias-detection.md).
@@ -39,7 +42,7 @@ and the exit status, agree. [docs/architecture.md](docs/architecture.md) says wh
 
 ### Is it really the same?
 
-41 differential tests build a deliberately broken repository, run the system `git fsck` and this one over it, and require the same lines and the same
+64 differential tests build a deliberately broken repository, run the system `git fsck` and this one over it, and require the same lines and the same
 exit status. `scripts/bench.sh` refuses to report a time unless the two agreed first.
 
 ## Documentation
@@ -50,3 +53,4 @@ exit status. `scripts/bench.sh` refuses to report a time unless the two agreed f
 - [docs/output-ordering.md](docs/output-ordering.md) -- why output is sorted, and what "same as git" means
 - [docs/commit-graph.md](docs/commit-graph.md) -- commit-graph checks
 - [docs/multi-pack-index.md](docs/multi-pack-index.md) -- multi-pack-index checks
+- [docs/ref-consistency.md](docs/ref-consistency.md) -- the ref database check

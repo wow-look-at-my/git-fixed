@@ -9,9 +9,9 @@ Two runs agree when they print the same SET of lines and exit with the same stat
 order and of its internal hash table, so it is not reproducible from one machine to the next. `internal/gittest/fsck.go` compares that way. It runs
 the system `git fsck` in the same repository, splits both outputs into non-empty lines, sorts them, and requires equality along with the exit code.
 
-`internal/fsckcmd/differential_test.go` and `repos_test.go` hold 41 such comparisons. Each builds a repository that is broken in one specific way -- a
-tree entry named `.git`, a duplicate tree entry, a bad committer line, a corrupt loose object, a pack whose CRC no longer matches, a commit-graph with
-a wrong parent -- and then requires the two implementations to agree. `internal/gittest/repo.go` writes those repositories directly, because git's own
+`internal/fsckcmd/differential_test.go`, `repos_test.go` and `refs_test.go` hold 64 such comparisons. Each builds a repository that is broken in one
+specific way -- a tree entry named `.git`, a duplicate tree entry, a bad committer line, a corrupt loose object, a pack whose CRC no longer matches, a
+commit-graph with a wrong parent, a `packed-refs` line with no newline -- and then requires the two implementations to agree. `internal/gittest/repo.go` writes those repositories directly, because git's own
 porcelain refuses to produce most of them.
 
 Our own output IS ordered, deterministically. See `docs/output-ordering.md`.
@@ -21,13 +21,15 @@ Our own output IS ordered, deterministically. See `docs/output-ordering.md`.
 `fsckcmd.Run` follows `builtin/fsck.c` step by step. The reporter is flushed between phases, so a phase's lines are all printed before the next phase
 starts.
 
-1. **Objects.** Every loose file and every pack in every object directory, checked in parallel. `--connectivity-only` replaces this with a pass that
+1. **References.** The reference files themselves, before any object is read: file type, name, content, symref targets, and the `packed-refs`
+   grammar. git 2.51 folded this in from `git refs verify`. `--no-references` turns it off. See `docs/ref-consistency.md`.
+2. **Objects.** Every loose file and every pack in every object directory, checked in parallel. `--connectivity-only` replaces this with a pass that
    only records which objects exist.
-2. **Heads.** The refs named on the command line, or every ref, plus reflogs unless `--no-reflogs`.
-3. **Index.** Each worktree's index file, when `--cache` is in effect (it is, when no object was named).
-4. **Index files.** The `.rev` reverse indexes and the `.bitmap` files.
-5. **Connectivity.** The walk out from the roots, then a verdict on every object the run has heard of.
-6. **Graphs.** `commit-graph` and `multi-pack-index`.
+3. **Heads.** The refs named on the command line, or every ref, plus reflogs unless `--no-reflogs`.
+4. **Index.** Each worktree's index file, when `--cache` is in effect (it is, when no object was named).
+5. **Index files.** The `.rev` reverse indexes and the `.bitmap` files.
+6. **Connectivity.** The walk out from the roots, then a verdict on every object the run has heard of.
+7. **Graphs.** `commit-graph` and `multi-pack-index`.
 
 The exit status is a bitmask, the same one `builtin/fsck.c` returns: object 1, reachable 2, pack 4, refs 8, commit-graph 16, multi-pack-index 32,
 rev-index 64, bitmap 128. A condition git calls `die()` for exits 128 instead, after the run prints what it already found.
@@ -95,7 +97,7 @@ standard library's. Guessing at the message from the offset would print the wron
 | `internal/odb`      | the object database: loose files, packs, alternates, delta decoding, pack verification      |
 | `internal/fsck`     | the checks themselves, matching `fsck.c`: trees, commits, tags, blobs, the severity table   |
 | `internal/gitpath`  | whether a tree entry name can reach `.git` on some filesystem                               |
-| `internal/fsckcmd`  | the phases, the object table, the connectivity walk, the reporter                           |
+| `internal/fsckcmd`  | the ref pass, the object phases, the object table, the connectivity walk, the reporter                         |
 | `internal/gittest`  | test repositories, including deliberately broken ones, and the comparison against real git  |
 
 `internal/parseopt` exists instead of cobra because a drop-in replacement has to accept exactly what git accepts and refuse exactly what git refuses.

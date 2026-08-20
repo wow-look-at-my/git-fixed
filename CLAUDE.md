@@ -7,10 +7,10 @@ out of `internal/fsckcmd`.
 
 - **Compatible means the same SET of lines and the same exit status.** git's own order is not reproducible, so the tests sort both outputs and
   compare. Never relax this to "close enough" -- see `docs/output-ordering.md`.
-- **Every behaviour comes from git 2.43.0's source, not from guessing.** When a check's wording or ordering is in question, build a repository that
+- **Every behaviour comes from git 2.55.0's source, not from guessing.** When a check's wording or ordering is in question, build a repository that
   triggers it and run the real `git fsck`. Several bugs here were found exactly that way.
-- **A new check needs a differential test in the same change.** `internal/fsckcmd/differential_test.go` and `repos_test.go` hold 41 of them;
-  `internal/gittest` writes the broken repositories git's porcelain refuses to produce.
+- **A new check needs a differential test in the same change.** `internal/fsckcmd/differential_test.go` and `repos_test.go` hold 41 of them, and
+  `refs_test.go` holds 23 more. `internal/gittest` writes the broken repositories git's porcelain refuses to produce.
 - **`go-toolchain`, bare, is the build.** It gates coverage at 80%. Never run `go build` or `go test` directly, and never pipe its output.
 
 ## Layout
@@ -21,7 +21,7 @@ out of `internal/fsckcmd`.
 - `internal/odb` -- loose objects, packs, alternates, delta decoding, pack verification, the delta base cache.
 - `internal/fsck` -- the checks from `fsck.c`: trees, commits, tags, blobs, the message-id severity table.
 - `internal/gitpath` -- whether a tree entry name reaches `.git` on some filesystem.
-- `internal/fsckcmd` -- the six phases, the object table, the connectivity walk, the sorted reporter.
+- `internal/fsckcmd` -- the ref-consistency pass, the six object phases, the object table, the connectivity walk, the sorted reporter.
 - `internal/gittest` -- test repositories and the comparison against the real `git fsck`.
 
 ## Performance invariants
@@ -50,3 +50,4 @@ Breaking one of these costs about half the run. Each is a mistake that was made 
 - `docs/output-ordering.md` -- the sort key and why output is deterministic
 - `docs/commit-graph.md` -- commit-graph checks, chains, generation numbers
 - `docs/multi-pack-index.md` -- multi-pack-index checks and its three failure vocabularies
+- `docs/ref-consistency.md` -- the ref database check, its 16 message ids, packed-refs grammar
