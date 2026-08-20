@@ -20,7 +20,8 @@ type VerifyOpts struct {
 	// with the pack as a whole rather than with one object.
 	Emit func(oid gitobj.OID, text string)
 	// Object receives every object the pack holds, once it is known to
-	// decode and to hash to its recorded name.
+	// decode and to hash to its recorded name. Several workers call it at
+	// once, and data is only valid until it returns.
 	Object func(oid gitobj.OID, typ gitobj.Type, size int64, data []byte)
 	// Workers is the number of goroutines that decode objects.
 	Workers int
@@ -227,15 +228,11 @@ func (p *Pack) verifyObjects(o VerifyOpts) bool {
 		o.Emit(oid, text)
 		mu.Unlock()
 	}
+	// Object is called from every worker at once, without a lock: it is the
+	// whole per-object check, so serializing it would leave one core doing
+	// all the work while the rest decode ahead of it. Emit takes the lock
+	// instead, because a pack that emits anything at all is broken and rare.
 	object := o.Object
-	if object != nil {
-		inner := object
-		object = func(oid gitobj.OID, typ gitobj.Type, size int64, data []byte) {
-			mu.Lock()
-			inner(oid, typ, size, data)
-			mu.Unlock()
-		}
-	}
 
 	for _, i := range l.bad {
 		e := l.ents[i]

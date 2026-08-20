@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 
 	"github.com/wow-look-at-my/git-fixed/internal/gitobj"
@@ -31,25 +32,66 @@ func (r *run) checkConnectivity() {
 	}
 }
 
-// traverseReachable walks out from the roots one level at a time, so each level
-// spreads across every worker.
+// traverseReachable walks out from the roots. Every worker draws from one
+// shared stack rather than taking a turn at each level: history is usually
+// long and narrow, so a level at a time would leave three workers idle and pay
+// a barrier per commit.
 func (r *run) traverseReachable() {
-	frontier := r.pending
+	stack := r.pending
 	r.pending = nil
-	for len(frontier) > 0 {
-		var mu sync.Mutex
-		var next []*objEntry
-		r.parallel(len(frontier), func(i int) {
-			local := r.traverseOne(frontier[i])
-			if len(local) == 0 {
-				return
-			}
-			mu.Lock()
-			next = append(next, local...)
-			mu.Unlock()
-		})
-		frontier = next
+	if len(stack) == 0 {
+		return
 	}
+	workers := r.o.Workers
+	if workers <= 0 {
+		workers = runtime.GOMAXPROCS(0)
+	}
+	if workers == 1 {
+		for len(stack) > 0 {
+			e := stack[len(stack)-1]
+			stack = append(stack[:len(stack)-1], r.traverseOne(e)...)
+		}
+		return
+	}
+
+	var mu sync.Mutex
+	cond := sync.NewCond(&mu)
+	// active counts the objects being walked right now. A worker that finds
+	// the stack empty must wait while any of them can still push more.
+	active := 0
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				mu.Lock()
+				for len(stack) == 0 && active > 0 {
+					cond.Wait()
+				}
+				if len(stack) == 0 {
+					mu.Unlock()
+					cond.Broadcast()
+					return
+				}
+				e := stack[len(stack)-1]
+				stack = stack[:len(stack)-1]
+				active++
+				mu.Unlock()
+
+				found := r.traverseOne(e)
+
+				mu.Lock()
+				stack = append(stack, found...)
+				active--
+				if len(stack) > 0 || active == 0 {
+					cond.Broadcast()
+				}
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
 }
 
 // traverseOne reads one object and marks everything it points at.

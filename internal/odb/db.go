@@ -35,12 +35,14 @@ type DB struct {
 	// keeps its own bad-object list.
 	badMu sync.Mutex
 	bad   set.Set[gitobj.OID]
+
+	deltas *deltaCache
 }
 
 // Open maps the object directory and its alternates. The sequential flag says
 // the caller will read every pack end to end.
 func Open(objectsDir, displayDir string, algo *gitobj.Algo, sequential bool) (*DB, error) {
-	db := &DB{Algo: algo, BigFileThreshold: 512 * 1024 * 1024, bad: set.New[gitobj.OID]()}
+	db := &DB{Algo: algo, BigFileThreshold: 512 * 1024 * 1024, bad: set.New[gitobj.OID](), deltas: newDeltaCache()}
 	db.inflaters.New = func() any { return &Inflater{} }
 	seen := set.New[string]()
 	var add func(path, display string, depth int) error
@@ -294,6 +296,21 @@ func (db *DB) MarkBadPacked(oid gitobj.OID) { db.markBad(oid) }
 // pack that exceeds this by a wide margin is corrupt or hostile.
 const maxDeltaChain = 4096
 
+// readBase reads the object a delta was built from, through the cache. Only a
+// base goes in the cache, so the buffer a caller of Read gets back is always
+// its own and the cached bytes stay read-only.
+func (db *DB) readBase(p *Pack, off int64, in *Inflater, depth int) (gitobj.Type, []byte, error) {
+	if typ, data, ok := db.deltas.get(p, off); ok {
+		return typ, data, nil
+	}
+	typ, data, err := db.readPacked(p, off, in, depth)
+	if err != nil {
+		return typ, data, err
+	}
+	db.deltas.put(p, off, typ, data)
+	return typ, data, nil
+}
+
 func (db *DB) readPacked(p *Pack, off int64, in *Inflater, depth int) (gitobj.Type, []byte, error) {
 	if depth > maxDeltaChain {
 		return gitobj.TypeNone, nil, fmt.Errorf("delta chain in %s is too deep", p.Path)
@@ -307,10 +324,10 @@ func (db *DB) readPacked(p *Pack, off int64, in *Inflater, depth int) (gitobj.Ty
 		var baseType gitobj.Type
 		var base []byte
 		if h.Type == gitobj.TypeOfsDelta {
-			baseType, base, err = db.readPacked(p, h.BaseOff, in, depth+1)
+			baseType, base, err = db.readBase(p, h.BaseOff, in, depth+1)
 		} else {
 			if i, ok := p.Find(h.BaseOID); ok {
-				baseType, base, err = db.readPacked(p, p.OffsetAt(i), in, depth+1)
+				baseType, base, err = db.readBase(p, p.OffsetAt(i), in, depth+1)
 			} else {
 				baseType, base, err = db.Read(h.BaseOID)
 			}
