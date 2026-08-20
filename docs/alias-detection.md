@@ -42,8 +42,8 @@ does not.
 **ext4** (`isExt4DotGeneric`) compares under Unicode case folding, which is what an ext4 directory created with the `casefold` feature does. This
 reaches past the ASCII folding in the NTFS test: U+017F, the long s, folds to `s`, so `.gitmoduleſ` opens `.gitmodules` there.
 
-**ZFS** (`isZFSDotGeneric`) compares under NFKD, plus case folding. One comparison covers every `normalization=` setting a dataset can have, because two
-names equal under formC, formD, or formKC are equal under formKD too. The case folding on top covers `casesensitivity=insensitive` and `=mixed`.
+**ZFS** (`isZFSDotGeneric`) compares under NFKD, plus case folding. One comparison covers every `normalization=` setting a dataset can have, because
+two names equal under formC, formD, or formKC are equal under formKD too. The case folding on top covers `casesensitivity=insensitive` and `=mixed`.
 
 ## Cost
 

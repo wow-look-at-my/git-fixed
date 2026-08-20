@@ -6,8 +6,8 @@ the same status. What differs is that every expensive phase runs on all cores.
 ## What "compatible" means, and how it is measured
 
 Two runs agree when they print the same SET of lines and exit with the same status. The set, not the sequence: git's own order falls out of `readdir`
-order and of its internal hash table, so it is not reproducible from one machine to the next. `internal/gittest/fsck.go` compares that way. It runs the
-system `git fsck` in the same repository, splits both outputs into non-empty lines, sorts them, and requires equality along with the exit code.
+order and of its internal hash table, so it is not reproducible from one machine to the next. `internal/gittest/fsck.go` compares that way. It runs
+the system `git fsck` in the same repository, splits both outputs into non-empty lines, sorts them, and requires equality along with the exit code.
 
 `internal/fsckcmd/differential_test.go` and `repos_test.go` hold 41 such comparisons. Each builds a repository that is broken in one specific way -- a
 tree entry named `.git`, a duplicate tree entry, a bad committer line, a corrupt loose object, a pack whose CRC no longer matches, a commit-graph with
@@ -39,17 +39,17 @@ rev-index 64, bitmap 128. A condition git calls `die()` for exits 128 instead, a
 - **Loose objects** are one flat list of files, split across workers.
 - **The connectivity walk** draws from one shared stack. A level-at-a-time walk would be simpler, but history is long and narrow: most levels hold one
   commit, so three of four workers would idle and every commit would cost a barrier.
-- **The object checks themselves** run inside the worker that decoded the object. This is the whole point: the check is most of the work, so running it
-  under a lock would leave one core doing everything while the others decode ahead of it.
+- **The object checks themselves** run inside the worker that decoded the object. This is the whole point: the check is most of the work, so running
+  it under a lock would leave one core doing everything while the others decode ahead of it.
 
 ## The edge cache
 
 git parses each object once and keeps the parsed object, so its connectivity walk re-reads nothing. Keeping whole parsed objects for a repository of
-half a million objects is expensive, so this implementation keeps only what the walk actually needs: for each object, the list of objects it points at,
-already resolved to table entries. That is `objEntry.edges`, three words per reference and no strings.
+half a million objects is expensive, so this implementation keeps only what the walk actually needs: for each object, the list of objects it points
+at, already resolved to table entries. That is `objEntry.edges`, three words per reference and no strings.
 
-Two cases fall outside it and re-read the object. `--connectivity-only` never ran an object pass, so there is nothing to cache. `--name-objects` builds
-each object's name from the path the walk took to reach it, which a recorded edge cannot carry.
+Two cases fall outside it and re-read the object. `--connectivity-only` never ran an object pass, so there is nothing to cache. `--name-objects`
+builds each object's name from the path the walk took to reach it, which a recorded edge cannot carry.
 
 ## The delta base cache
 
@@ -62,8 +62,8 @@ objects in reachability order rather than pack order.
 
 ## Measured
 
-On a synthetic repository of 406,500 objects, against git 2.43.0. `scripts/bench.sh` produces these numbers, and refuses to print a time unless the two
-implementations agreed on the output first.
+On a synthetic repository of 406,500 objects, against git 2.43.0. `scripts/bench.sh` produces these numbers, and refuses to print a time unless the
+two implementations agreed on the output first.
 
 | run                        | git   | git-fixed | git-fixed, one worker |
 |----------------------------|-------|-----------|-----------------------|
@@ -71,15 +71,15 @@ implementations agreed on the output first.
 | `fsck --connectivity-only` | 0.89s | 1.66s     | 3.39s                 |
 | `fsck --no-full`           | 0.03s | 0.13s     |                       |
 
-`--connectivity-only` is the one mode that is still slower than git. It has no object pass, so it has no edge cache to walk and pays a full object read
-per node; git's advantage there is that its parsed objects are already in memory from the mark pass. `--no-full` is far too short to say anything.
+`--connectivity-only` is the one mode that is still slower than git. It has no object pass, so it has no edge cache to walk and pays a full object
+read per node; git's advantage there is that its parsed objects are already in memory from the mark pass. `--no-full` is far too short to say
+anything.
 
 ## Known divergence: zlib error detail
 
-git's decompressor prints zlib's own complaint before its caller adds one, so a corrupt loose object can produce a line like
-`error: inflate: data stream error (invalid block type)`. Go's `compress/flate` collapses every one of those cases into a single corrupt-input error
-with a byte offset, so that line is missing for every failure except a bad zlib header, whose wording we do match. Every other line, and the exit
-status, still agree.
+git's decompressor prints zlib's own complaint before its caller adds one, so a corrupt loose object can produce a line like `error: inflate: data
+stream error (invalid block type)`. Go's `compress/flate` collapses every one of those cases into a single corrupt-input error with a byte offset, so
+that line is missing for every failure except a bad zlib header, whose wording we do match. Every other line, and the exit status, still agree.
 
 Closing it means writing a DEFLATE decoder that carries zlib's error taxonomy -- roughly fifteen distinct messages -- and keeping it as fast as the
 standard library's. Guessing at the message from the offset would print the wrong reason, which is worse than printing none.

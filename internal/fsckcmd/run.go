@@ -435,7 +435,6 @@ func (r *run) checkLooseDir(group int, path, shown string) {
 		shown string
 	}
 	var (
-		mu    sync.Mutex
 		jobs  []job
 		cruft []string
 	)
@@ -465,7 +464,6 @@ func (r *run) checkLooseDir(group int, path, shown string) {
 	for _, c := range cruft {
 		r.rep.Errf(sortKey{phase: phaseObjects, group: group}, "bad sha1 file: %s", c)
 	}
-	_ = mu
 	r.parallel(len(jobs), func(i int) {
 		j := jobs[i]
 		r.checkLooseObject(sortKey{phase: phaseObjects, group: group, oid: j.oid}, j.oid, j.path, j.shown)
