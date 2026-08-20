@@ -81,22 +81,65 @@ func (d *Damage) Empty() bool {
 }
 
 // scanner holds one scan's state.
+//
+// Both tables are keyed on the object name itself. Keying them on its hex
+// spelling cost a 40-byte string for every tree entry in the repository, most
+// of them thrown away at once, and kept one per object for the whole walk.
 type scanner struct {
 	repo *gitrepo.Repo
 	db   *odb.DB
 
-	bad   map[string]*BadObject
-	seen  map[string]bool
+	bad   map[gitobj.OID]*BadObject
+	seen  map[gitobj.OID]bool
 	queue []queued
 
 	meters Meters
 }
 
 type queued struct {
-	oid  gitobj.OID
-	typ  gitobj.Type
-	need Need
+	oid gitobj.OID
+	typ gitobj.Type
+	ref string
+	// path is the route from that reference, kept as a link back to the
+	// containing tree rather than as a whole string. see pathNode.
+	path *pathNode
 }
+
+// pathNode is one step of the route to an object, sharing everything above it
+// with its siblings.
+//
+// A joined string per entry looks harmless and is not: a directory of a
+// thousand entries copies its own path a thousand times, and every copy stays
+// in the queue until its object is read. A node is one pointer and one name,
+// and the whole route above it is one pointer away.
+//
+// It is only ever rendered for an object that turns out to be bad.
+type pathNode struct {
+	parent *pathNode
+	name   string
+}
+
+// String renders the route, from the reference down.
+func (p *pathNode) String() string {
+	if p == nil {
+		return ""
+	}
+	var parts []string
+	for n := p; n != nil; n = n.parent {
+		parts = append(parts, n.name)
+	}
+	var b strings.Builder
+	for i := len(parts) - 1; i >= 0; i-- {
+		if b.Len() > 0 && !strings.HasSuffix(b.String(), ":") {
+			b.WriteByte('/')
+		}
+		b.WriteString(parts[i])
+	}
+	return b.String()
+}
+
+// need renders what a report says about one queued object.
+func (q queued) need() Need { return Need{Ref: q.ref, Path: q.path.String()} }
 
 // Scan reads the repository and reports what is damaged. meters draws the two
 // passes that take the time, or is the zero value when nobody asked.
@@ -147,8 +190,8 @@ func scan(repo *gitrepo.Repo, db *odb.DB, meters Meters, fsckWasClean bool) (*Da
 	s := &scanner{
 		repo:   repo,
 		db:     db,
-		bad:    map[string]*BadObject{},
-		seen:   map[string]bool{},
+		bad:    map[gitobj.OID]*BadObject{},
+		seen:   map[gitobj.OID]bool{},
 		meters: meters,
 	}
 	d := &Damage{}
@@ -184,7 +227,7 @@ func (s *scanner) scanRefs(d *Damage) {
 				Malformed: true,
 			})
 		case ok:
-			s.want(oid, gitobj.TypeAny, Need{Ref: wt.RefName("HEAD")})
+			s.want(oid, gitobj.TypeAny, wt.RefName("HEAD"), nil)
 		}
 	}
 }
@@ -205,7 +248,7 @@ func (s *scanner) checkRef(d *Damage, worktreeDir string, ref Ref) {
 			Malformed: true,
 		})
 	default:
-		s.want(ref.OID, gitobj.TypeAny, Need{Ref: name})
+		s.want(ref.OID, gitobj.TypeAny, name, nil)
 	}
 }
 
@@ -228,21 +271,20 @@ func (s *scanner) refPath(worktreeDir, name string) string {
 }
 
 // want queues an object the repository must be able to produce.
-func (s *scanner) want(oid gitobj.OID, typ gitobj.Type, need Need) {
+func (s *scanner) want(oid gitobj.OID, typ gitobj.Type, ref string, path *pathNode) {
 	if !oid.Valid() {
 		return
 	}
-	key := oid.String()
-	if s.seen[key] {
+	if s.seen[oid] {
 		// Record the extra need anyway: a report that names every route to a
 		// missing object is worth more than one that names the first.
-		if b := s.bad[key]; b != nil {
-			b.Needs = appendNeed(b.Needs, need)
+		if b := s.bad[oid]; b != nil {
+			b.Needs = appendNeed(b.Needs, Need{Ref: ref, Path: path.String()})
 		}
 		return
 	}
-	s.seen[key] = true
-	s.queue = append(s.queue, queued{oid: oid, typ: typ, need: need})
+	s.seen[oid] = true
+	s.queue = append(s.queue, queued{oid: oid, typ: typ, ref: ref, path: path})
 }
 
 // walk reads every queued object and follows what it points at, so the scan
@@ -277,14 +319,13 @@ func (s *scanner) walk() {
 
 // note records that an object could not be read.
 func (s *scanner) note(q queued, err error) {
-	key := q.oid.String()
-	b := s.bad[key]
+	b := s.bad[q.oid]
 	if b == nil {
 		b = &BadObject{OID: q.oid, Type: q.typ}
 		b.Files, b.Corrupt = s.copiesOf(q.oid)
-		s.bad[key] = b
+		s.bad[q.oid] = b
 	}
-	b.Needs = appendNeed(b.Needs, q.need)
+	b.Needs = appendNeed(b.Needs, q.need())
 	_ = err
 }
 
@@ -312,16 +353,13 @@ func (s *scanner) walkCommit(q queued, data []byte) {
 		}
 		if hex, ok := strings.CutPrefix(line, "tree "); ok {
 			if oid, ok := s.repo.Algo.Parse(strings.TrimSpace(hex)); ok {
-				s.want(oid, gitobj.TypeTree, Need{
-					Ref:  q.need.Ref,
-					Path: q.oid.String() + ":",
-				})
+				s.want(oid, gitobj.TypeTree, q.ref, &pathNode{name: q.oid.String() + ":"})
 			}
 			continue
 		}
 		if hex, ok := strings.CutPrefix(line, "parent "); ok {
 			if oid, ok := s.repo.Algo.Parse(strings.TrimSpace(hex)); ok {
-				s.want(oid, gitobj.TypeCommit, Need{Ref: q.need.Ref})
+				s.want(oid, gitobj.TypeCommit, q.ref, nil)
 			}
 		}
 	}
@@ -339,10 +377,7 @@ func (s *scanner) walkTree(q queued, data []byte) {
 		if e.IsDir() {
 			typ = gitobj.TypeTree
 		}
-		s.want(e.OID, typ, Need{
-			Ref:  q.need.Ref,
-			Path: joinPath(q.need.Path, string(e.Name)),
-		})
+		s.want(e.OID, typ, q.ref, &pathNode{parent: q.path, name: string(e.Name)})
 	}
 }
 
@@ -354,22 +389,11 @@ func (s *scanner) walkTag(q queued, data []byte) {
 		}
 		if hex, ok := strings.CutPrefix(line, "object "); ok {
 			if oid, ok := s.repo.Algo.Parse(strings.TrimSpace(hex)); ok {
-				s.want(oid, gitobj.TypeAny, Need{Ref: q.need.Ref})
+				s.want(oid, gitobj.TypeAny, q.ref, nil)
 			}
 			return
 		}
 	}
-}
-
-// joinPath builds the route to an object for the report.
-func joinPath(prefix, name string) string {
-	if prefix == "" {
-		return name
-	}
-	if strings.HasSuffix(prefix, ":") {
-		return prefix + name
-	}
-	return prefix + "/" + name
 }
 
 // appendNeed keeps the needs unique, so a report does not repeat itself.
