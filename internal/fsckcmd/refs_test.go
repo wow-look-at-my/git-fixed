@@ -108,3 +108,26 @@ func TestPackedRefsChecks(t *testing.T) {
 		})
 	}
 }
+
+// TestSymrefToAPackedRef is the shape every clone has: refs/remotes/origin/HEAD
+// is a loose symbolic reference, and the branch it names lives in packed-refs.
+//
+// Following the symref through loose files alone leaves it resolving to nothing,
+// which reported an ordinary working clone as broken. It was found by running
+// this tool against a real clone, not by reading the code.
+func TestSymrefToAPackedRef(t *testing.T) {
+	gittest.RequireGit(t)
+	r := gittest.New(t)
+	r.SimpleHistory()
+	r.Git("branch", "other")
+	r.Git("pack-refs", "--all")
+	require.NoFileExists(t, filepath.Join(r.GitDir(), "refs", "heads", "other"),
+		"pack-refs left the branch loose, so this test proves nothing")
+
+	require.NoError(t, os.WriteFile(
+		filepath.Join(r.GitDir(), "refs", "heads", "pointer"),
+		[]byte("ref: refs/heads/other\n"), 0o644))
+
+	sameAsGit(t, r)
+	sameAsGit(t, r, "--connectivity-only")
+}
