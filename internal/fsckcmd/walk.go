@@ -160,10 +160,7 @@ func tagLinks(oid gitobj.OID, buf []byte, algo *gitobj.Algo, name string, named 
 	typeName := string(buf[:nl])
 	typ := gitobj.TypeFromName(typeName)
 	if typ == gitobj.TypeBad {
-		return nil, []string{
-			fmt.Sprintf("unknown tag type '%s' in %s", typeName, oid),
-			fmt.Sprintf("bad tag pointer to %s in %s", target, oid),
-		}
+		return nil, []string{fmt.Sprintf("unknown tag type '%s' in %s", typeName, oid)}
 	}
 	l := link{oid: target, typ: typ, name: name, viaTag: true}
 	if !named {

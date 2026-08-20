@@ -61,6 +61,9 @@ func (r *run) handleRef(refname string, oid gitobj.OID, broken bool) {
 		e = r.objs.Get(oid)
 	}
 	if e == nil || e.Flags()&flagHasObj == 0 {
+		// git parses the object again here, so an object that failed to
+		// parse in the object pass reports its complaint a second time.
+		r.reparse(key, oid)
 		r.rep.Errf(key, "error: %s: invalid sha1 pointer %s", refname, oid)
 		r.fail(ErrorReachable)
 		return
@@ -213,5 +216,19 @@ func (r *run) fsckCacheTree(key sortKey, ct *gitrepo.CacheTree, path string) {
 	}
 	for _, child := range ct.Children {
 		r.fsckCacheTree(key, child, path)
+	}
+}
+
+// reparse reads an object and repeats whatever its parser complains about. git
+// re-parses an object every time a reference names it, so a broken object is
+// reported once per attempt rather than once in total.
+func (r *run) reparse(key sortKey, oid gitobj.OID) {
+	typ, buf, err := r.db.Read(oid)
+	if err != nil {
+		return
+	}
+	_, errs := walkLinks(typ, oid, buf, r.repo.Algo, "", false)
+	for _, msg := range errs {
+		r.rep.Errf(key, "error: %s", msg)
 	}
 }

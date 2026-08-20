@@ -108,7 +108,7 @@ func (r *run) verifyMultiPackIndex(objectDir string) bool {
 	packs := make([]*odb.Pack, len(names))
 	for i, name := range names {
 		idxPath := filepath.Join(objectDir, "pack", string(bytes.TrimSuffix(name, []byte(".idx")))+".idx")
-		p, err := odb.OpenPack(idxPath, algo, false)
+		p, err := odb.OpenPack(idxPath, idxPath, algo, false)
 		if err != nil {
 			report("failed to load pack in position %d", i)
 			continue
