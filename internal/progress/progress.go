@@ -47,6 +47,11 @@ type Meter struct {
 	// due is raised by the ticker, standing in for git's SIGALRM.
 	due atomic.Bool
 
+	// start is when the phase began, so every line says how long it has been
+	// running. git prints no time at all, which leaves a person watching a
+	// number climb with no idea whether it is minutes or hours from done.
+	start time.Time
+
 	mu      sync.Mutex
 	shown   bool
 	lastLen int
@@ -68,7 +73,7 @@ func StartDelayed(w io.Writer, title string, total int64) *Meter {
 }
 
 func start(w io.Writer, title string, total int64, delayed bool) *Meter {
-	m := &Meter{w: w, title: title, total: total, stop: make(chan struct{})}
+	m := &Meter{w: w, title: title, total: total, start: time.Now(), stop: make(chan struct{})}
 	m.pct.Store(-1)
 	m.quiet.Store(delayed)
 	m.wg.Add(1)
@@ -158,9 +163,9 @@ func (m *Meter) draw(n int64, end string) {
 	if m.total > 0 {
 		p := n * 100 / m.total
 		m.pct.Store(int32(p))
-		counters = fmt.Sprintf("%3d%% (%d/%d)", p, n, m.total)
+		counters = fmt.Sprintf("%3d%% (%d/%d) %s", p, n, m.total, elapsed(time.Since(m.start)))
 	} else {
-		counters = fmt.Sprintf("%d", n)
+		counters = fmt.Sprintf("%d %s", n, elapsed(time.Since(m.start)))
 	}
 	// A shorter line than the last one leaves the tail of the last one on
 	// screen, so it is painted over with spaces.
@@ -192,4 +197,18 @@ func (m *Meter) Finish() {
 		return
 	}
 	m.draw(m.count.Load(), ", done.")
+}
+
+// elapsed renders how long a phase has been running, in the widest unit that
+// has a whole number in it. A fixed unit is either three digits of seconds or
+// a leading zero on everything short.
+func elapsed(d time.Duration) string {
+	switch s := int64(d.Seconds()); {
+	case s < 60:
+		return fmt.Sprintf("[%ds]", s)
+	case s < 3600:
+		return fmt.Sprintf("[%dm%02ds]", s/60, s%60)
+	default:
+		return fmt.Sprintf("[%dh%02dm]", s/3600, s%3600/60)
+	}
 }

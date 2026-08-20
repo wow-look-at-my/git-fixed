@@ -8,14 +8,19 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/wow-look-at-my/git-fixed/internal/fsck"
 	"github.com/wow-look-at-my/git-fixed/internal/gitobj"
 	"github.com/wow-look-at-my/git-fixed/internal/gitrepo"
 	"github.com/wow-look-at-my/git-fixed/internal/odb"
 	"github.com/wow-look-at-my/git-fixed/internal/progress"
+	"github.com/wow-look-at-my/go-containers/concurrentbag"
+	"github.com/wow-look-at-my/go-containers/concurrentmap"
 )
 
 // Need says who wants an object that is not usable.
@@ -89,9 +94,14 @@ type scanner struct {
 	repo *gitrepo.Repo
 	db   *odb.DB
 
-	bad   map[gitobj.OID]*BadObject
-	seen  map[gitobj.OID]bool
-	queue []queued
+	bad  *concurrentmap.Map[gitobj.OID, *BadObject]
+	seen *concurrentmap.Map[gitobj.OID, bool]
+	// queue is a bag rather than a stack: the walk does not care what order
+	// it reaches objects in, and a bag shards where a single head contends.
+	queue *concurrentbag.Bag[queued]
+	// pending counts what is queued plus what a worker is still reading, so
+	// an empty bag is not mistaken for a finished walk.
+	pending atomic.Int64
 
 	meters Meters
 }
@@ -190,8 +200,9 @@ func scan(repo *gitrepo.Repo, db *odb.DB, meters Meters, fsckWasClean bool) (*Da
 	s := &scanner{
 		repo:   repo,
 		db:     db,
-		bad:    map[gitobj.OID]*BadObject{},
-		seen:   map[gitobj.OID]bool{},
+		bad:    concurrentmap.New[gitobj.OID, *BadObject](),
+		seen:   concurrentmap.New[gitobj.OID, bool](),
+		queue:  concurrentbag.New[queued](),
 		meters: meters,
 	}
 	d := &Damage{}
@@ -275,16 +286,30 @@ func (s *scanner) want(oid gitobj.OID, typ gitobj.Type, ref string, path *pathNo
 	if !oid.Valid() {
 		return
 	}
-	if s.seen[oid] {
+	if !s.seen.TryAdd(oid, true) {
 		// Record the extra need anyway: a report that names every route to a
 		// missing object is worth more than one that names the first.
-		if b := s.bad[oid]; b != nil {
-			b.Needs = appendNeed(b.Needs, Need{Ref: ref, Path: path.String()})
-		}
+		s.addNeed(oid, Need{Ref: ref, Path: path.String()})
 		return
 	}
-	s.seen[oid] = true
-	s.queue = append(s.queue, queued{oid: oid, typ: typ, ref: ref, path: path})
+	// Counted before it is queued. The other order lets a worker find an
+	// empty bag between the two and call the walk finished.
+	s.pending.Add(1)
+	s.queue.Add(queued{oid: oid, typ: typ, ref: ref, path: path})
+}
+
+// addNeed records another route to an object already known to be bad, and does
+// nothing for one that is fine.
+func (s *scanner) addNeed(oid gitobj.OID, need Need) {
+	s.bad.Compute(oid, func(old *BadObject, loaded bool) (*BadObject, bool) {
+		if !loaded {
+			// Nothing to add to, and nothing to create: this object read
+			// back perfectly well.
+			return nil, true
+		}
+		old.Needs = appendNeed(old.Needs, need)
+		return old, false
+	})
 }
 
 // walk reads every queued object and follows what it points at, so the scan
@@ -294,38 +319,75 @@ func (s *scanner) walk() {
 	// what each object points at, so the number of objects it will reach is
 	// not known until it has reached them. git's own connectivity meter
 	// counts the same way, and for the same reason.
-	m := s.meters.start("Checking what the references reach", 0)
+	// The walk reads each object it reaches once, so the repository's own
+	// object count is an upper bound on what it will read. A meter counting
+	// against it finishes at or below 100%, and until this had a total it
+	// showed a rising number that said nothing about how far along it was.
+	m := s.meters.start("Checking what the references reach", s.objectCount())
 	defer m.Finish()
-	for len(s.queue) > 0 {
-		q := s.queue[len(s.queue)-1]
-		s.queue = s.queue[:len(s.queue)-1]
-		m.Step()
 
-		typ, data, err := s.db.Read(q.oid)
-		if err != nil {
-			s.note(q, err)
+	var wg sync.WaitGroup
+	for range runtime.GOMAXPROCS(0) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.walkWorker(m)
+		}()
+	}
+	wg.Wait()
+}
+
+// walkWorker reads what the bag holds until the walk is finished.
+//
+// An empty bag does not mean the walk is over: another worker may be part way
+// through a tree that will queue a thousand more objects. pending counts both
+// what is waiting and what is being read, so zero is the only honest answer to
+// "is there any more".
+func (s *scanner) walkWorker(m *progress.Meter) {
+	for {
+		q, ok := s.queue.TryTake()
+		if !ok {
+			if s.pending.Load() == 0 {
+				return
+			}
+			// Somebody else is still reading. Stand aside rather than
+			// spin on the bag's heads.
+			runtime.Gosched()
 			continue
 		}
-		switch typ {
-		case gitobj.TypeCommit:
-			s.walkCommit(q, data)
-		case gitobj.TypeTree:
-			s.walkTree(q, data)
-		case gitobj.TypeTag:
-			s.walkTag(q, data)
+		m.Step()
+		if typ, data, err := s.db.Read(q.oid); err != nil {
+			s.note(q, err)
+		} else {
+			switch typ {
+			case gitobj.TypeCommit:
+				s.walkCommit(q, data)
+			case gitobj.TypeTree:
+				s.walkTree(q, data)
+			case gitobj.TypeTag:
+				s.walkTag(q, data)
+			}
 		}
+		// Last, so that everything this object queued is counted before
+		// this one stops counting.
+		s.pending.Add(-1)
 	}
 }
 
 // note records that an object could not be read.
 func (s *scanner) note(q queued, err error) {
-	b := s.bad[q.oid]
-	if b == nil {
-		b = &BadObject{OID: q.oid, Type: q.typ}
-		b.Files, b.Corrupt = s.copiesOf(q.oid)
-		s.bad[q.oid] = b
-	}
-	b.Needs = appendNeed(b.Needs, q.need())
+	need := q.need()
+	// copiesOf stats the object directories, so it runs outside the shard
+	// lock. A second worker reaching the same object builds the same answer
+	// and one of the two is dropped.
+	files, corrupt := s.copiesOf(q.oid)
+	s.bad.Compute(q.oid, func(old *BadObject, loaded bool) (*BadObject, bool) {
+		if !loaded {
+			old = &BadObject{OID: q.oid, Type: q.typ, Files: files, Corrupt: corrupt}
+		}
+		old.Needs = appendNeed(old.Needs, need)
+		return old, false
+	})
 	_ = err
 }
 
@@ -411,7 +473,7 @@ func appendNeed(needs []Need, n Need) []Need {
 
 // collect turns the scan's tables into the answer, in a stable order.
 func (s *scanner) collect(d *Damage) {
-	for _, b := range s.bad {
+	for _, b := range s.bad.All() {
 		d.Objects = append(d.Objects, *b)
 	}
 	sort.Slice(d.Objects, func(i, j int) bool {
@@ -441,4 +503,33 @@ func (b BadObject) Describe() string {
 		return fmt.Sprintf("%s %s", state, b.OID)
 	}
 	return fmt.Sprintf("%s %s, needed by %s", state, b.OID, strings.Join(where, ", "))
+}
+
+// objectCount is how many objects the repository holds, packed and loose.
+//
+// It is the number the walk's meter counts against. A pack that will not open
+// contributes nothing, which is right: the walk cannot read what is in it
+// either.
+func (s *scanner) objectCount() int64 {
+	total := int64(0)
+	for _, p := range s.db.Packs() {
+		if p.OpenErr == nil {
+			total += int64(p.Num)
+		}
+	}
+	hexsz := s.repo.Algo.HexSize
+	for _, dir := range s.db.Dirs {
+		for i := range 256 {
+			entries, err := os.ReadDir(filepath.Join(dir.Path, fmt.Sprintf("%02x", i)))
+			if err != nil {
+				continue
+			}
+			for _, e := range entries {
+				if len(e.Name()) == hexsz-2 {
+					total++
+				}
+			}
+		}
+	}
+	return total
 }

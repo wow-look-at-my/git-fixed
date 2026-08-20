@@ -53,12 +53,12 @@ func TestProgressNamesEveryPhaseGitNames(t *testing.T) {
 	// delays, and a repository this small beats the delay, so they are the
 	// ones that must NOT appear.
 	for _, want := range []string{
-		"Checking ref database: 100% (1/1), done.",
-		"Checking object directories: 100% (256/256), done.",
+		"Checking ref database: 100% (1/1) ",
+		"Checking object directories: 100% (256/256) ",
 	} {
 		assert.Contains(t, stderr, want)
 	}
-	assert.Regexp(t, `Checking objects: 100% \(\d+/\d+\), done\.`, stderr)
+	assert.Regexp(t, `Checking objects: 100% \(\d+/\d+\) \[\d+[smh][^]]*\], done\.`, stderr)
 	assert.NotContains(t, stderr, "Checking connectivity",
 		"a phase that beats its delay prints nothing, as git's delayed progress does")
 	assert.NotContains(t, stderr, "Verifying reverse pack-indexes")
@@ -79,7 +79,7 @@ func TestProgressCountsEveryPackedObject(t *testing.T) {
 	require.NotEmpty(t, inPack, "the test repository must have a pack")
 
 	stderr, _ := withProgress(t, r.Dir)
-	assert.Contains(t, stderr, "Checking objects: 100% ("+inPack+"/"+inPack+"), done.")
+	assert.Regexp(t, `Checking objects: 100% \(`+inPack+`/`+inPack+`\) \[[^]]+\], done\.`, stderr)
 }
 
 // TestProgressIsOffByDefaultForANonTerminal keeps the meter out of output a
