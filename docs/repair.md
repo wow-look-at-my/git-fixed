@@ -147,8 +147,14 @@ Extraction goes through the same check as every other recovery: `Verify` hands o
 name. An object that already has a readable loose copy is left alone; a loose file that will NOT read back is quarantined first, because leaving it
 would shadow the copy about to be written.
 
-A pack whose index will not map is the one case that is reported and not touched. There is no way to list the objects inside it, so displacing it
-would be the repair itself losing the data. The pack stays exactly where it is, and the run says so.
+A pack that yields nothing at all is never displaced. Two faults reach that state: an index that will not map, and a pack header that stops the read
+before the first entry -- and in the second case every object is still in the file, byte for byte. Moving such a pack would take all of them out of a
+repository that has no other copy, and it would buy nothing, because there is no loose copy for it to stop shadowing. It stays exactly where it is,
+and the run reports it and fails.
+
+The decision is made from what the extraction actually produced, not from which fault was diagnosed. That distinction is the repair: judging it from
+the fault meant a pack with four bad bytes in its signature was displaced after yielding zero objects, and the run only ended well because a remote
+happened to have the history.
 
 The cost is disk: a repository whose one pack has a single bad byte comes out with every object loose. That is the price of the objects surviving,
 and `git repack` puts them back together whenever the owner wants.

@@ -16,7 +16,7 @@ Not "no more than was already lost". The repository worked before it broke and m
 - **Every recovery is verified by hash.** `odb.WriteLoose` refuses content that does not hash to the name being recovered, which is what makes a
   recovery provably the original. Depth, and the six damage kinds: `docs/repair.md`.
 - **A container is emptied before it is displaced.** A corrupt pack goes to quarantine only after every object it still yields is a loose object; a
-  pack whose index will not map is reported and left alone. The index and `packed-refs` are salvaged line by line, never rebuilt from scratch.
+  pack that yields none is reported and left alone. The index and `packed-refs` are salvaged line by line, never rebuilt from scratch.
   `internal/repair/packs.go`, `index.go`, `packedrefs.go`.
 
 ## The contract

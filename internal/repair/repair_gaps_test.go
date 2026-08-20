@@ -83,34 +83,47 @@ func TestRepairsACorruptPackfile(t *testing.T) {
 	assert.NoFileExists(t, strings.TrimSuffix(pack, ".pack")+".idx")
 }
 
-// TestACorruptPackKeepsItsUnreadableObject proves the other half: an entry the
-// pack will not decode is not quietly dropped when nothing else has it. The
-// repair reports it and fails, and the pack it came out of stays in quarantine
-// rather than being deleted.
-func TestACorruptPackKeepsItsUnreadableObject(t *testing.T) {
+// TestAPackThatYieldsNothingIsLeftAlone is the other half, and it was a real
+// hole rather than a hypothetical one.
+//
+// A pack that yields no object at all used to be displaced anyway. Every object
+// in it went with it, and the run only ever ended well because a remote happened
+// to have the history. Moving such a pack buys nothing either: there is no loose
+// copy for it to stop shadowing. So it stays where it is and the run says so.
+//
+// Two damage shapes reach that state. Destroying the body stops every entry from
+// decoding; destroying the four-byte signature stops the read before the first
+// entry, with every object still in the file byte for byte.
+func TestAPackThatYieldsNothingIsLeftAlone(t *testing.T) {
 	gittest.RequireGit(t)
-	r := packed(t)
-	pack := packFile(t, r)
+	for _, tc := range []struct {
+		name   string
+		damage func(data []byte)
+	}{
+		{"body destroyed", func(data []byte) {
+			body := data[12 : len(data)-20]
+			for i := range body {
+				body[i] ^= 0x5a
+			}
+		}},
+		{"signature destroyed", func(data []byte) { copy(data[:4], "XXXX") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := packed(t)
+			pack := packFile(t, r)
+			data, err := os.ReadFile(pack)
+			require.NoError(t, err)
+			tc.damage(data)
+			overwrite(t, pack, data)
 
-	// Damage the whole body, so most entries stop decoding. Whatever cannot
-	// be read has no other source in this repository.
-	data, err := os.ReadFile(pack)
-	require.NoError(t, err)
-	body := data[12 : len(data)-20]
-	for i := range body {
-		body[i] ^= 0x5a
+			res := fix(t, r)
+
+			assert.False(t, res.Ok(), "a pack nothing came out of is not a repair")
+			assert.Empty(t, res.Packs, "the pack was displaced after yielding nothing")
+			assert.NotEmpty(t, res.Refused, "leaving the pack alone was not reported")
+			assert.FileExists(t, pack, "the pack was moved out of the repository")
+		})
 	}
-	overwrite(t, pack, data)
-
-	res := fix(t, r)
-
-	assert.False(t, res.Ok(), "a repository with a hole in it must not report success")
-	assert.NotEmpty(t, res.Unrecovered, "the objects that were lost must be named")
-	// Nothing was deleted. The quarantine holds the original pack.
-	require.NotEmpty(t, res.Quarantine)
-	entries, err := filepath.Glob(filepath.Join(res.Quarantine, "objects", "pack", "*.pack"))
-	require.NoError(t, err)
-	assert.Len(t, entries, 1, "the corrupt pack was not kept")
 }
 
 // TestRebuildsAnUnparseableIndex truncates the index in the middle of its

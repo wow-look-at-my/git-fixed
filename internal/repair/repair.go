@@ -318,11 +318,9 @@ func plan(damage *Damage, res *Result) *Result {
 	res.Derived = append(res.Derived, damage.Derived...)
 	res.Unrecovered = append(res.Unrecovered, damage.Objects...)
 	for _, bad := range damage.Packs {
-		if bad.Readable {
-			res.Packs = append(res.Packs, RescuedPack{Pack: bad.Pack})
-			continue
-		}
-		res.Refused = append(res.Refused, fmt.Sprintf("%s: %s", bad.Pack, bad.Why))
+		// A dry run does not extract, so it cannot say yet whether the pack
+		// will yield anything -- and that is what decides whether it moves.
+		res.Packs = append(res.Packs, RescuedPack{Pack: bad.Pack})
 	}
 	if damage.Index != nil {
 		res.Index = &RepairedIndex{Path: damage.Index.Path, Why: damage.Index.Why}

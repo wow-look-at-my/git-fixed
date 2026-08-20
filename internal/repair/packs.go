@@ -22,11 +22,9 @@ type BadPack struct {
 	Idx  string
 	// Why is the first complaint the verification made.
 	Why string
-	// Readable says the index maps and the pack's header agrees with it, so
-	// the objects inside can still be listed and decoded one by one. A pack
-	// that fails this is never displaced: without its index there is no way
-	// to get the objects out, and moving it away would lose them.
-	Readable bool
+	// Objects is how many the index says the pack holds, which is what the
+	// extraction below has to account for.
+	Objects int
 }
 
 // RescuedPack is one pack this run took out of the repository.
@@ -80,10 +78,7 @@ func verifyPack(p *odb.Pack) (BadPack, bool) {
 		return BadPack{}, false
 	}
 	bad.Why = first
-	// The index mapped and the pack's own header agreed with it, or Verify
-	// would have stopped before reaching any entry. So the entries can still
-	// be listed, which is what makes extraction possible.
-	bad.Readable = true
+	bad.Objects = int(p.Num)
 	return bad, true
 }
 
@@ -95,15 +90,12 @@ func verifyPack(p *odb.Pack) (BadPack, bool) {
 // removing the pack clears that. But removing a pack removes every object in
 // it, so each one has to be on disk as a loose object first. Extract, then
 // displace: never the other way round.
+//
+// A pack that yields nothing is never displaced. Moving it would take every
+// object in it out of the repository and buy nothing, since there is no loose
+// copy for it to stop shadowing. It stays where it is and the run reports it.
 func rescuePack(repo *gitrepo.Repo, q *Quarantine, bad BadPack) (RescuedPack, error) {
 	out := RescuedPack{Pack: displayPack(repo, bad.Pack)}
-	if !bad.Readable {
-		// Nothing can be got out of it, so it stays exactly where it is.
-		// A pack left in place is a pack the owner can still hand to another
-		// tool; a pack moved away with no copy of its objects is data lost by
-		// the repair itself.
-		return out, fmt.Errorf("%s: %s", out.Pack, bad.Why)
-	}
 
 	p, err := odb.OpenPack(bad.Idx, bad.Idx, repo.Algo, true)
 	if err != nil {
@@ -141,6 +133,14 @@ func rescuePack(repo *gitrepo.Repo, q *Quarantine, bad BadPack) (RescuedPack, er
 		return out, writeErr
 	}
 	out.Lost = int(p.Num) - out.Extracted - out.Present
+	if out.Extracted == 0 && out.Present == 0 && p.Num > 0 {
+		// Nothing came out. Either the index will not map, or the pack's own
+		// header stopped the read before the first entry. Displacing it now
+		// would remove every object it holds from a repository that has no
+		// other copy of them, which is the repair losing the data itself.
+		return out, fmt.Errorf("%s holds %d object(s) and yielded none of them: %s",
+			out.Pack, p.Num, bad.Why)
+	}
 
 	for _, path := range companions(bad.Pack) {
 		if err := q.Take(path, "part of a packfile that would not verify"); err != nil {
