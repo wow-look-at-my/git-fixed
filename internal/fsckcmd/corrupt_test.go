@@ -133,3 +133,28 @@ func looseObject(t *testing.T, payload []byte) (gitobj.OID, []byte) {
 	require.NoError(t, zw.Close())
 	return oid, buf.Bytes()
 }
+
+// TestUnreadableIndex covers the fatal git dies with when the index will not
+// parse, and above all the path it names.
+//
+// git works from the top of the worktree and writes ".git/index". This
+// implementation opened an absolute path and printed that, which is a
+// divergence in a message a person reads on their worst day. Nothing caught it
+// until the two were run side by side over a truncated index.
+func TestUnreadableIndex(t *testing.T) {
+	gittest.RequireGit(t)
+	r := gittest.New(t)
+	r.SimpleHistory()
+	r.Git("read-tree", "HEAD")
+
+	index := filepath.Join(r.GitDir(), "index")
+	data, err := os.ReadFile(index)
+	require.NoError(t, err)
+	require.Greater(t, len(data), 12, "git wrote no index to truncate")
+	gittest.WriteOver(t, index, data[:8])
+
+	res := sameAsGit(t, r)
+	assert.Equal(t, 128, res.Code, "an index that will not parse is fatal, not a finding")
+	assert.Contains(t, res.Stderr, ".git/index: index file smaller than expected")
+	assert.NotContains(t, res.Stderr, r.Dir, "the message named the absolute path this process opened")
+}

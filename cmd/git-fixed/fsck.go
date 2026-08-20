@@ -80,7 +80,7 @@ func (f *fsckFlags) options(dir string, args []string, stdout, stderr io.Writer)
 	o.NameObjects = f.nameObjects != 0
 
 	if f.progress == -1 {
-		o.ShowProgress = isTerminal(os.Stderr)
+		o.ShowProgress = isTerminal(stderr)
 	} else {
 		o.ShowProgress = f.progress != 0
 	}
@@ -119,9 +119,18 @@ func sameVerdict(o *fsckcmd.Options) bool {
 		o.IncludeReflogs == d.IncludeReflogs
 }
 
-// isTerminal reports whether the stream is a character device, which is how git
-// decides to show progress when nobody said either way.
-func isTerminal(f *os.File) bool {
+// isTerminal reports whether progress would be going to a terminal, which is
+// how git decides to show it when nobody said either way.
+//
+// It asks about the stream progress is actually written to, not about the
+// process's own stderr. Those are the same thing for a real run and different
+// for a test, which passes a buffer and must not have a progress meter written
+// into the output it is checking.
+func isTerminal(w io.Writer) bool {
+	f, ok := w.(*os.File)
+	if !ok {
+		return false
+	}
 	st, err := f.Stat()
 	return err == nil && st.Mode()&os.ModeCharDevice != 0
 }

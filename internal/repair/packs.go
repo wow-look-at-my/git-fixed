@@ -95,7 +95,7 @@ func verifyPack(p *odb.Pack) (BadPack, bool) {
 // object in it out of the repository and buy nothing, since there is no loose
 // copy for it to stop shadowing. It stays where it is and the run reports it.
 func rescuePack(repo *gitrepo.Repo, q *Quarantine, bad BadPack) (RescuedPack, error) {
-	out := RescuedPack{Pack: displayPath(repo, bad.Pack)}
+	out := RescuedPack{Pack: repo.Shown(bad.Pack)}
 
 	p, err := odb.OpenPack(bad.Idx, bad.Idx, repo.Algo, true)
 	if err != nil {
@@ -189,26 +189,4 @@ func companions(packPath string) []string {
 		}
 	}
 	return out
-}
-
-// displayPath names a file the way a person would recognise it, relative to the
-// git directory rather than as the absolute path this process opened.
-//
-// The path is measured from GitDir, which is what DisplayGitDir names. In a
-// linked worktree those are the worktree's own directory, while objects and
-// packed-refs live in the common one, so the relative path climbs out with ".."
-// and Join folds it back down. Measuring from CommonDir instead named a
-// worktree's index ".git/worktrees/w/worktrees/w/index".
-func displayPath(repo *gitrepo.Repo, path string) string {
-	rel, err := filepath.Rel(repo.GitDir, path)
-	if err != nil {
-		return path
-	}
-	shown := filepath.Join(repo.DisplayGitDir, rel)
-	if strings.HasPrefix(shown, "..") {
-		// Outside the repository altogether: an alternate object store, or a
-		// worktree file. An absolute path is the only unambiguous name.
-		return path
-	}
-	return filepath.ToSlash(shown)
 }
