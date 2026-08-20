@@ -31,6 +31,8 @@ Not "no more than was already lost". The repository worked before it broke and m
   `corrupt_test.go` hold 50 test functions, most of them table-driven over several repositories each. `internal/gittest` writes the broken
   repositories git's porcelain refuses to produce.
 - **`go-toolchain`, bare, is the build.** It gates coverage at 80%. Never run `go build` or `go test` directly, and never pipe its output.
+- **A test that writes over a file git made must chmod it first.** git writes a packfile and a loose object read-only, and the agent sandbox runs as
+  root, where the mode is ignored. Such a test passes here and fails on CI for everyone else. `overwrite` in `repair_gaps_test.go` is the helper.
 
 ## Layout
 
