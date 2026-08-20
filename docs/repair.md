@@ -136,7 +136,8 @@ check at the end means every source produces the identical bytes or none at all.
 
 Every step appends to the run manifest as it goes, so an interrupted run is still undoable.
 
-`--dry-run` stops after step 2 and prints the plan, including which source would answer for each object.
+`--dry-run` stops after step 2 and prints the plan, including which source would answer for each object. It promises to repair nothing rather than to
+write nothing: `--lost-found` is git's own option and saving dangling objects is all it does, so under a dry run it still saves them.
 
 ## The three container files
 

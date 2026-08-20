@@ -34,6 +34,9 @@ The first half of a run is a full fsck: the same options, the same output and th
 core instead of one. `--dry-run` stops there, so it is the drop-in -- on a healthy repository its output and its exit status are git's, to the
 character. On a damaged one it adds what it would repair, below git's findings.
 
+`--dry-run` promises to repair nothing, not to write nothing: `--lost-found` is git's own option and saving dangling objects is the whole of what it
+does, so it still writes them.
+
 **Read the speedup with the core count next to it.** On a four-core machine, over 229,960 objects, it is 1.93x git 2.55.0 -- and four cores is all the
 speedup four cores can buy. Reproduce it yourself: `scripts/make-bench-repo.sh <dir>` builds the repository and `scripts/bench.sh <dir>` times both
 tools, refusing to print a number unless their output matched.
