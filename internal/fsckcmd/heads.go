@@ -218,7 +218,11 @@ func (r *run) fsckCacheTree(key sortKey, ct *gitrepo.CacheTree, path string) {
 		e.SetFlag(flagUsed)
 		r.fsck.PutObjectName(ct.OID, ":")
 		r.markReachable(e)
-		if e.Type() != gitobj.TypeTree {
+		// ensureType, not Type: --connectivity-only never reads the objects,
+		// so the type is still unknown here and every cache-tree entry reads
+		// as a non-tree. git's own parse_object() resolves it at this point
+		// and reports nothing.
+		if r.ensureType(e) != gitobj.TypeTree {
 			r.objError(key, ct.OID, "non-tree in cache-tree")
 		}
 	}
