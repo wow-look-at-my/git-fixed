@@ -1,0 +1,262 @@
+// Package gitpath decides whether a tree entry name can reach a repository's
+// own control files once it is checked out.
+//
+// A filesystem that folds, normalizes, or shortens names lets one name reach a
+// different file. A tree entry that reaches .git, .gitmodules, .gitattributes,
+// .gitignore, or .mailmap is how several path-traversal attacks on git start,
+// so fsck refuses the entry for every filesystem it knows about.
+//
+// see docs/alias-detection.md
+package gitpath
+
+import (
+	"strings"
+	"unicode/utf8"
+
+	"golang.org/x/text/unicode/norm"
+)
+
+// needle is one of the control names, always given in lower case ASCII.
+type needle string
+
+// The control names fsck protects.
+const (
+	dotGit        needle = "git"
+	dotGitmodules needle = "gitmodules"
+	dotGitignore  needle = "gitignore"
+	dotGitattrs   needle = "gitattributes"
+	dotMailmap    needle = "mailmap"
+)
+
+// IsDotGit reports whether name reaches ".git" on any filesystem git knows.
+func IsDotGit(name string) bool { return matches(name, dotGit) }
+
+// IsDotGitmodules reports whether name reaches ".gitmodules".
+func IsDotGitmodules(name string) bool { return matches(name, dotGitmodules) }
+
+// IsDotGitignore reports whether name reaches ".gitignore".
+func IsDotGitignore(name string) bool { return matches(name, dotGitignore) }
+
+// IsDotGitattributes reports whether name reaches ".gitattributes".
+func IsDotGitattributes(name string) bool { return matches(name, dotGitattrs) }
+
+// IsDotMailmap reports whether name reaches ".mailmap".
+func IsDotMailmap(name string) bool { return matches(name, dotMailmap) }
+
+// IsNTFSDotGit reports only the NTFS spelling of ".git". The tree check applies
+// it on its own to each segment after a backslash, because NTFS reads a
+// backslash as a directory separator and git does not.
+func IsNTFSDotGit(name string) bool { return isNTFSDotGit(name) }
+
+// IsNTFSDotGitmodules reports only the NTFS spelling of ".gitmodules".
+func IsNTFSDotGitmodules(name string) bool { return isNTFSDotGeneric(name, dotGitmodules) }
+
+func matches(name string, n needle) bool {
+	if n == dotGit {
+		if isHFSDotGeneric(name, n) || isNTFSDotGit(name) {
+			return true
+		}
+	} else if isHFSDotGeneric(name, n) || isNTFSDotGeneric(name, n) {
+		return true
+	}
+	return isExt4DotGeneric(name, n) || isZFSDotGeneric(name, n)
+}
+
+// ntfsShortnamePrefix is the fall-back 8.3 short name NTFS derives for each
+// control name. git hard-codes the same table.
+func ntfsShortnamePrefix(n needle) string {
+	switch n {
+	case dotGitmodules:
+		return "gi7eba"
+	case dotGitignore:
+		return "gi250a"
+	case dotGitattrs:
+		return "gi7d29"
+	case dotMailmap:
+		return "maba30"
+	}
+	return ""
+}
+
+// hfsIgnorable lists the code points HFS+ drops from a name entirely, so that
+// ".gi<ZWNJ>t" and ".git" name the same file.
+func hfsIgnorable(r rune) bool {
+	switch r {
+	case 0x200c, 0x200d, 0x200e, 0x200f,
+		0x202a, 0x202b, 0x202c, 0x202d, 0x202e,
+		0x206a, 0x206b, 0x206c, 0x206d, 0x206e, 0x206f,
+		0xfeff:
+		return true
+	}
+	return false
+}
+
+// nextHFSChar returns the next code point HFS+ would compare, skipping the
+// ignorable ones. It reports ok=false on malformed UTF-8, which is enough for
+// the caller to conclude the name is not a control name.
+func nextHFSChar(s string) (r rune, rest string, ok bool) {
+	for {
+		if s == "" {
+			return 0, "", true
+		}
+		r, size := utf8.DecodeRuneInString(s)
+		if r == utf8.RuneError && size <= 1 {
+			return 0, "", false
+		}
+		s = s[size:]
+		if hfsIgnorable(r) {
+			continue
+		}
+		return r, s, true
+	}
+}
+
+func isHFSDotGeneric(name string, n needle) bool {
+	r, rest, ok := nextHFSChar(name)
+	if !ok || r != '.' {
+		return false
+	}
+	for i := 0; i < len(n); i++ {
+		r, rest, ok = nextHFSChar(rest)
+		if !ok || r > 127 || toLowerASCII(byte(r)) != n[i] {
+			return false
+		}
+	}
+	r, _, ok = nextHFSChar(rest)
+	if !ok {
+		return false
+	}
+	return r == 0 || r == '/' || r == '\\'
+}
+
+// isNTFSDotGit is git's is_ntfs_dotgit(): ".git" or the short name "git~1",
+// either one followed only by spaces and periods.
+func isNTFSDotGit(name string) bool {
+	i := 0
+	next := func() byte {
+		if i >= len(name) {
+			return 0
+		}
+		c := name[i]
+		i++
+		return c
+	}
+	c := next()
+	switch {
+	case c == '.':
+		if !eqAnyCase(next(), 'g') || !eqAnyCase(next(), 'i') || !eqAnyCase(next(), 't') {
+			return false
+		}
+	case c == 'g' || c == 'G':
+		if !eqAnyCase(next(), 'i') || !eqAnyCase(next(), 't') || next() != '~' || next() != '1' {
+			return false
+		}
+	default:
+		return false
+	}
+	for {
+		c = next()
+		if c == 0 || c == '/' || c == '\\' || c == ':' {
+			return true
+		}
+		if c != '.' && c != ' ' {
+			return false
+		}
+	}
+}
+
+// isNTFSDotGeneric is git's is_ntfs_dot_generic(): the plain name, the regular
+// 8.3 short name, or the fall-back short name, each followed only by spaces and
+// periods.
+func isNTFSDotGeneric(name string, n needle) bool {
+	prefix := ntfsShortnamePrefix(n)
+	if len(name) > 0 && name[0] == '.' && hasPrefixFold(name[1:], string(n)) {
+		return onlySpacesAndPeriods(name, len(n)+1)
+	}
+	if len(n) >= 6 && hasPrefixFold(name, string(n)[:6]) && len(name) > 7 && name[6] == '~' &&
+		name[7] >= '1' && name[7] <= '4' {
+		return onlySpacesAndPeriods(name, 8)
+	}
+	sawTilde := false
+	for i := 0; i < 8; i++ {
+		if i >= len(name) || name[i] == 0 {
+			return false
+		}
+		switch {
+		case sawTilde:
+			if name[i] < '0' || name[i] > '9' {
+				return false
+			}
+		case name[i] == '~':
+			i++
+			if i >= len(name) || name[i] < '1' || name[i] > '9' {
+				return false
+			}
+			sawTilde = true
+		case i >= 6:
+			return false
+		case name[i]&0x80 != 0:
+			return false
+		case toLowerASCII(name[i]) != prefix[i]:
+			return false
+		}
+	}
+	return onlySpacesAndPeriods(name, 8)
+}
+
+func onlySpacesAndPeriods(name string, i int) bool {
+	for ; i < len(name); i++ {
+		c := name[i]
+		if c == ':' {
+			return true
+		}
+		if c != ' ' && c != '.' {
+			return false
+		}
+	}
+	return true
+}
+
+// isExt4DotGeneric reports whether an ext4 directory with the casefold feature
+// would resolve name to the control name. ext4 compares names under Unicode
+// case folding, which reaches past the ASCII folding the NTFS check does: the
+// long s U+017F folds to "s", so ".gitmoduleſ" opens .gitmodules there.
+func isExt4DotGeneric(name string, n needle) bool {
+	if !utf8.ValidString(name) {
+		return false
+	}
+	return strings.EqualFold(name, "."+string(n))
+}
+
+// isZFSDotGeneric reports whether a ZFS dataset that normalizes names would
+// resolve name to the control name. Comparing under NFKD covers every
+// normalization= setting at once, because two names equal under formC, formD,
+// or formKC are equal under formKD too. Folding case on top covers
+// casesensitivity=insensitive and =mixed.
+func isZFSDotGeneric(name string, n needle) bool {
+	if !utf8.ValidString(name) {
+		return false
+	}
+	return strings.EqualFold(norm.NFKD.String(name), "."+string(n))
+}
+
+func eqAnyCase(c, lower byte) bool { return toLowerASCII(c) == lower }
+
+func toLowerASCII(c byte) byte {
+	if c >= 'A' && c <= 'Z' {
+		return c + 'a' - 'A'
+	}
+	return c
+}
+
+func hasPrefixFold(s, prefix string) bool {
+	if len(s) < len(prefix) {
+		return false
+	}
+	for i := 0; i < len(prefix); i++ {
+		if toLowerASCII(s[i]) != prefix[i] {
+			return false
+		}
+	}
+	return true
+}
