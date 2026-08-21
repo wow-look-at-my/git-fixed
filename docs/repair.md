@@ -162,6 +162,20 @@ reports the first route to each, where a search reports every route. That is the
 
 A run that stops part way hands back nothing. It checked part of the repository, so none of it may be taken on trust.
 
+What it is worth, over 1,241,680 objects on four cores, against the same tool before the fsck handed anything over:
+
+| the repository                  | before        | after         |
+|---------------------------------|---------------|---------------|
+| whole                           | 3.47s / 544 MB | 3.14s / 500 MB |
+| one corrupt loose object nothing points at | 7.96s / 553 MB | 3.30s / 501 MB |
+| a corrupt blob at the tip       | 6.83s / 555 MB | 3.09s / 497 MB |
+
+The middle row is the shape that cost the most and deserved the least: one stray file in the object directory sent the scan back through every pack
+and then over every object a reference reaches. It now costs what a whole repository costs, because that is all there was to do.
+
+The last row is the errand. The walk read 14 objects of 1,241,684 and stopped, and still reported the route:
+`refs/heads/master -> <commit>:tip.txt`.
+
 `Verdict` in `internal/repair/repair.go` holds all of it, and `sameVerdict` in `cmd/git-fixed/fsck.go` decides whether the fsck that produced it
 asked the question this asks. A narrower fsck -- `--strict`, `--connectivity-only`, a named object -- answers something else, and its verdict is not
 used at all.
