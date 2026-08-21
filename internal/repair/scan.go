@@ -4,6 +4,7 @@ package repair
 // than as a report. Nothing here writes.
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -512,23 +513,37 @@ func (s *scanner) copiesOf(oid gitobj.OID) (files []string, corrupt bool) {
 }
 
 // walkCommit follows a commit's tree and parents.
+//
+// The links are all in the header, and the header ends at the first empty line.
+// Never split the whole object: that copies every byte of every commit message
+// into a string, to read the two lines at the top.
 func (s *scanner) walkCommit(q queued, data []byte) {
-	for _, line := range strings.Split(string(data), "\n") {
-		if line == "" {
-			break
+	for len(data) > 0 {
+		line, rest, _ := bytes.Cut(data, newline)
+		data = rest
+		if len(line) == 0 {
+			// The message starts here, and it names nothing.
+			return
 		}
-		if hex, ok := strings.CutPrefix(line, "tree "); ok {
-			if oid, ok := s.repo.Algo.Parse(strings.TrimSpace(hex)); ok {
+		if hex, ok := bytes.CutPrefix(line, []byte("tree ")); ok {
+			if oid, ok := s.parseLink(hex); ok {
 				s.want(oid, gitobj.TypeTree, q.ref, &pathNode{name: q.oid.String() + ":"})
 			}
 			continue
 		}
-		if hex, ok := strings.CutPrefix(line, "parent "); ok {
-			if oid, ok := s.repo.Algo.Parse(strings.TrimSpace(hex)); ok {
+		if hex, ok := bytes.CutPrefix(line, []byte("parent ")); ok {
+			if oid, ok := s.parseLink(hex); ok {
 				s.want(oid, gitobj.TypeCommit, q.ref, nil)
 			}
 		}
 	}
+}
+
+var newline = []byte("\n")
+
+// parseLink reads the object name off a header line.
+func (s *scanner) parseLink(hex []byte) (gitobj.OID, bool) {
+	return s.repo.Algo.Parse(string(bytes.TrimSpace(hex)))
 }
 
 // walkTree follows a tree's entries.
@@ -549,12 +564,14 @@ func (s *scanner) walkTree(q queued, data []byte) {
 
 // walkTag follows a tag to what it names.
 func (s *scanner) walkTag(q queued, data []byte) {
-	for _, line := range strings.Split(string(data), "\n") {
-		if line == "" {
-			break
+	for len(data) > 0 {
+		line, rest, _ := bytes.Cut(data, newline)
+		data = rest
+		if len(line) == 0 {
+			return
 		}
-		if hex, ok := strings.CutPrefix(line, "object "); ok {
-			if oid, ok := s.repo.Algo.Parse(strings.TrimSpace(hex)); ok {
+		if hex, ok := bytes.CutPrefix(line, []byte("object ")); ok {
+			if oid, ok := s.parseLink(hex); ok {
 				s.want(oid, gitobj.TypeAny, q.ref, nil)
 			}
 			return
