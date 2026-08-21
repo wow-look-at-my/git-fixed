@@ -3,6 +3,8 @@ package fsckcmd_test
 import (
 	"bytes"
 	"compress/zlib"
+	"crypto/sha1"
+	"encoding/binary"
 	"fmt"
 	"math/rand"
 	"os"
@@ -297,4 +299,62 @@ func TestAnIndexExtensionThisDoesNotRead(t *testing.T) {
 
 	res := sameAsGit(t, r)
 	assert.Equal(t, 0, res.Code, "an extension git reads is not a reason to refuse the index")
+}
+
+// TestAnUnknownIndexExtension covers git's rule for a name it has never seen,
+// which is the other half of the rule TestAnIndexExtensionThisDoesNotRead
+// covers. A capital first letter means the extension is optional: git skips it
+// with a note and carries on. Any other first letter means the index holds
+// something required that nobody can read, and git refuses the whole file.
+//
+// Neither half had a test. The rule was implemented backwards once already.
+func TestAnUnknownIndexExtension(t *testing.T) {
+	t.Run("optional", func(t *testing.T) {
+		gittest.RequireGit(t)
+		r := gittest.New(t)
+		r.SimpleHistory()
+		r.Git("read-tree", "HEAD")
+		addIndexExtension(t, r, "ZZZZ", []byte("whatever this is"))
+
+		res := sameAsGit(t, r)
+		assert.Equal(t, 0, res.Code, "an optional extension is not a reason to refuse the index")
+		assert.Contains(t, res.Stderr, "ignoring ZZZZ extension")
+	})
+
+	t.Run("required", func(t *testing.T) {
+		gittest.RequireGit(t)
+		r := gittest.New(t)
+		r.SimpleHistory()
+		r.Git("read-tree", "HEAD")
+		addIndexExtension(t, r, "zzzz", []byte("whatever this is"))
+
+		want := r.GitFsck()
+		got := ours(t, r.Dir)
+
+		// git dies, taking four later phases that never open the index with
+		// it. This reports the same complaint and checks the rest.
+		// see docs/exit-status.md
+		assert.Equal(t, 128, want.Code, "git's own behaviour, which this deliberately does not copy")
+		assert.Equal(t, fsckcmd.ErrorIndex, got.Code)
+		assert.Contains(t, want.Stderr, "index uses zzzz extension, which we do not understand")
+		assert.Contains(t, got.Stderr, "index uses zzzz extension, which we do not understand")
+		assert.NotContains(t, got.Stderr, "fatal:", "nothing here is fatal, so no line may say it is")
+	})
+}
+
+// addIndexExtension appends one extension record to the index git wrote, and
+// puts back the trailing checksum over the whole file.
+func addIndexExtension(t *testing.T, r *gittest.Repo, sig string, body []byte) {
+	t.Helper()
+	path := filepath.Join(r.GitDir(), "index")
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Greater(t, len(data), sha1.Size)
+
+	out := append([]byte{}, data[:len(data)-sha1.Size]...)
+	out = append(out, sig...)
+	out = binary.BigEndian.AppendUint32(out, uint32(len(body)))
+	out = append(out, body...)
+	sum := sha1.Sum(out) //nolint:gosec // git's own index checksum
+	gittest.WriteOver(t, path, append(out, sum[:]...))
 }

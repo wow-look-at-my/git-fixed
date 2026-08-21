@@ -182,6 +182,10 @@ goes to quarantine whole, and a rewritten index is version 2, which every git si
 A salvaged entry keeps the 40 bytes of stat data git recorded for it, so git does not have to read every file in the worktree again to find out
 nothing changed. An entry that came from `HEAD` has none, so git re-reads that one file once.
 
+The rewritten file carries entries and no extensions, so the cache-tree and the untracked cache do not survive it. Both are caches: git writes a new
+cache-tree on the next commit and a new untracked cache on the next `git status`, and neither records anything the entries do not. The old file is in
+quarantine either way, with its extensions in it, byte for byte.
+
 When the old file claimed more entries than it yielded, the report says how many paths are gone -- and says where their content still is. It is not
 lost: `git add` writes a blob before the index records it, so staged content is in the object database, unreferenced, and `git fsck --lost-found`
 writes it out.
