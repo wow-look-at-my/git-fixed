@@ -67,7 +67,7 @@ func openRemote(repo *gitrepo.Repo) (*remoteSource, error) {
 		return clean(fmt.Errorf("fetching from %s: %w", url, err))
 	}
 
-	db, err := odb.Open(filepath.Join(dir, "objects"), filepath.Join(dir, "objects"), repo.Algo, true)
+	db, err := odb.Open(filepath.Join(dir, "objects"), filepath.Join(dir, "objects"), repo.Algo)
 	if err != nil {
 		return clean(err)
 	}

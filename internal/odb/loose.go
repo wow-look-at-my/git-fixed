@@ -59,7 +59,7 @@ func ReadLoose(path, shown string, expected gitobj.OID, algo *gitobj.Algo, bigFi
 		res.Errors = append(res.Errors, fmt.Sprintf("unable to unpack header of %s", shown))
 		return res
 	}
-	m, err := mapReadOnly(path, hintSequential)
+	m, err := mapReadOnly(path)
 	if err != nil {
 		res.Failed = true
 		res.Errors = append(res.Errors, fmt.Sprintf("unable to mmap %s: %s", shown, errnoText(err)))

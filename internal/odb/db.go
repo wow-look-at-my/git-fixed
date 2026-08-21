@@ -39,9 +39,8 @@ type DB struct {
 	deltas *deltaCache
 }
 
-// Open maps the object directory and its alternates. The sequential flag says
-// the caller will read every pack end to end.
-func Open(objectsDir, displayDir string, algo *gitobj.Algo, sequential bool) (*DB, error) {
+// Open maps the object directory and its alternates.
+func Open(objectsDir, displayDir string, algo *gitobj.Algo) (*DB, error) {
 	db := &DB{Algo: algo, BigFileThreshold: 512 * 1024 * 1024, bad: set.New[gitobj.OID](), deltas: newDeltaCache()}
 	db.inflaters.New = func() any { return &Inflater{} }
 	seen := set.New[string]()
@@ -70,7 +69,7 @@ func Open(objectsDir, displayDir string, algo *gitobj.Algo, sequential bool) (*D
 		return nil, err
 	}
 	for _, d := range db.Dirs {
-		if err := d.loadPacks(algo, sequential); err != nil {
+		if err := d.loadPacks(algo); err != nil {
 			return nil, err
 		}
 		db.packs = append(db.packs, d.Packs...)
@@ -88,7 +87,7 @@ func (db *DB) Close() {
 // Packs lists every pack, in the order git would walk them.
 func (db *DB) Packs() []*Pack { return db.packs }
 
-func (d *Dir) loadPacks(algo *gitobj.Algo, sequential bool) error {
+func (d *Dir) loadPacks(algo *gitobj.Algo) error {
 	entries, err := os.ReadDir(filepath.Join(d.Path, "pack"))
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -110,7 +109,7 @@ func (d *Dir) loadPacks(algo *gitobj.Algo, sequential bool) error {
 	for _, n := range names {
 		file := filepath.Join(d.Path, "pack", n)
 		shown := filepath.Join(d.Display, "pack", n)
-		p, err := OpenPack(file, shown, algo, sequential)
+		p, err := OpenPack(file, shown, algo)
 		if err != nil {
 			// git skips an index it cannot map and says so once the
 			// caller asks it to verify the pack. Record the failure

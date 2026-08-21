@@ -125,7 +125,7 @@ func Run(o *Options) int {
 		fmt.Fprintf(o.Stderr, "fatal: %s\n", err)
 		return 128
 	}
-	db, err := odb.Open(repo.ObjectsDir, repo.DisplayObjectsDir, repo.Algo, !o.ConnectivityOnly)
+	db, err := odb.Open(repo.ObjectsDir, repo.DisplayObjectsDir, repo.Algo)
 	if err != nil {
 		fmt.Fprintf(o.Stderr, "fatal: %s\n", err)
 		return 128

@@ -111,7 +111,7 @@ func verifyPack(p *odb.Pack, m *progress.Meter) (BadPack, bool) {
 func rescuePack(repo *gitrepo.Repo, q *Quarantine, bad BadPack) (RescuedPack, error) {
 	out := RescuedPack{Pack: repo.Shown(bad.Pack)}
 
-	p, err := odb.OpenPack(bad.Idx, bad.Idx, repo.Algo, true)
+	p, err := odb.OpenPack(bad.Idx, bad.Idx, repo.Algo)
 	if err != nil {
 		return out, fmt.Errorf("%s: %w", out.Pack, err)
 	}

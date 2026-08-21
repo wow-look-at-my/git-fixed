@@ -68,7 +68,7 @@ func TestReadAlternates(t *testing.T) {
 func TestOpenEmptyObjectDir(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "pack"), 0o777))
-	db, err := Open(dir, ".git/objects", gitobj.SHA1, true)
+	db, err := Open(dir, ".git/objects", gitobj.SHA1)
 	require.NoError(t, err)
 	defer db.Close()
 
@@ -94,7 +94,7 @@ func TestOpenFollowsAlternates(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(main, "info"), 0o777))
 	require.NoError(t, os.WriteFile(filepath.Join(main, "info", "alternates"), []byte(alt+"\n"), 0o666))
 
-	db, err := Open(main, ".git/objects", gitobj.SHA1, true)
+	db, err := Open(main, ".git/objects", gitobj.SHA1)
 	require.NoError(t, err)
 	defer db.Close()
 	require.Len(t, db.Dirs, 2)

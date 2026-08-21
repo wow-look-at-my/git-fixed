@@ -339,7 +339,7 @@ func open(dir string) (*gitrepo.Repo, *odb.DB, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	db, err := odb.Open(repo.ObjectsDir, repo.DisplayObjectsDir, repo.Algo, false)
+	db, err := odb.Open(repo.ObjectsDir, repo.DisplayObjectsDir, repo.Algo)
 	if err != nil {
 		return nil, nil, err
 	}
