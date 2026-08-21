@@ -71,6 +71,25 @@ type Options struct {
 	// It is called from the goroutine that checked the pack.
 	PackVerified func(path string)
 
+	// ObjectDamaged, when set, is called for every object this run holds a
+	// file for and cannot produce: a loose file that will not decode, or that
+	// does not hash to its own name. reachable says whether anything the walk
+	// started from leads to it.
+	//
+	// It answers the question the status word cannot: ErrorObject is also
+	// what a commit with no author sets, and a repository is not damaged
+	// because one of its commits is badly written. Acting on the bit alone
+	// read every object a reference reaches a second time -- forty-eight
+	// minutes over a hundred million of them -- to find nothing.
+	//
+	// It is called once per damaged object, after the connectivity walk, from
+	// the goroutine that called Run.
+	ObjectDamaged func(oid gitobj.OID, reachable bool)
+
+	// Stopped, when set, is called with the message this run died on, for a
+	// caller that must not mistake an early exit for a finished check.
+	Stopped func(msg string)
+
 	// Workers is how many goroutines decode and check objects at once.
 	Workers int
 
@@ -112,6 +131,37 @@ type run struct {
 
 	pendingMu sync.Mutex
 	pending   []*objEntry
+
+	damagedMu sync.Mutex
+	damaged   []gitobj.OID
+}
+
+// noteDamaged records an object this run could not produce. There is one entry
+// per damaged object and a damaged repository has a handful, so a slice under a
+// lock costs nothing.
+func (r *run) noteDamaged(oid gitobj.OID) {
+	if r.o.ObjectDamaged == nil {
+		return
+	}
+	r.damagedMu.Lock()
+	r.damaged = append(r.damaged, oid)
+	r.damagedMu.Unlock()
+}
+
+// reportDamaged hands the caller what could not be produced, once the
+// connectivity walk has decided what reaches it.
+//
+// An object with no entry in the table is one nothing named: the object pass
+// stops before it creates one, so a corrupt file nobody points at never
+// appears here as reachable.
+func (r *run) reportDamaged() {
+	if r.o.ObjectDamaged == nil {
+		return
+	}
+	for _, oid := range r.damaged {
+		e := r.objs.Get(oid)
+		r.o.ObjectDamaged(oid, e != nil && e.Flags()&flagReachable != 0)
+	}
 }
 
 func (r *run) fail(bits uint32) { r.errors.Or(bits) }
@@ -162,6 +212,9 @@ func Run(o *Options) int {
 	die := func() int {
 		rep.Flush()
 		msg, pre := r.dying()
+		if o.Stopped != nil {
+			o.Stopped(msg)
+		}
 		if pre != "" {
 			fmt.Fprintf(o.Stderr, "error: %s\n", pre)
 		}
@@ -214,6 +267,7 @@ func Run(o *Options) int {
 	rep.Flush()
 
 	r.checkConnectivity()
+	r.reportDamaged()
 	rep.Flush()
 	if r.died() != "" {
 		return die()

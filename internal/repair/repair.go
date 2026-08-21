@@ -59,6 +59,10 @@ type Verdict struct {
 	// Verified are the packfiles that run read end to end without complaint,
 	// by path. A scan takes each of them on trust and does not read it again.
 	Verified []string
+	// Damaged are the objects that run could not produce and that something
+	// reachable wants. They are what the walk below would go looking for, so
+	// an empty list is what lets the walk be skipped.
+	Damaged []gitobj.OID
 }
 
 // verifiedPacks are the packfiles that fsck read end to end, every object in
@@ -83,10 +87,18 @@ func (v *Verdict) Whole() bool { return v != nil && v.Status == 0 }
 // ErrorReachable is git's bit for an object something reachable names and the
 // repository does not have. The walk here starts from the same references and
 // asks the same question of every object it meets, so with that bit clear --
-// and with no corrupt object or pack under it -- the walk has nothing left to
+// and with no damaged object or pack under it -- the walk has nothing left to
 // find.
+//
+// The damaged objects are a list and not a bit, because ErrorObject is the same
+// bit for a commit with no author and for a loose file that will not decode.
+// One is a badly written object and not damage at all; the other is the reason
+// this tool exists. Reading the bit sent the walk over a hundred million
+// objects to find out which.
 func (v *Verdict) refsReach() bool {
-	return v != nil && v.Status&(fsckcmd.ErrorObject|fsckcmd.ErrorPack|fsckcmd.ErrorReachable) == 0
+	return v != nil &&
+		v.Status&(fsckcmd.ErrorPack|fsckcmd.ErrorReachable) == 0 &&
+		len(v.Damaged) == 0
 }
 
 // meters is where a scan started by this run draws its progress.

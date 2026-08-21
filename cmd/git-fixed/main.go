@@ -20,6 +20,7 @@ import (
 	"sync"
 
 	"github.com/wow-look-at-my/git-fixed/internal/fsckcmd"
+	"github.com/wow-look-at-my/git-fixed/internal/gitobj"
 	"github.com/wow-look-at-my/git-fixed/internal/memwatch"
 	"github.com/wow-look-at-my/git-fixed/internal/parseopt"
 	"github.com/wow-look-at-my/git-fixed/internal/repair"
@@ -127,6 +128,20 @@ func run(args []string, stdout, stderr io.Writer) int {
 		verifiedMu.Unlock()
 	}
 
+	// The same for the other thing the status word cannot say: which objects
+	// were actually unreadable, rather than merely badly written.
+	var damaged []gitobj.OID
+	o.ObjectDamaged = func(oid gitobj.OID, reachable bool) {
+		if reachable {
+			damaged = append(damaged, oid)
+		}
+	}
+
+	// A run that stops part way has checked part of the repository, so
+	// nothing it did not reach may be taken on trust.
+	stopped := false
+	o.Stopped = func(string) { stopped = true }
+
 	// Asked before the run, not after. fsck resolves some of its options as it
 	// goes and writes them back here: with no object named it makes the index
 	// a head, so afterwards these options no longer describe the command line
@@ -139,8 +154,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	// references or caches are wrong has had every object read and approved
 	// by the fsck that found those faults.
 	var verdict *repair.Verdict
-	if reusable {
-		verdict = &repair.Verdict{Status: status, Verified: verified}
+	if reusable && !stopped {
+		verdict = &repair.Verdict{Status: status, Verified: verified, Damaged: damaged}
 	}
 
 	res, err := repair.Run(&repair.Options{

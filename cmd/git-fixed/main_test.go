@@ -391,3 +391,38 @@ func TestOneBadLooseObjectDoesNotRereadEveryPack(t *testing.T) {
 	assert.NotContains(t, got.Stderr, "Verifying packs",
 		"a corrupt loose object sent the scan back through every pack")
 }
+
+// TestACorruptObjectNobodyPointsAtDoesNotStartTheWalk is the other pass a
+// status word used to buy far too much of.
+//
+// A corrupt loose object sets ErrorObject, and so does a commit with no author.
+// One is damage and the other is a badly written object, and the bit does not
+// tell them apart. The repair scan answered it by walking every object a
+// reference reaches -- forty-eight minutes over a hundred million of them --
+// to find that nothing reaches this one at all.
+func TestACorruptObjectNobodyPointsAtDoesNotStartTheWalk(t *testing.T) {
+	r := repo(t)
+	r.Git("repack", "-adq")
+	blob := r.Blob("loose and broken\n")
+	r.Overwrite(blob, []byte("this is not a git object"))
+
+	got := invoke(t, r, "--dry-run", "--progress")
+	require.Contains(t, got.Stderr, "Checking objects",
+		"the fsck's own object phase must have run, or this proves nothing")
+	assert.NotContains(t, got.Stderr, "Checking what the references reach",
+		"nothing points at the broken object, so the walk had nothing to find")
+}
+
+// TestACorruptObjectAReferenceReachesStartsTheWalk is the other half: the
+// skip above must not cost a repair.
+func TestACorruptObjectAReferenceReachesStartsTheWalk(t *testing.T) {
+	r := repo(t)
+	blob, _, _ := r.SimpleHistory()
+	r.Overwrite(blob, []byte("this is not a git object"))
+
+	got := invoke(t, r, "--dry-run", "--progress")
+	assert.Contains(t, got.Stderr, "Checking what the references reach",
+		"a reference leads to the broken object, so the walk must go and find it")
+	assert.Contains(t, got.Stdout, blob.String(),
+		"the object a reference cannot reach must be reported")
+}
