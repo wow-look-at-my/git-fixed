@@ -99,11 +99,23 @@ type scanner struct {
 	// queue is a bag rather than a stack: the walk does not care what order
 	// it reaches objects in, and a bag shards where a single head contends.
 	queue *concurrentbag.Bag[queued]
+	// anyBad is raised the moment an object first fails to read. Until then
+	// every route offered to knownBad is about an object that is fine, and one
+	// atomic load is the whole cost of saying so. concurrentmap.IsEmpty takes a
+	// read lock on every shard to answer the same question.
+	anyBad atomic.Bool
 	// pending counts what is queued plus what a worker is still reading, so
 	// an empty bag is not mistaken for a finished walk.
 	pending atomic.Int64
 
-	meters Meters
+	// trusted holds the packs that have been read end to end, object by
+	// object, with every one of them decoding and hashing to its own name --
+	// by this scan's own pack pass, or by the fsck the caller ran before it.
+	//
+	// It is what lets the walk stop inflating blobs. nil means nothing has
+	// been read and nothing may be taken on trust.
+	trusted map[string]bool
+	meters  Meters
 }
 
 type queued struct {
@@ -204,8 +216,13 @@ func scan(repo *gitrepo.Repo, db *odb.DB, meters Meters, v *Verdict) (*Damage, e
 	}
 	d := &Damage{}
 	s.scanDerived(d)
-	if !v.packsRead() {
+	if v.packsRead() {
+		// The caller's fsck read every object in every pack and was
+		// satisfied with all of them.
+		s.trustEveryPack()
+	} else {
 		s.scanPacks(d)
+		s.trustPacksBut(d.Packs)
 	}
 	s.scanIndexes(d)
 	// scanRefs first: reading the references is what makes git's own reader
@@ -286,7 +303,9 @@ func (s *scanner) want(oid gitobj.OID, typ gitobj.Type, ref string, path *pathNo
 	if !s.seen.TryAdd(oid, true) {
 		// Record the extra need anyway: a report that names every route to a
 		// missing object is worth more than one that names the first.
-		s.addNeed(oid, Need{Ref: ref, Path: path.String()})
+		if s.knownBad(oid) {
+			s.recordNeed(oid, Need{Ref: ref, Path: path.String()})
+		}
 		return
 	}
 	// Counted before it is queued. The other order lets a worker find an
@@ -295,9 +314,54 @@ func (s *scanner) want(oid gitobj.OID, typ gitobj.Type, ref string, path *pathNo
 	s.queue.Add(queued{oid: oid, typ: typ, ref: ref, path: path})
 }
 
-// addNeed records another route to an object already known to be bad, and does
-// nothing for one that is fine.
-func (s *scanner) addNeed(oid gitobj.OID, need Need) {
+// wantEntry is want for a tree entry, which is where nearly every call comes
+// from.
+//
+// It takes the containing tree's node and the entry's own bytes instead of a
+// finished pathNode, because an object that has been queued already needs
+// neither. History shares its trees: the same subtree hangs off every commit
+// that did not change it, and the same blob hangs off thousands of trees, so
+// most calls here are about an object the walk has met before. Each of those
+// was costing a node, a string copy of the name, and a walk up the whole route
+// to build a string that was dropped on the next line. Rendering a route only
+// for an object that turns out to be bad is the whole reason pathNode exists.
+func (s *scanner) wantEntry(oid gitobj.OID, typ gitobj.Type, ref string, parent *pathNode, name []byte) {
+	if !oid.Valid() {
+		return
+	}
+	if !s.seen.TryAdd(oid, true) {
+		if s.knownBad(oid) {
+			s.recordNeed(oid, Need{Ref: ref, Path: entryPath(parent, name)})
+		}
+		return
+	}
+	s.pending.Add(1)
+	s.queue.Add(queued{oid: oid, typ: typ, ref: ref, path: &pathNode{parent: parent, name: string(name)}})
+}
+
+// entryPath renders the route to one tree entry.
+func entryPath(parent *pathNode, name []byte) string {
+	return (&pathNode{parent: parent, name: string(name)}).String()
+}
+
+// knownBad reports whether this object has already been found unreadable.
+//
+// It is one atomic load, then a read where Compute would take the shard's write
+// lock. Nearly every
+// call is about an object that is perfectly fine, and taking a write lock to
+// discover that -- once per repeated tree entry, on every worker -- serializes
+// the walk behind a map that has nothing to say.
+//
+// An object that becomes bad after this asks is missed, and was missed before:
+// the walk reads an object after every route to it has been offered, so a
+// route seen early is not held anywhere to be attached later. The object itself
+// is still reported, with the routes that came after it was read.
+func (s *scanner) knownBad(oid gitobj.OID) bool {
+	return s.anyBad.Load() && s.bad.Contains(oid)
+}
+
+// recordNeed adds another route to an object already known to be bad.
+func (s *scanner) recordNeed(oid gitobj.OID, need Need) {
 	s.bad.Compute(oid, func(old *BadObject, loaded bool) (*BadObject, bool) {
 		if !loaded {
 			// Nothing to add to, and nothing to create: this object read
@@ -334,6 +398,44 @@ func (s *scanner) walk() {
 	wg.Wait()
 }
 
+// trustEveryPack records that every pack has been read end to end.
+func (s *scanner) trustEveryPack() {
+	s.trusted = map[string]bool{}
+	for _, p := range s.db.Packs() {
+		if p.OpenErr == nil {
+			s.trusted[p.File] = true
+		}
+	}
+}
+
+// trustPacksBut records the packs this scan's own pass was satisfied with.
+func (s *scanner) trustPacksBut(bad []BadPack) {
+	s.trustEveryPack()
+	for _, b := range bad {
+		delete(s.trusted, b.Pack)
+	}
+}
+
+// provenBlob reports whether this object is a blob that has already been read
+// and hashed.
+//
+// A blob points at nothing, so the walk asks it one question: can the
+// repository produce it. A pack that has been read end to end has answered that
+// for every object in it, by decoding each one and requiring it to hash to the
+// name the index gives it. Inflating a blob again to hear the same answer is
+// the longest part of this pass, and most of a repository's bytes are blobs.
+//
+// The type comes from the object's own header rather than from the tree entry
+// that named it. A tree that calls a tree a blob is a fault of its own, and it
+// must not be able to talk the walk out of a whole subtree.
+func (s *scanner) provenBlob(oid gitobj.OID) bool {
+	if len(s.trusted) == 0 {
+		return false
+	}
+	typ, p, ok := s.db.TypeInPack(oid)
+	return ok && typ == gitobj.TypeBlob && s.trusted[p.File]
+}
+
 // walkWorker reads what the bag holds until the walk is finished.
 //
 // An empty bag does not mean the walk is over: another worker may be part way
@@ -353,6 +455,12 @@ func (s *scanner) walkWorker(m *progress.Meter) {
 			continue
 		}
 		m.Step()
+		if s.provenBlob(q.oid) {
+			// Nothing to read and nothing to follow. This is most of the
+			// repository's bytes.
+			s.pending.Add(-1)
+			continue
+		}
 		if typ, data, err := s.db.Read(q.oid); err != nil {
 			s.note(q, err)
 		} else {
@@ -385,6 +493,9 @@ func (s *scanner) note(q queued, err error) {
 		old.Needs = appendNeed(old.Needs, need)
 		return old, false
 	})
+	// Raised after the object is in the map, so a reader that sees the flag
+	// finds the object behind it.
+	s.anyBad.Store(true)
 	_ = err
 }
 
@@ -436,7 +547,7 @@ func (s *scanner) walkTree(q queued, data []byte) {
 		if e.IsDir() {
 			typ = gitobj.TypeTree
 		}
-		s.want(e.OID, typ, q.ref, &pathNode{parent: q.path, name: string(e.Name)})
+		s.wantEntry(e.OID, typ, q.ref, q.path, e.Name)
 	}
 }
 
