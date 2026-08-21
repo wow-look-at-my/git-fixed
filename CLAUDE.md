@@ -8,6 +8,9 @@ after the fsck. There is one binary and there must stay one. More commands are p
 - **A run must cost what the fsck costs.** The fsck hands the scan the packs it read end to end, the objects it could not produce, and whether that
   list is the whole of it -- so the scan re-reads neither. A status bit answers none of those: `ErrorObject` is a corrupt file and also a commit
   with no author. `repair.Verdict`, `docs/repair.md`.
+- **A pass hands the next pass what it learned.** One pass repairs one layer, so a chain of damage costs several. Each later pass carries the packs
+  the one before it read, checked by size and modification time, and starts its walk under the objects that pass put back rather than at the
+  references. Four passes used to mean four full pack reads and four full walks. `descend`, `trustUnchanged`, `docs/repair.md`.
 - **A phase that takes time draws a meter, and the meter says what the run costs.** git shows one on five phases of its fsck and this shows one on
   the same five, plus two on the repair scan, which git has nothing to copy for. Every line carries the clock and the memory high-water mark,
   because a run the kernel kills for memory never reaches the line that would have said so. `internal/progress`, `internal/memwatch`,
@@ -57,7 +60,7 @@ Not "no more than was already lost". The repository worked before it broke and m
 - `internal/progress` -- git's own meter: the same shape, the same 1% and 1s thresholds, plus an elapsed clock. `docs/progress.md`.
 - `internal/memwatch` -- the memory and swap high-water marks the meters and the closing line carry. `docs/memory.md`.
 - `internal/fsckcmd` -- the ref-consistency pass, the six object phases, the object table, the connectivity walk, the sorted reporter.
-- `internal/repair` -- the damage scan, the recovery ladder, the quarantine, the refusal to amputate. `docs/repair.md`.
+- `internal/repair` -- the damage scan, the walk, the recovery ladder, the quarantine, the refusal to amputate. `docs/repair.md`.
 - `internal/gittest` -- test repositories and the comparison against the real `git fsck`.
 
 ## Performance invariants

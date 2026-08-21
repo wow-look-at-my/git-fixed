@@ -177,18 +177,43 @@ func (r *Result) idle() bool {
 }
 
 // firstScan reads the repository, skipping what the caller's own fsck has
-// already covered. Only the first scan of a run may do that: every later one
-// follows a change this run made, which nobody has checked.
+// already covered. Only the first scan of a run may take the fsck's word about
+// the objects a reference reaches: every later one follows a change this run
+// made, and nobody has walked the repository since. A pack is different, and
+// rescan says why.
 func (o *Options) firstScan(repo *gitrepo.Repo, db *odb.DB) (*Damage, error) {
-	return scan(repo, db, o.meters(), o.Verdict)
+	return scan(repo, db, o.meters(), o.Verdict, nil)
+}
+
+// stillBad is what one pass has to try, which is what the pass before it could
+// not put back plus what looking under its work turned up.
+//
+// The two lists overlap when a corrupt entry in a pack shadows an object that
+// has just been written back: the walk reports it again and the carried list
+// already holds it. One attempt per object per pass, so the report names it
+// once.
+func stillBad(found, carried []BadObject) []BadObject {
+	out := make([]BadObject, 0, len(found)+len(carried))
+	seen := set.New[string]()
+	for _, b := range append(append([]BadObject{}, found...), carried...) {
+		if seen.Contains(b.OID.String()) {
+			continue
+		}
+		seen.Add(b.OID.String())
+		out = append(out, b)
+	}
+	return out
 }
 
 // wanted is every object a scan found damaged. It is what a remote is asked
 // for by name, so that recovering three objects out of a monorepo costs three
 // objects and not a clone of the monorepo.
-func wanted(d *Damage) []gitobj.OID {
-	out := make([]gitobj.OID, 0, len(d.Objects))
-	for _, b := range d.Objects {
+func wanted(d *Damage) []gitobj.OID { return names(d.Objects) }
+
+// names is every object in a list, by name.
+func names(bad []BadObject) []gitobj.OID {
+	out := make([]gitobj.OID, 0, len(bad))
+	for _, b := range bad {
 		out = append(out, b.OID)
 	}
 	return out
@@ -212,6 +237,16 @@ func Run(o *Options) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
+	// verified carries the packs one scan read end to end forward to the next
+	// one. A pass writes loose objects and moves whole packs away; it does not
+	// write into a pack. So every pack still standing is still the pack that
+	// was read, which rescan checks by its size and its modification time
+	// rather than assume.
+	//
+	// Without this a run of four passes read every pack in the repository four
+	// times. Over a hundred million objects that is fifteen minutes a pass,
+	// spent to reach the answer it already had.
+	verified := damage.Verified
 
 	res := &Result{}
 	if damage.Empty() {
@@ -258,10 +293,11 @@ func Run(o *Options) (*Result, error) {
 		if err != nil {
 			return nil, err
 		}
-		damage, err = Scan(repo, db, o.meters())
+		damage, err = rescan(repo, db, o.meters(), verified)
 		if err != nil {
 			return nil, err
 		}
+		verified = damage.Verified
 	}
 
 	if damage.PackedRefs != nil {
@@ -278,10 +314,11 @@ func Run(o *Options) (*Result, error) {
 		if err != nil {
 			return nil, err
 		}
-		damage, err = Scan(repo, db, o.meters())
+		damage, err = rescan(repo, db, o.meters(), verified)
 		if err != nil {
 			return nil, err
 		}
+		verified = damage.Verified
 	}
 
 	// Repair goes round until it stops making progress.
@@ -291,6 +328,11 @@ func Run(o *Options) (*Result, error) {
 	// tree itself is back. One pass therefore repairs one layer, and the loop
 	// is what reaches the bottom. It ends when a whole pass recovers nothing,
 	// which means what is left has no source.
+	//
+	// Each later pass looks under what the pass before it put back, rather than
+	// scanning the repository again. A chain of six missing objects used to
+	// cost six walks of every object every reference reaches, to find one more
+	// object each time. see descend
 	sources := NewSources(repo, db, RemotePolicy{Want: wanted(damage), EveryRef: true, Progress: o.Stderr})
 	defer sources.Close()
 
@@ -303,6 +345,18 @@ func Run(o *Options) (*Result, error) {
 	// is the real signal that a pass made no progress.
 	done := set.New[string]()
 
+	// stuck is what no source had, carried from one pass to the next.
+	//
+	// A pass used to rediscover it by scanning again, which is how it came
+	// round for another attempt. Looking under what came back does not report
+	// the layers above it, so the list is carried by hand instead. Dropping it
+	// would leave a failed run calling itself Ok.
+	var stuck []BadObject
+
+	// back is what the pass before this one put back, and where the next pass
+	// starts looking.
+	var back []BadObject
+
 	for pass := 0; ; pass++ {
 		if pass > 0 {
 			db.Close()
@@ -310,20 +364,27 @@ func Run(o *Options) (*Result, error) {
 			if err != nil {
 				return nil, err
 			}
-			damage, err = Scan(repo, db, o.meters())
+			damage, err = descend(repo, db, o.meters(), back, verified)
 			if err != nil {
 				return nil, err
 			}
-			sources.Close()
-			sources = NewSources(repo, db, RemotePolicy{Want: wanted(damage), EveryRef: true, Progress: o.Stderr})
+			verified = damage.Verified
 		}
-		if len(damage.Objects) == 0 {
-			res.Unrecovered = nil
+		todo := stillBad(damage.Objects, stuck)
+		if len(todo) == 0 {
 			break
 		}
+		if pass > 0 {
+			// The remote is asked for names, so it is asked after the pass
+			// knows all of them: what came back revealed, and what an earlier
+			// pass could not find anywhere.
+			sources.Close()
+			sources = NewSources(repo, db, RemotePolicy{Want: names(todo), EveryRef: true, Progress: o.Stderr})
+		}
 		recovered := 0
-		var stuck []BadObject
-		for _, bad := range damage.Objects {
+		back = nil
+		stuck = nil
+		for _, bad := range todo {
 			if done.Contains(bad.OID.String()) {
 				// Already put back, and still reading as damaged. Something
 				// other than the object itself is wrong -- a pack that will
@@ -355,6 +416,7 @@ func Run(o *Options) (*Result, error) {
 			}
 			done.Add(bad.OID.String())
 			res.Objects = append(res.Objects, rec)
+			back = append(back, bad)
 			recovered++
 		}
 		res.Unrecovered = stuck
