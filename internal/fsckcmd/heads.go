@@ -97,6 +97,17 @@ func (r *run) handleRef(refname string, oid gitobj.OID, broken bool) {
 		r.reparse(key, oid)
 		r.rep.Errf(key, "error: %s: invalid sha1 pointer %s", refname, oid)
 		r.fail(ErrorReachable)
+		switch {
+		case r.namedDamaged(oid):
+			// The object pass has already said this file will not
+			// produce the object it is named after.
+		case !r.db.Has(oid):
+			r.noteDamaged(oid, true)
+		default:
+			// A file is there and this run would not take it. Whatever
+			// is wrong with it, no object name says so.
+			r.notePartialDamage()
+		}
 		return
 	}
 	if r.ensureType(e) != gitobj.TypeCommit && fsck.IsBranchRef(refname) {
@@ -132,6 +143,10 @@ func (r *run) handleReflogOID(refname string, oid gitobj.OID, timestamp int64) {
 	if e == nil || e.Flags()&flagHasObj == 0 {
 		r.rep.Errf(key, "error: %s: invalid reflog entry %s", refname, oid)
 		r.fail(ErrorReachable)
+		// A reflog is a record of where a reference has been, and an entry
+		// naming an object that is gone is not a broken repository. It is
+		// also not this list's business: nothing walks from a reflog.
+		r.notePartialDamage()
 		return
 	}
 	if timestamp != 0 {

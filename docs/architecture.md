@@ -118,6 +118,10 @@ chain.
 | 4,925,280 objects | 30.38s / 1,106 MB | 12.61s / 2,074 MB | not measured   |
 | 72 x 128 MiB, one chain | 13.03s / 403 MB | 4.55s / 533 MB | 9.99s / 3,096 MB |
 
+Every row was taken on one machine and in one sitting, so the columns compare with each other and not with a number from anywhere else. The memory
+figures predate the pointer-free object entry, which took 16 bytes off each one: the same repository measures 89 MB now, against 97 MB in the table
+and a proportionally slower time on the machine that measured it.
+
 The five-million row has no before figure because the repository that produced it was built afterwards, and the run it would be compared against is
 the one that had no bound on the delta chain at all.
 
@@ -131,8 +135,13 @@ which is the number that answers for a per-object structure. The profile itself 
 its `alloc_space` and not its `inuse_space`.
 
 What is in those 327 bytes, measured over the million: the pack's layout is 64 (`packEntry` is 48 of it, and the child, parent and header links the
-rest), `objEntry` is 72, its slab and table slots about 25, and the recorded edges about 40. The delta base cache's 96 MiB is fixed and stops
-counting per object as the repository grows. Going below git means holding one structure per object instead of two -- the fsck's table and the pack's
+rest), `objEntry` is 56, its slab and table slots about 25, and the recorded edges about 40. The delta base cache's 96 MiB is fixed and stops
+counting per object as the repository grows.
+
+`objEntry` holds no pointer at all, and that is worth more than the sixteen bytes it saves. Its edges used to be a slice, so every entry carried a
+pointer for the collector to follow: on a hundred million objects that is several gigabytes to mark on every cycle, and near `GOMEMLIMIT` those
+cycles are constant. The edges come out of an arena now and an entry names its own by index, which leaves the whole table noscan.
+`internal/fsckcmd/edgearena.go`, and `TestAnObjectEntryHoldsNoPointer` guards it. Going below git means holding one structure per object instead of two -- the fsck's table and the pack's
 layout are alive at the same moment and describe the same objects -- and that is a change to the boundary between `internal/odb` and
 `internal/fsckcmd`, not a smaller field.
 
@@ -153,13 +162,14 @@ One worker over the 229,960 costs 0.92s against four workers' 0.37s, so about th
 `--strict` only changes how findings are graded: it adds no pass, and it reads nothing extra. It costs the same 2.5s as the two modes that read
 LESS, which is what says where the time goes. It is not the fsck. It is the repair scan underneath, and it is there in every row but the first.
 
-That scan verifies every pack and walks everything the references reach. `ScanTrustingFsck` skips both when the run above it was a full default fsck
-that came back clean, because such a run has already read every object and reported any that would not decode. A narrower fsck has not looked --
-`--connectivity-only` reads no object and `--no-full` skips the packs -- so the scan has to look itself, and the 2.2s is work git never does at all.
+That scan verifies every pack and walks everything the references reach, and a full default fsck has just done both. What it found is handed over
+rather than rediscovered: the packs it read end to end, the objects it could not produce, and whether that list accounts for everything. See "What
+the scan takes from the fsck" in `docs/repair.md`. A narrower fsck has not looked -- `--connectivity-only` reads no object and `--no-full` skips the
+packs -- so the scan has to look itself, and the 2.2s is work git never does at all.
 
 The narrow modes therefore pay the full damage scan to save a fraction of a full fsck, which is a bad trade for anyone who reaches for them to go
-faster. Making it a good one means letting the fsck hand its object table to the scan instead of the scan re-reading everything, which is a real
-change to the boundary between the two halves and is not attempted here.
+faster. What is still not handed over is the object table itself, with the edges the fsck recorded. The scan builds its own and re-reads every
+commit and tree to fill it, which is the last of this duplication and a real change to the boundary between the two halves.
 
 ## What is still serial
 

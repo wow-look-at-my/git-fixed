@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -58,6 +59,42 @@ type Options struct {
 	ShowProgress     bool
 	Args             []string
 
+	// PackVerified, when set, is called with the path of every packfile this
+	// run read end to end with every object in it decoding and hashing to the
+	// name its index gives it.
+	//
+	// It is for a caller that is about to make the same pass. That pass is
+	// the longest part of a repair -- twenty minutes over a hundred million
+	// objects -- and without this the only thing it could go on was the exit
+	// status, where one corrupt loose object condemns every pack to being
+	// read again.
+	//
+	// It is called from the goroutine that checked the pack.
+	PackVerified func(path string)
+
+	// ObjectsDamaged, when set, is called once with every object this run
+	// could not produce and something reachable wants: a loose file that will
+	// not decode, one that does not hash to its own name, and an object a
+	// link names that is not there at all.
+	//
+	// whole is false when the run found a fault of that kind it could not put
+	// an object name to, and the list is then not the whole of it.
+	//
+	// It answers the question the status word cannot. ErrorObject is also what
+	// a commit with no author sets, and a repository is not damaged because
+	// one of its commits is badly written; ErrorReachable is also what a
+	// reflog entry naming a pruned object sets. Acting on the bits alone read
+	// every object a reference reaches a second time -- forty-eight minutes
+	// over a hundred million of them -- to find out which.
+	//
+	// It is called after the connectivity walk, from the goroutine that called
+	// Run, and not at all by a run that stops early.
+	ObjectsDamaged func(oids []gitobj.OID, whole bool)
+
+	// Stopped, when set, is called with the message this run died on, for a
+	// caller that must not mistake an early exit for a finished check.
+	Stopped func(msg string)
+
 	// Workers is how many goroutines decode and check objects at once.
 	Workers int
 
@@ -99,6 +136,74 @@ type run struct {
 
 	pendingMu sync.Mutex
 	pending   []*objEntry
+
+	damagedMu sync.Mutex
+	damaged   []damaged
+	// partial says a fault of that kind went unnamed, so the list above does
+	// not account for everything wrong with this repository's objects.
+	partial atomic.Bool
+}
+
+// damaged is one object this run could not produce. rooted says the pass that
+// found it already knows something wants it; otherwise the connectivity walk
+// decides, and an object nothing reaches is nobody's problem.
+type damaged struct {
+	oid    gitobj.OID
+	rooted bool
+}
+
+// noteDamaged records an object this run could not produce. There is one entry
+// per damaged object and a damaged repository has a handful, so a slice under a
+// lock costs nothing.
+func (r *run) noteDamaged(oid gitobj.OID, rooted bool) {
+	if r.o.ObjectsDamaged == nil {
+		return
+	}
+	r.damagedMu.Lock()
+	r.damaged = append(r.damaged, damaged{oid: oid, rooted: rooted})
+	r.damagedMu.Unlock()
+}
+
+// namedDamaged reports whether an earlier pass already put this object on the
+// list. A damaged repository has a handful of them, so a scan is the whole
+// cost of asking.
+func (r *run) namedDamaged(oid gitobj.OID) bool {
+	r.damagedMu.Lock()
+	defer r.damagedMu.Unlock()
+	return slices.ContainsFunc(r.damaged, func(d damaged) bool { return d.oid == oid })
+}
+
+// notePartialDamage says this run found an object fault it cannot name. A
+// reference that points at an object which is there and will not parse is one:
+// something is wrong and no single object name says what.
+func (r *run) notePartialDamage() { r.partial.Store(true) }
+
+// reportDamaged hands the caller what could not be produced, once the
+// connectivity walk has decided what reaches what.
+//
+// An object nothing reaches is left off. A corrupt file in the object
+// directory that no reference leads to is a fault worth reporting -- the pass
+// that found it has already done that -- but it is not something a walk from
+// the references would ever meet, so it does not belong on a list that says
+// what such a walk will find.
+//
+// Two passes find the same missing object, the link that named it and the
+// report on the object itself, so the list is deduplicated. Whoever reads it
+// counts against it, and a name twice over would be a route that never
+// arrives.
+func (r *run) reportDamaged() {
+	if r.o.ObjectsDamaged == nil {
+		return
+	}
+	out := make([]gitobj.OID, 0, len(r.damaged))
+	for _, d := range r.damaged {
+		e := r.objs.Get(d.oid)
+		reached := d.rooted || (e != nil && e.Flags()&flagReachable != 0)
+		if reached && !slices.Contains(out, d.oid) {
+			out = append(out, d.oid)
+		}
+	}
+	r.o.ObjectsDamaged(out, !r.partial.Load())
 }
 
 func (r *run) fail(bits uint32) { r.errors.Or(bits) }
@@ -125,7 +230,7 @@ func Run(o *Options) int {
 		fmt.Fprintf(o.Stderr, "fatal: %s\n", err)
 		return 128
 	}
-	db, err := odb.Open(repo.ObjectsDir, repo.DisplayObjectsDir, repo.Algo, !o.ConnectivityOnly)
+	db, err := odb.Open(repo.ObjectsDir, repo.DisplayObjectsDir, repo.Algo)
 	if err != nil {
 		fmt.Fprintf(o.Stderr, "fatal: %s\n", err)
 		return 128
@@ -149,6 +254,9 @@ func Run(o *Options) int {
 	die := func() int {
 		rep.Flush()
 		msg, pre := r.dying()
+		if o.Stopped != nil {
+			o.Stopped(msg)
+		}
 		if pre != "" {
 			fmt.Fprintf(o.Stderr, "error: %s\n", pre)
 		}
@@ -201,6 +309,7 @@ func Run(o *Options) int {
 	rep.Flush()
 
 	r.checkConnectivity()
+	r.reportDamaged()
 	rep.Flush()
 	if r.died() != "" {
 		return die()

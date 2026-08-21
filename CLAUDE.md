@@ -5,10 +5,13 @@ after the fsck. There is one binary and there must stay one. More commands are p
 
 - **`--dry-run` is the drop-in for `git fsck`**, so its output and its exit status are git's whenever there is nothing to repair. A line printed
   there that git does not print is a bug, not a nicety.
-- **A run must cost what the fsck costs.** The scan skips the pack verification and the object walk when the caller's fsck came back clean, which is
-  the difference between 0.37s and 2.56s over 229,960 objects. Any narrower fsck pays the full scan. `repair.ScanTrustingFsck`, `docs/architecture.md`.
-- **A phase that takes time draws a meter.** git shows one on five phases of its fsck and this shows one on the same five, plus two on the repair
-  scan, which git has nothing to copy for. `internal/progress`, `docs/progress.md`.
+- **A run must cost what the fsck costs.** The fsck hands the scan the packs it read end to end, the objects it could not produce, and whether that
+  list is the whole of it -- so the scan re-reads neither. A status bit answers none of those: `ErrorObject` is a corrupt file and also a commit
+  with no author. `repair.Verdict`, `docs/repair.md`.
+- **A phase that takes time draws a meter, and the meter says what the run costs.** git shows one on five phases of its fsck and this shows one on
+  the same five, plus two on the repair scan, which git has nothing to copy for. Every line carries the clock and the memory high-water mark,
+  because a run the kernel kills for memory never reaches the line that would have said so. `internal/progress`, `internal/memwatch`,
+  `docs/progress.md`, `docs/memory.md`.
 - **Judge the fsck options before fsck runs.** `fsckcmd.Run` resolves some of them into the struct it was given -- with no object named the index
   becomes a head -- so `sameVerdict` asked afterwards answers about a command line nobody typed. `cmd/git-fixed/fsck.go`.
 
@@ -52,6 +55,7 @@ Not "no more than was already lost". The repository worked before it broke and m
 - `internal/fsck` -- the checks from `fsck.c`: trees, commits, tags, blobs, the message-id severity table.
 - `internal/gitpath` -- whether a tree entry name reaches `.git` on some filesystem.
 - `internal/progress` -- git's own meter: the same shape, the same 1% and 1s thresholds, plus an elapsed clock. `docs/progress.md`.
+- `internal/memwatch` -- the memory and swap high-water marks the meters and the closing line carry. `docs/memory.md`.
 - `internal/fsckcmd` -- the ref-consistency pass, the six object phases, the object table, the connectivity walk, the sorted reporter.
 - `internal/repair` -- the damage scan, the recovery ladder, the quarantine, the refusal to amputate. `docs/repair.md`.
 - `internal/gittest` -- test repositories and the comparison against the real `git fsck`.
@@ -66,8 +70,9 @@ Breaking one of these costs about half the run. Each is a mistake that was made 
 - **A packed read goes through the delta base cache.** Without it an object at chain depth ten costs ten inflations. `internal/odb/cache.go`.
 - **A tree is decoded once**, into a pooled slice, with entry names as `[]byte` views into the decode buffer. Copying them to strings was the single
   largest allocation source measured.
-- **Nothing with one instance per object holds a pointer.** `packEntry`, `objEntry.edges` (one `uint64` each), and the object table's slots are all
-  pointer-free, so tens of millions of them cost the collector nothing per cycle.
+- **Nothing with one instance per object holds a pointer.** `packEntry`, `objEntry` (56 bytes, its edges named by index into an arena), the edges
+  themselves and the object table's slots are all pointer-free, so tens of millions of them cost the collector nothing per cycle.
+  `TestAnObjectEntryHoldsNoPointer`, `internal/fsckcmd/edgearena.go`.
 - **The object table is not a map, and it is sized before the first write.** Object names are already uniform, so four of their bytes are the hash;
   the size comes from the pack indexes, because growing a shard rehashes it. `docs/architecture.md` has the seven that were measured and fixed.
 - **The delta walk holds one buffer per chain level, so it is bounded.** Without the budget the cost is workers times depth times object size, which
@@ -102,3 +107,4 @@ have SUCCEEDED sees a difference. `internal/odb.materializeRoot`.
 - `docs/allocation-bounds.md` -- the sizes a header may claim, and what happens to one no file could hold
 - `docs/progress.md` -- the meters, their thresholds, the clock, and which phases draw one
 - `docs/exit-status.md` -- the status bits, where git dies and this does not, and where 128 stays
+- `docs/memory.md` -- the resident, anonymous and swap marks, where they are printed, and why resident is mostly packfile

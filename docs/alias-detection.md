@@ -47,6 +47,16 @@ two names equal under formC, formD, or formKC are equal under formKD too. The ca
 
 ## Cost
 
+Every check starts at `couldReach`, which rules a name out on its first two bytes. Each of these spellings begins with a period, a tilde, the first
+two letters of an 8.3 short name (`gi` or `ma`), or a code point HFS+ ignores -- and every ignored code point is outside ASCII. Nothing any of the
+four filesystems do puts one of those at the front of a name that does not have it: a case fold and a normalization both leave an ASCII byte alone,
+and neither deletes one. So `README` is answered in two comparisons instead of six checks.
+
+It runs once per tree entry per control name, which is five times for every entry in the repository, and it was a twelfth of a whole run. Two bytes
+rather than one because `g` and `m` begin a great many ordinary names and only `gi` and `ma` begin one of these; `Makefile` and `main.go` still go
+the long way. The claim is not obvious from any one check, so a differential test sweeps both bytes against the unfiltered checks:
+`internal/gitpath/couldreach_test.go`.
+
 The two added rules cost nothing on an ordinary repository. `matches` takes an ASCII fast path first: a name with no byte above 0x7F cannot be
 normalized into a different name, and ext4's fold over ASCII is the fold the HFS test already applied, so neither new rule can find anything the two
 original ones did not. Every entry in a normal tree takes that path. A name that does contain non-ASCII bytes is checked for NFKD normality before any

@@ -69,7 +69,7 @@ type verified struct {
 func walkPack(t *testing.T, path string, workers int, budget int64) verified {
 	t.Helper()
 	p, err := odb.OpenPack(strings.TrimSuffix(path, ".pack")+".idx",
-		strings.TrimSuffix(path, ".pack")+".idx", gitobj.SHA1, true)
+		strings.TrimSuffix(path, ".pack")+".idx", gitobj.SHA1)
 	require.NoError(t, err)
 	defer p.Close()
 

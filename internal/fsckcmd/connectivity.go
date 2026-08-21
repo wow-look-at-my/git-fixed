@@ -154,7 +154,7 @@ func (r *run) traverseOne(e *objEntry) []*objEntry {
 		return nil
 	}
 	key := sortKey{phase: phaseConnectivity, oid: e.OID}
-	if edges, cached := e.Edges(); cached {
+	if edges, cached := r.objs.Edges(e); cached {
 		// Nothing to print alongside them: an object only has edges
 		// recorded once the object pass has read it, and the object pass
 		// rejects one whose links will not parse before it gets that far.
@@ -196,6 +196,9 @@ func (r *run) markLinkInto(key sortKey, parent *objEntry, typ gitobj.Type, viaTa
 			r.printableType(parent.OID, parent.Type()), r.fsck.Describe(parent.OID))
 		r.rep.Outf(key, "broken link from %7s %s", linkTypeName(typ), "unknown")
 		r.fail(ErrorReachable)
+		// The link was refused on the type it implies, so the fault is the
+		// pair and not one object. Nothing here to hand anybody a name.
+		r.notePartialDamage()
 		return sink
 	}
 	if !viaTag && target.Type() != gitobj.TypeNone && target.Type() != typ {
@@ -241,7 +244,7 @@ func (r *run) markUnreachableReferents() {
 		if typ == gitobj.TypeBlob {
 			return
 		}
-		if edges, cached := e.Edges(); cached {
+		if edges, cached := r.objs.Edges(e); cached {
 			for _, ed := range edges {
 				if ed.ok() {
 					r.objs.At(ed.index()).SetFlag(flagUsed)
@@ -277,6 +280,7 @@ func (r *run) checkReachableObject(e *objEntry) {
 	r.rep.Outf(sortKey{phase: phaseConnectivity, group: 1, oid: e.OID}, "missing %s %s",
 		r.printableType(e.OID, e.Type()), r.fsck.Describe(e.OID))
 	r.fail(ErrorReachable)
+	r.noteDamaged(e.OID, true)
 }
 
 // checkUnreachableObject reports an object nothing reaches. git shows the tips

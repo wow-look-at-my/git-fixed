@@ -8,7 +8,9 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -17,6 +19,7 @@ import (
 	"github.com/wow-look-at-my/git-fixed/internal/fsckcmd"
 	"github.com/wow-look-at-my/git-fixed/internal/gitobj"
 	"github.com/wow-look-at-my/git-fixed/internal/gittest"
+	"github.com/wow-look-at-my/git-fixed/internal/memwatch"
 )
 
 // repo builds a repository with a commit and an index, which is the shape both
@@ -341,4 +344,136 @@ func overwriteObject(t *testing.T, r *gittest.Repo, oid gitobj.OID) {
 	name := oid.String()
 	gittest.WriteOver(t, filepath.Join(r.GitDir(), "objects", name[:2], name[2:]),
 		[]byte("this is not a git object"))
+}
+
+// TestTheClosingMemoryLineRidesWithTheMeters is the compatibility half of the
+// high-water marks. What a run cost is worth saying, and a --dry-run with no
+// meters is git fsck, where a line git does not print is a bug.
+func TestTheClosingMemoryLineRidesWithTheMeters(t *testing.T) {
+	r := repo(t)
+
+	quiet := invoke(t, r, "--dry-run")
+	assert.NotContains(t, quiet.Stderr, "Peak memory:",
+		"a --dry-run with progress off prints what git fsck prints, and no more")
+	assert.NotContains(t, quiet.Stdout, "Peak memory:")
+
+	if _, ok := memwatch.Peak(); !ok {
+		t.Skip("this system publishes no memory marks, so there is no line to print")
+	}
+	loud := invoke(t, r, "--dry-run", "--progress")
+	assert.Contains(t, loud.Stderr, "Peak memory:")
+	assert.Contains(t, loud.Stderr, "resident")
+	assert.NotContains(t, loud.Stdout, "Peak memory:",
+		"the marks go to the stream the meters go to")
+}
+
+// TestOneBadLooseObjectDoesNotRereadEveryPack is the longest thing a run used
+// to do for no reason.
+//
+// The fsck reads every object in every pack and hashes each one. When it then
+// reports a corrupt LOOSE object, its status word says ErrorObject -- which
+// says nothing about the packs, and used to send the repair scan through every
+// one of them a second time. On a hundred million objects that is twenty
+// minutes to rediscover that the packs are fine.
+//
+// The meter is the evidence: the scan's pack pass draws "Verifying packs", and
+// a pass that is skipped draws nothing.
+func TestOneBadLooseObjectDoesNotRereadEveryPack(t *testing.T) {
+	r := repo(t)
+	r.Git("repack", "-adq")
+
+	// A loose object whose file is there and whose content is not the object
+	// it is named after. git fsck reports it and sets ErrorObject.
+	blob := r.Blob("loose and broken\n")
+	r.Overwrite(blob, []byte("this is not a git object"))
+
+	got := invoke(t, r, "--dry-run", "--progress")
+	require.Contains(t, got.Stderr, "Checking objects",
+		"the fsck's own object phase must have run, or this proves nothing")
+	assert.NotContains(t, got.Stderr, "Verifying packs",
+		"a corrupt loose object sent the scan back through every pack")
+}
+
+// TestACorruptObjectNobodyPointsAtDoesNotStartTheWalk is the other pass a
+// status word used to buy far too much of.
+//
+// A corrupt loose object sets ErrorObject, and so does a commit with no author.
+// One is damage and the other is a badly written object, and the bit does not
+// tell them apart. The repair scan answered it by walking every object a
+// reference reaches -- forty-eight minutes over a hundred million of them --
+// to find that nothing reaches this one at all.
+func TestACorruptObjectNobodyPointsAtDoesNotStartTheWalk(t *testing.T) {
+	r := repo(t)
+	r.Git("repack", "-adq")
+	blob := r.Blob("loose and broken\n")
+	r.Overwrite(blob, []byte("this is not a git object"))
+
+	got := invoke(t, r, "--dry-run", "--progress")
+	require.Contains(t, got.Stderr, "Checking objects",
+		"the fsck's own object phase must have run, or this proves nothing")
+	assert.NotContains(t, got.Stderr, "Checking what the references reach",
+		"nothing points at the broken object, so the walk had nothing to find")
+}
+
+// TestACorruptObjectAReferenceReachesStartsTheWalk is the other half: the
+// skip above must not cost a repair.
+func TestACorruptObjectAReferenceReachesStartsTheWalk(t *testing.T) {
+	r := repo(t)
+	blob, _, _ := r.SimpleHistory()
+	r.Overwrite(blob, []byte("this is not a git object"))
+
+	got := invoke(t, r, "--dry-run", "--progress")
+	assert.Contains(t, got.Stderr, "Checking what the references reach",
+		"a reference leads to the broken object, so the walk must go and find it")
+	assert.Contains(t, got.Stdout, blob.String(),
+		"the object a reference cannot reach must be reported")
+}
+
+// walkReached is how far the walk's own meter got, and what it was counting
+// against. The meter redraws in place, so the last line is the final count.
+func walkReached(t *testing.T, stderr string) (reached, total int) {
+	t.Helper()
+	re := regexp.MustCompile(`Checking what the references reach: +\d+% \((\d+)/(\d+)\)`)
+	all := re.FindAllStringSubmatch(stderr, -1)
+	require.NotEmpty(t, all, "the walk drew no meter, so this proves nothing")
+	last := all[len(all)-1]
+	reached, err := strconv.Atoi(last[1])
+	require.NoError(t, err)
+	total, err = strconv.Atoi(last[2])
+	require.NoError(t, err)
+	return reached, total
+}
+
+// TestTheWalkStopsAtTheLastDamagedObject is the errand shape of the walk.
+//
+// The fsck has already read every object and named the ones it could not
+// produce. What the walk adds is the route to each of them, so it has nothing
+// left to do once it has found the last one -- and reading the rest of the
+// history to say that they are fine is the longest part of a repair.
+//
+// The history here is a chain, so the only way to the far end of it is one
+// commit at a time, while the damaged blob hangs off the tip.
+func TestTheWalkStopsAtTheLastDamagedObject(t *testing.T) {
+	gittest.RequireGit(t)
+	r := gittest.New(t)
+
+	var parents []gitobj.OID
+	for i := range 300 {
+		blob := r.Blob(fmt.Sprintf("old %d\n", i))
+		tree := r.WriteRaw("tree", gittest.Tree(gittest.TreeEntry{Mode: "100644", Name: "f", OID: blob}))
+		parents = []gitobj.OID{r.Commit(tree, parents, fmt.Sprintf("commit %d", i))}
+	}
+	broken := r.Blob("this one is damaged\n")
+	tip := r.WriteRaw("tree", gittest.Tree(gittest.TreeEntry{Mode: "100644", Name: "f", OID: broken}))
+	head := r.Commit(tip, parents, "tip")
+	r.UpdateRef("refs/heads/master", head)
+	r.SetHEAD("refs/heads/master")
+	r.Overwrite(broken, []byte("this is not a git object"))
+
+	got := invoke(t, r, "--dry-run", "--progress")
+	assert.Contains(t, got.Stdout, broken.String(), "the damaged object must still be reported")
+
+	reached, total := walkReached(t, got.Stderr)
+	assert.Less(t, reached, total/2,
+		"the walk read the whole history after it had already found what it came for")
 }

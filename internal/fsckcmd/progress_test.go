@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/wow-look-at-my/git-fixed/internal/fsckcmd"
 	"github.com/wow-look-at-my/git-fixed/internal/gittest"
+	"github.com/wow-look-at-my/git-fixed/internal/memwatch"
 )
 
 // withProgress runs a check with the meter on and returns what it wrote.
@@ -113,4 +114,21 @@ func TestProgressRedrawsInPlace(t *testing.T) {
 		assert.True(t, strings.HasSuffix(line, ", done."),
 			"an update that is not the last must not end its line: %q", line)
 	}
+}
+
+// TestProgressSaysWhatTheRunCosts covers the field the meters carry that git
+// has nothing to copy for. A run over a repository larger than the machine is
+// killed part way through, and the last line drawn is the whole of what is
+// left to diagnose it by.
+func TestProgressSaysWhatTheRunCosts(t *testing.T) {
+	gittest.RequireGit(t)
+	if _, ok := memwatch.Peak(); !ok {
+		t.Skip("this system publishes no memory marks, so no meter carries one")
+	}
+	r := packedRepo(t)
+	stderr, code := withProgress(t, r.Dir)
+	assert.Equal(t, 0, code, "the repository is sound: %s", stderr)
+	assert.Regexp(t,
+		`Checking objects: 100% \(\d+/\d+\) \[\d+[smh][^]]*, peak [\d.]+ (bytes|KiB|MiB|GiB|TiB)\], done\.`,
+		stderr, "every meter line says the clock and the high-water mark")
 }

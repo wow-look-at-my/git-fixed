@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/wow-look-at-my/git-fixed/internal/fsckcmd"
 	"github.com/wow-look-at-my/git-fixed/internal/gittest"
 	"github.com/wow-look-at-my/git-fixed/internal/repair"
 )
@@ -26,11 +27,10 @@ func TestTheCallersFsckAnswerIsUsed(t *testing.T) {
 	gittest.RequireGit(t)
 	r := history(t)
 
-	lie := false
 	res, err := repair.Run(&repair.Options{
 		Dir:     r.Dir,
 		Run:     "test",
-		Healthy: &lie,
+		Verdict: &repair.Verdict{Status: fsckcmd.ErrorObject},
 		Stdout:  os.Stdout,
 		Stderr:  os.Stderr,
 	})
@@ -56,11 +56,10 @@ func TestATrustedScanStillChecksWhatFsckDoesNot(t *testing.T) {
 		[]byte("P pack-0000000000000000000000000000000000000000.pack\n\n"), 0o666))
 	require.Equal(t, 0, r.GitFsck().Code, "git must be happy here, or this proves nothing")
 
-	healthy := true
 	res, err := repair.Run(&repair.Options{
 		Dir:     r.Dir,
 		Run:     "test",
-		Healthy: &healthy,
+		Verdict: &repair.Verdict{},
 		Stdout:  os.Stdout,
 		Stderr:  os.Stderr,
 	})

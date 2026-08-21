@@ -8,6 +8,7 @@ import (
 	"sort"
 
 	"github.com/wow-look-at-my/git-fixed/internal/fsckcmd"
+	"github.com/wow-look-at-my/git-fixed/internal/gitobj"
 	"github.com/wow-look-at-my/git-fixed/internal/gitrepo"
 	"github.com/wow-look-at-my/git-fixed/internal/odb"
 	"github.com/wow-look-at-my/go-containers/set"
@@ -22,15 +23,20 @@ type Options struct {
 	// Run names the quarantine directory. The caller supplies it so a run is
 	// reproducible and so the name can be printed before the work starts.
 	Run string
-	// Healthy is what an fsck the caller already ran said, or nil when it ran
-	// none. The command runs one to report its findings, so on a repository
-	// with nothing wrong the answer is already known, and reading every
-	// object a second time to hear it again is half the run for nothing.
+	// Verdict is what an fsck the caller already ran found, or nil when it
+	// ran none. The command runs one to report git's findings, so most of
+	// what a scan would go and look at has just been looked at.
 	//
-	// It stands in only for the question verify asks. A stricter fsck, a
-	// narrower one, or one given objects to check answers a different
-	// question, so a caller that ran one of those passes nil.
-	Healthy *bool
+	// It is the whole status word, not a yes or no, because the nine bits in
+	// it answer nine different questions. A repository with a broken
+	// reference, a wrong commit-graph, or an index that will not parse says
+	// nothing whatever about its objects, and reading every object in every
+	// pack to hear that again is the longest part of the run.
+	//
+	// It stands in only for the questions a full default fsck asks. A
+	// stricter fsck, a narrower one, or one given objects to check answers
+	// different questions, so a caller that ran one of those passes nil.
+	Verdict *Verdict
 
 	// ShowProgress draws a meter over the two passes a scan spends its time
 	// in. A scan of a broken repository reads every pack and then every
@@ -39,6 +45,70 @@ type Options struct {
 
 	Stdout io.Writer
 	Stderr io.Writer
+}
+
+// Verdict is what an fsck established about a repository, as the bitmask
+// fsckcmd.Run gives back. see docs/exit-status.md
+//
+// A scan reads what the fsck already read, so every bit that is clear is a pass
+// the scan does not have to make. On the repositories this tool is for that is
+// most of the run: the two passes below take longer together than the fsck that
+// found the damage in the first place.
+type Verdict struct {
+	Status int
+	// Verified are the packfiles that run read end to end without complaint,
+	// by path. A scan takes each of them on trust and does not read it again.
+	Verified []string
+	// Damaged are the objects that run could not produce and that something
+	// reachable wants. They are what the walk below would go looking for, so
+	// an empty list is what lets the walk be skipped.
+	Damaged []gitobj.OID
+	// DamageWhole says the list above accounts for every object fault that
+	// run found. Without it the list is a start and not an answer, and the
+	// walk has to go and look for itself.
+	DamageWhole bool
+}
+
+// verifiedPacks are the packfiles that fsck read end to end, every object in
+// them decoding and hashing to the name its index gives it.
+//
+// This is per pack, where the status word is per run: one corrupt loose object
+// sets ErrorObject and says nothing whatever about the packs, and acting on the
+// status alone read every pack in the repository a second time to find that out.
+func (v *Verdict) verifiedPacks() []string {
+	if v == nil {
+		return nil
+	}
+	return v.Verified
+}
+
+// Whole reports whether the fsck found nothing at all.
+func (v *Verdict) Whole() bool { return v != nil && v.Status == 0 }
+
+// refsReach reports whether everything the references lead to was there and
+// readable.
+func (v *Verdict) refsReach() bool {
+	n, named := v.damageNamed()
+	return named && n == 0
+}
+
+// damageNamed is how many damaged objects the fsck named, and whether that list
+// is everything the walk below could find.
+//
+// The damage is a list and not a status bit, because a bit does not say what it
+// is about. ErrorObject is what a loose file that will not decode sets and also
+// what a commit with no author sets; ErrorReachable is what a missing object
+// sets and also what a reflog entry naming a pruned one sets. One of each pair
+// is the reason this tool exists and the other is not damage at all. Reading
+// the bits sent the walk over a hundred million objects to find out which.
+//
+// ErrorPack stays a bit, because a pack that failed to verify holds objects
+// nobody has read yet and no list can name them.
+func (v *Verdict) damageNamed() (int, bool) {
+	if v == nil || !v.DamageWhole || v.Status&fsckcmd.ErrorPack != 0 {
+		return 0, false
+	}
+	return len(v.Damaged), true
 }
 
 // meters is where a scan started by this run draws its progress.
@@ -110,10 +180,18 @@ func (r *Result) idle() bool {
 // already covered. Only the first scan of a run may do that: every later one
 // follows a change this run made, which nobody has checked.
 func (o *Options) firstScan(repo *gitrepo.Repo, db *odb.DB) (*Damage, error) {
-	if o.Healthy != nil && *o.Healthy {
-		return ScanTrustingFsck(repo, db)
+	return scan(repo, db, o.meters(), o.Verdict)
+}
+
+// wanted is every object a scan found damaged. It is what a remote is asked
+// for by name, so that recovering three objects out of a monorepo costs three
+// objects and not a clone of the monorepo.
+func wanted(d *Damage) []gitobj.OID {
+	out := make([]gitobj.OID, 0, len(d.Objects))
+	for _, b := range d.Objects {
+		out = append(out, b.OID)
 	}
-	return Scan(repo, db, o.meters())
+	return out
 }
 
 // Run repairs the repository and reports what it did.
@@ -141,15 +219,15 @@ func Run(o *Options) (*Result, error) {
 		// repair; fsck finds the rest. Saying "nothing to repair" off the
 		// narrower check would tell someone their repository is fine when
 		// git still refuses to use it.
-		if o.Healthy != nil {
-			res.Clean = *o.Healthy
+		if o.Verdict != nil {
+			res.Clean = o.Verdict.Whole()
 			return res, nil
 		}
 		res.Clean, err = verify(o.Dir)
 		return res, err
 	}
 	if o.DryRun {
-		return plan(repo, db, damage, res), nil
+		return plan(repo, db, damage, res, o.Stderr), nil
 	}
 
 	q := NewQuarantine(repo.CommonDir, o.Run)
@@ -213,7 +291,7 @@ func Run(o *Options) (*Result, error) {
 	// tree itself is back. One pass therefore repairs one layer, and the loop
 	// is what reaches the bottom. It ends when a whole pass recovers nothing,
 	// which means what is left has no source.
-	sources := NewSources(repo, db)
+	sources := NewSources(repo, db, RemotePolicy{Want: wanted(damage), EveryRef: true, Progress: o.Stderr})
 	defer sources.Close()
 
 	// done is every object this run has already put back.
@@ -237,7 +315,7 @@ func Run(o *Options) (*Result, error) {
 				return nil, err
 			}
 			sources.Close()
-			sources = NewSources(repo, db)
+			sources = NewSources(repo, db, RemotePolicy{Want: wanted(damage), EveryRef: true, Progress: o.Stderr})
 		}
 		if len(damage.Objects) == 0 {
 			res.Unrecovered = nil
@@ -339,7 +417,7 @@ func open(dir string) (*gitrepo.Repo, *odb.DB, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	db, err := odb.Open(repo.ObjectsDir, repo.DisplayObjectsDir, repo.Algo, false)
+	db, err := odb.Open(repo.ObjectsDir, repo.DisplayObjectsDir, repo.Algo)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -347,7 +425,7 @@ func open(dir string) (*gitrepo.Repo, *odb.DB, error) {
 }
 
 // plan fills in what a dry run would have done, without doing it.
-func plan(repo *gitrepo.Repo, db *odb.DB, damage *Damage, res *Result) *Result {
+func plan(repo *gitrepo.Repo, db *odb.DB, damage *Damage, res *Result, progress io.Writer) *Result {
 	for _, path := range damage.Derived {
 		res.Derived = append(res.Derived, repo.Shown(path))
 	}
@@ -357,7 +435,11 @@ func plan(repo *gitrepo.Repo, db *odb.DB, damage *Damage, res *Result) *Result {
 	// which is what this did -- tells someone their objects are gone while
 	// the repair that follows would have put most of them back.
 	if len(damage.Objects) > 0 {
-		src := NewSources(repo, db)
+		// A plan may ask a remote for the objects by name, which costs a
+		// round trip. It may NOT fetch every ref: that is a copy of the whole
+		// repository, and a run that promises to change nothing does not get
+		// to fill a disk. What a repair would fetch is reported instead.
+		src := NewSources(repo, db, RemotePolicy{Want: wanted(damage), Progress: progress})
 		defer src.Close()
 		for _, b := range damage.Objects {
 			f, err := src.Find(b)

@@ -69,6 +69,11 @@ The pack's own checksum, question 2 above, is one thread reading every byte of t
 the rest of the machine waiting for it, and it answers a question the object walk does not ask. It runs in its own goroutine beside the walk, so a
 pack costs whichever of the two is slower rather than their sum.
 
+That thread reads the file rather than hashing the mapping. Both give the same hash, and the mapping charges a page fault for every page of a file
+this pass reads once and never looks at again -- twenty-five million faults on a hundred-gigabyte pack, and the whole file added to the resident set
+of a process already holding the object table. The read asks for a megabyte at a time. It costs a copy the mapping does not, on the thread whose
+whole purpose is to be slower than the walk beside it. `docs/memory.md` covers what the resident set is made of.
+
 ## Big blobs
 
 An undeltified blob larger than `core.bigFileThreshold` is hashed by streaming through `StreamHash` instead of being held in memory, which is what git

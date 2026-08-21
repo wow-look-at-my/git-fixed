@@ -17,8 +17,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync"
 
 	"github.com/wow-look-at-my/git-fixed/internal/fsckcmd"
+	"github.com/wow-look-at-my/git-fixed/internal/gitobj"
+	"github.com/wow-look-at-my/git-fixed/internal/memwatch"
 	"github.com/wow-look-at-my/git-fixed/internal/parseopt"
 	"github.com/wow-look-at-my/git-fixed/internal/repair"
 )
@@ -109,6 +112,35 @@ func run(args []string, stdout, stderr io.Writer) int {
 	// only what it changed would leave nobody able to see what was wrong.
 	o := f.options(dir, rest, stdout, stderr)
 
+	// What the run cost, said once at the end, in the words the meters have
+	// been drawing all along.
+	defer reportMemory(o.ShowProgress, stderr)
+
+	// Collected while fsck runs, because it is the one thing the status word
+	// cannot say: which packs were read end to end and were fine. The repair
+	// scan is about to want exactly that, and reading them again is the
+	// longest part of a run.
+	var verified []string
+	var verifiedMu sync.Mutex
+	o.PackVerified = func(path string) {
+		verifiedMu.Lock()
+		verified = append(verified, path)
+		verifiedMu.Unlock()
+	}
+
+	// The same for the other thing the status word cannot say: which objects
+	// were actually unreadable, rather than merely badly written.
+	var damaged []gitobj.OID
+	damageWhole := false
+	o.ObjectsDamaged = func(oids []gitobj.OID, whole bool) {
+		damaged, damageWhole = oids, whole
+	}
+
+	// A run that stops part way has checked part of the repository, so
+	// nothing it did not reach may be taken on trust.
+	stopped := false
+	o.Stopped = func(string) { stopped = true }
+
 	// Asked before the run, not after. fsck resolves some of its options as it
 	// goes and writes them back here: with no object named it makes the index
 	// a head, so afterwards these options no longer describe the command line
@@ -116,17 +148,25 @@ func run(args []string, stdout, stderr io.Writer) int {
 	reusable := sameVerdict(o)
 	status := fsckcmd.Run(o)
 
-	var healthy *bool
-	if reusable {
-		asked := status == 0
-		healthy = &asked
+	// The whole status word, not a yes or no. Its bits say which of the
+	// scan's own passes have just been made for it: a repository whose
+	// references or caches are wrong has had every object read and approved
+	// by the fsck that found those faults.
+	var verdict *repair.Verdict
+	if reusable && !stopped {
+		verdict = &repair.Verdict{
+			Status:      status,
+			Verified:    verified,
+			Damaged:     damaged,
+			DamageWhole: damageWhole,
+		}
 	}
 
 	res, err := repair.Run(&repair.Options{
 		Dir:          dir,
 		DryRun:       dryRun != 0,
 		Run:          runName(),
-		Healthy:      healthy,
+		Verdict:      verdict,
 		ShowProgress: o.ShowProgress,
 		Stdout:       stdout,
 		Stderr:       stderr,
@@ -187,4 +227,23 @@ func reportRepair(res *repair.Result, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintln(stdout, "\nThe repository is whole.")
 	return 0
+}
+
+// reportMemory says what the run cost the machine at its worst moment.
+//
+// It rides with the progress meters: one switch turns both on and both go to
+// stderr. A --dry-run stands in for git fsck, and a line here that git does not
+// print would be a line in that output.
+//
+// A system that publishes no marks gets no line, as it gets no heap ceiling.
+// see docs/memory.md
+func reportMemory(show bool, stderr io.Writer) {
+	if !show {
+		return
+	}
+	marks, ok := memwatch.Peak()
+	if !ok {
+		return
+	}
+	fmt.Fprintf(stderr, "Peak memory: %s.\n", marks)
 }

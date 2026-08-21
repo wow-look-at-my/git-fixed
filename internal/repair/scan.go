@@ -4,6 +4,7 @@ package repair
 // than as a report. Nothing here writes.
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -74,9 +75,6 @@ type Damage struct {
 	Index *BadIndex
 	// PackedRefs is packed-refs when it will not parse, with the reason.
 	PackedRefs *BadPackedRefs
-	// Unreachable counts the dangling and unreachable objects, which are not
-	// damage. It is carried so a report can say so out loud.
-	Unreachable int
 }
 
 // Empty reports whether the scan found nothing to repair.
@@ -99,11 +97,32 @@ type scanner struct {
 	// queue is a bag rather than a stack: the walk does not care what order
 	// it reaches objects in, and a bag shards where a single head contends.
 	queue *concurrentbag.Bag[queued]
+	// anyBad is raised the moment an object first fails to read. Until then
+	// every route offered to knownBad is about an object that is fine, and one
+	// atomic load is the whole cost of saying so. concurrentmap.IsEmpty takes a
+	// read lock on every shard to answer the same question.
+	anyBad atomic.Bool
 	// pending counts what is queued plus what a worker is still reading, so
 	// an empty bag is not mistaken for a finished walk.
 	pending atomic.Int64
 
-	meters Meters
+	// hunt is how many damaged objects the walk is looking for, when somebody
+	// else has already found them all. Zero means the walk must read
+	// everything, because nobody knows what is out there.
+	hunt int
+	// found counts the damaged objects the walk has reached, and enough is
+	// the end of the walk. see walkWorker.
+	found atomic.Int64
+	stop  atomic.Bool
+
+	// trusted holds the packs that have been read end to end, object by
+	// object, with every one of them decoding and hashing to its own name --
+	// by this scan's own pack pass, or by the fsck the caller ran before it.
+	//
+	// It is what lets the walk stop inflating blobs. nil means nothing has
+	// been read and nothing may be taken on trust.
+	trusted map[string]bool
+	meters  Meters
 }
 
 type queued struct {
@@ -154,7 +173,7 @@ func (q queued) need() Need { return Need{Ref: q.ref, Path: q.path.String()} }
 // Scan reads the repository and reports what is damaged. meters draws the two
 // passes that take the time, or is the zero value when nobody asked.
 func Scan(repo *gitrepo.Repo, db *odb.DB, meters Meters) (*Damage, error) {
-	return scan(repo, db, meters, false)
+	return scan(repo, db, meters, nil)
 }
 
 // Meters is where a scan draws its progress. A scan of a broken repository
@@ -176,27 +195,24 @@ func (m Meters) start(title string, total int64) *progress.Meter {
 	return progress.Start(m.Stderr, title, total)
 }
 
-// ScanTrustingFsck is Scan without the two passes a clean fsck has already
-// made: verifying every packfile, and reading every object a reference leads
-// to. Those two are the whole cost of a scan, and over a healthy repository of
-// 229,960 objects they took it from 0.7s to 3.2s while finding nothing.
+// scan reads the repository, skipping the passes the caller's own fsck has
+// already made.
 //
-// The caller must have run a full default fsck and had it come back clean. That
-// run reads every object in every pack and reports any that is missing or will
-// not decode, which is exactly what the two passes look for. A narrower fsck
-// does not qualify: --connectivity-only reads no object and --no-full skips the
-// packs, so neither has looked.
+// The two it can skip are the whole cost of a scan: verifying every packfile,
+// and reading every object a reference leads to. Over a healthy repository of
+// 229,960 objects they took a scan from 0.7s to 3.2s while finding nothing, and
+// over a hundred million objects they are twenty minutes each.
+//
+// What may be skipped is decided bit by bit, because a verdict's bits answer
+// different questions. A repository whose references are broken, whose
+// commit-graph is wrong, or whose index will not parse has had every one of its
+// objects read and approved by the fsck that found those faults, and reading
+// them all again finds nothing.
 //
 // Everything else still runs, because fsck does not look at all of it. git
 // never verifies info/packs, which is a cache for dumb HTTP clients, so a
 // corrupt one leaves fsck happy and is still a file to put right.
-func ScanTrustingFsck(repo *gitrepo.Repo, db *odb.DB) (*Damage, error) {
-	// The two passes that would draw a meter are the two this skips, so a
-	// trusting scan has nothing to show and finishes in well under a second.
-	return scan(repo, db, Meters{}, true)
-}
-
-func scan(repo *gitrepo.Repo, db *odb.DB, meters Meters, fsckWasClean bool) (*Damage, error) {
+func scan(repo *gitrepo.Repo, db *odb.DB, meters Meters, v *Verdict) (*Damage, error) {
 	s := &scanner{
 		repo:   repo,
 		db:     db,
@@ -207,16 +223,24 @@ func scan(repo *gitrepo.Repo, db *odb.DB, meters Meters, fsckWasClean bool) (*Da
 	}
 	d := &Damage{}
 	s.scanDerived(d)
-	if !fsckWasClean {
-		s.scanPacks(d)
-	}
+	// Every pack the caller's fsck read end to end is a pack this does not
+	// read again, whatever else that fsck was unhappy about. One corrupt
+	// loose object used to condemn every pack in the repository to a second
+	// full read.
+	s.trustNamed(v.verifiedPacks())
+	s.scanPacks(d)
 	s.scanIndexes(d)
 	// scanRefs first: reading the references is what makes git's own reader
 	// pass over packed-refs, and its verdict on that file is what the check
 	// below reports.
 	s.scanRefs(d)
 	s.scanPackedRefs(d)
-	if !fsckWasClean {
+	// When the fsck named every damaged object, the walk is not out looking
+	// for damage: it is out looking for the route to damage somebody else
+	// found. It stops at the last one rather than reading the other hundred
+	// million objects to say nothing about them.
+	s.hunt, _ = v.damageNamed()
+	if !v.refsReach() {
 		s.walk()
 	}
 	s.collect(d)
@@ -289,7 +313,9 @@ func (s *scanner) want(oid gitobj.OID, typ gitobj.Type, ref string, path *pathNo
 	if !s.seen.TryAdd(oid, true) {
 		// Record the extra need anyway: a report that names every route to a
 		// missing object is worth more than one that names the first.
-		s.addNeed(oid, Need{Ref: ref, Path: path.String()})
+		if s.knownBad(oid) {
+			s.recordNeed(oid, Need{Ref: ref, Path: path.String()})
+		}
 		return
 	}
 	// Counted before it is queued. The other order lets a worker find an
@@ -298,9 +324,54 @@ func (s *scanner) want(oid gitobj.OID, typ gitobj.Type, ref string, path *pathNo
 	s.queue.Add(queued{oid: oid, typ: typ, ref: ref, path: path})
 }
 
-// addNeed records another route to an object already known to be bad, and does
-// nothing for one that is fine.
-func (s *scanner) addNeed(oid gitobj.OID, need Need) {
+// wantEntry is want for a tree entry, which is where nearly every call comes
+// from.
+//
+// It takes the containing tree's node and the entry's own bytes instead of a
+// finished pathNode, because an object that has been queued already needs
+// neither. History shares its trees: the same subtree hangs off every commit
+// that did not change it, and the same blob hangs off thousands of trees, so
+// most calls here are about an object the walk has met before. Each of those
+// was costing a node, a string copy of the name, and a walk up the whole route
+// to build a string that was dropped on the next line. Rendering a route only
+// for an object that turns out to be bad is the whole reason pathNode exists.
+func (s *scanner) wantEntry(oid gitobj.OID, typ gitobj.Type, ref string, parent *pathNode, name []byte) {
+	if !oid.Valid() {
+		return
+	}
+	if !s.seen.TryAdd(oid, true) {
+		if s.knownBad(oid) {
+			s.recordNeed(oid, Need{Ref: ref, Path: entryPath(parent, name)})
+		}
+		return
+	}
+	s.pending.Add(1)
+	s.queue.Add(queued{oid: oid, typ: typ, ref: ref, path: &pathNode{parent: parent, name: string(name)}})
+}
+
+// entryPath renders the route to one tree entry.
+func entryPath(parent *pathNode, name []byte) string {
+	return (&pathNode{parent: parent, name: string(name)}).String()
+}
+
+// knownBad reports whether this object has already been found unreadable.
+//
+// It is one atomic load, then a read where Compute would take the shard's write
+// lock. Nearly every
+// call is about an object that is perfectly fine, and taking a write lock to
+// discover that -- once per repeated tree entry, on every worker -- serializes
+// the walk behind a map that has nothing to say.
+//
+// An object that becomes bad after this asks is missed, and was missed before:
+// the walk reads an object after every route to it has been offered, so a
+// route seen early is not held anywhere to be attached later. The object itself
+// is still reported, with the routes that came after it was read.
+func (s *scanner) knownBad(oid gitobj.OID) bool {
+	return s.anyBad.Load() && s.bad.Contains(oid)
+}
+
+// recordNeed adds another route to an object already known to be bad.
+func (s *scanner) recordNeed(oid gitobj.OID, need Need) {
 	s.bad.Compute(oid, func(old *BadObject, loaded bool) (*BadObject, bool) {
 		if !loaded {
 			// Nothing to add to, and nothing to create: this object read
@@ -314,16 +385,25 @@ func (s *scanner) addNeed(oid gitobj.OID, need Need) {
 
 // walk reads every queued object and follows what it points at, so the scan
 // reaches everything a reference needs rather than only the tips.
+//
+// It has two shapes. With no verdict to go on it is a search, and it reads
+// everything. With one it is an errand: the fsck has already named what cannot
+// be produced, and the walk goes and finds the route to each of those and
+// stops. An errand reports the first route to each damaged object rather than
+// every route, which is the price of not reading a hundred million objects to
+// list the rest of them.
 func (s *scanner) walk() {
 	// There is no total to count against: the queue grows as the walk finds
 	// what each object points at, so the number of objects it will reach is
 	// not known until it has reached them. git's own connectivity meter
 	// counts the same way, and for the same reason.
-	// The walk reads each object it reaches once, so the repository's own
-	// object count is an upper bound on what it will read. A meter counting
-	// against it finishes at or below 100%, and until this had a total it
-	// showed a rising number that said nothing about how far along it was.
-	m := s.meters.start("Checking what the references reach", s.objectCount())
+	// The walk reads each object it reaches once, so the objects the
+	// repository holds, plus the ones somebody has already said it does not,
+	// is what it will read. Until this had a total it showed a rising number
+	// that said nothing about how far along it was. It is still an estimate:
+	// a walk with no verdict behind it meets a missing object without warning,
+	// and the meter raises its own total when that happens.
+	m := s.meters.start("Checking what the references reach", s.objectCount()+int64(s.hunt))
 	defer m.Finish()
 
 	var wg sync.WaitGroup
@@ -337,6 +417,42 @@ func (s *scanner) walk() {
 	wg.Wait()
 }
 
+// trustNamed records the packs somebody else has already read end to end.
+func (s *scanner) trustNamed(paths []string) {
+	s.trusted = make(map[string]bool, len(paths))
+	for _, p := range paths {
+		s.trusted[p] = true
+	}
+}
+
+// trust records one more pack this scan verified for itself.
+func (s *scanner) trust(path string) {
+	if s.trusted == nil {
+		s.trusted = map[string]bool{}
+	}
+	s.trusted[path] = true
+}
+
+// provenBlob reports whether this object is a blob that has already been read
+// and hashed.
+//
+// A blob points at nothing, so the walk asks it one question: can the
+// repository produce it. A pack that has been read end to end has answered that
+// for every object in it, by decoding each one and requiring it to hash to the
+// name the index gives it. Inflating a blob again to hear the same answer is
+// the longest part of this pass, and most of a repository's bytes are blobs.
+//
+// The type comes from the object's own header rather than from the tree entry
+// that named it. A tree that calls a tree a blob is a fault of its own, and it
+// must not be able to talk the walk out of a whole subtree.
+func (s *scanner) provenBlob(oid gitobj.OID) bool {
+	if len(s.trusted) == 0 {
+		return false
+	}
+	typ, p, ok := s.db.TypeInPack(oid)
+	return ok && typ == gitobj.TypeBlob && s.trusted[p.File]
+}
+
 // walkWorker reads what the bag holds until the walk is finished.
 //
 // An empty bag does not mean the walk is over: another worker may be part way
@@ -345,6 +461,12 @@ func (s *scanner) walk() {
 // "is there any more".
 func (s *scanner) walkWorker(m *progress.Meter) {
 	for {
+		if s.stop.Load() {
+			// Every object the fsck could not produce has a route to it
+			// now, and the fsck says there is nothing else to find. What
+			// is left in the bag is objects that are known to be fine.
+			return
+		}
 		q, ok := s.queue.TryTake()
 		if !ok {
 			if s.pending.Load() == 0 {
@@ -356,6 +478,12 @@ func (s *scanner) walkWorker(m *progress.Meter) {
 			continue
 		}
 		m.Step()
+		if s.provenBlob(q.oid) {
+			// Nothing to read and nothing to follow. This is most of the
+			// repository's bytes.
+			s.pending.Add(-1)
+			continue
+		}
 		if typ, data, err := s.db.Read(q.oid); err != nil {
 			s.note(q, err)
 		} else {
@@ -381,13 +509,21 @@ func (s *scanner) note(q queued, err error) {
 	// lock. A second worker reaching the same object builds the same answer
 	// and one of the two is dropped.
 	files, corrupt := s.copiesOf(q.oid)
+	first := false
 	s.bad.Compute(q.oid, func(old *BadObject, loaded bool) (*BadObject, bool) {
 		if !loaded {
 			old = &BadObject{OID: q.oid, Type: q.typ, Files: files, Corrupt: corrupt}
+			first = true
 		}
 		old.Needs = appendNeed(old.Needs, need)
 		return old, false
 	})
+	if first && s.hunt > 0 && s.found.Add(1) >= int64(s.hunt) {
+		s.stop.Store(true)
+	}
+	// Raised after the object is in the map, so a reader that sees the flag
+	// finds the object behind it.
+	s.anyBad.Store(true)
 	_ = err
 }
 
@@ -408,23 +544,37 @@ func (s *scanner) copiesOf(oid gitobj.OID) (files []string, corrupt bool) {
 }
 
 // walkCommit follows a commit's tree and parents.
+//
+// The links are all in the header, and the header ends at the first empty line.
+// Never split the whole object: that copies every byte of every commit message
+// into a string, to read the two lines at the top.
 func (s *scanner) walkCommit(q queued, data []byte) {
-	for _, line := range strings.Split(string(data), "\n") {
-		if line == "" {
-			break
+	for len(data) > 0 {
+		line, rest, _ := bytes.Cut(data, newline)
+		data = rest
+		if len(line) == 0 {
+			// The message starts here, and it names nothing.
+			return
 		}
-		if hex, ok := strings.CutPrefix(line, "tree "); ok {
-			if oid, ok := s.repo.Algo.Parse(strings.TrimSpace(hex)); ok {
+		if hex, ok := bytes.CutPrefix(line, []byte("tree ")); ok {
+			if oid, ok := s.parseLink(hex); ok {
 				s.want(oid, gitobj.TypeTree, q.ref, &pathNode{name: q.oid.String() + ":"})
 			}
 			continue
 		}
-		if hex, ok := strings.CutPrefix(line, "parent "); ok {
-			if oid, ok := s.repo.Algo.Parse(strings.TrimSpace(hex)); ok {
+		if hex, ok := bytes.CutPrefix(line, []byte("parent ")); ok {
+			if oid, ok := s.parseLink(hex); ok {
 				s.want(oid, gitobj.TypeCommit, q.ref, nil)
 			}
 		}
 	}
+}
+
+var newline = []byte("\n")
+
+// parseLink reads the object name off a header line.
+func (s *scanner) parseLink(hex []byte) (gitobj.OID, bool) {
+	return s.repo.Algo.Parse(string(bytes.TrimSpace(hex)))
 }
 
 // walkTree follows a tree's entries.
@@ -439,18 +589,20 @@ func (s *scanner) walkTree(q queued, data []byte) {
 		if e.IsDir() {
 			typ = gitobj.TypeTree
 		}
-		s.want(e.OID, typ, q.ref, &pathNode{parent: q.path, name: string(e.Name)})
+		s.wantEntry(e.OID, typ, q.ref, q.path, e.Name)
 	}
 }
 
 // walkTag follows a tag to what it names.
 func (s *scanner) walkTag(q queued, data []byte) {
-	for _, line := range strings.Split(string(data), "\n") {
-		if line == "" {
-			break
+	for len(data) > 0 {
+		line, rest, _ := bytes.Cut(data, newline)
+		data = rest
+		if len(line) == 0 {
+			return
 		}
-		if hex, ok := strings.CutPrefix(line, "object "); ok {
-			if oid, ok := s.repo.Algo.Parse(strings.TrimSpace(hex)); ok {
+		if hex, ok := bytes.CutPrefix(line, []byte("object ")); ok {
+			if oid, ok := s.parseLink(hex); ok {
 				s.want(oid, gitobj.TypeAny, q.ref, nil)
 			}
 			return

@@ -39,9 +39,8 @@ type DB struct {
 	deltas *deltaCache
 }
 
-// Open maps the object directory and its alternates. The sequential flag says
-// the caller will read every pack end to end.
-func Open(objectsDir, displayDir string, algo *gitobj.Algo, sequential bool) (*DB, error) {
+// Open maps the object directory and its alternates.
+func Open(objectsDir, displayDir string, algo *gitobj.Algo) (*DB, error) {
 	db := &DB{Algo: algo, BigFileThreshold: 512 * 1024 * 1024, bad: set.New[gitobj.OID](), deltas: newDeltaCache()}
 	db.inflaters.New = func() any { return &Inflater{} }
 	seen := set.New[string]()
@@ -70,7 +69,7 @@ func Open(objectsDir, displayDir string, algo *gitobj.Algo, sequential bool) (*D
 		return nil, err
 	}
 	for _, d := range db.Dirs {
-		if err := d.loadPacks(algo, sequential); err != nil {
+		if err := d.loadPacks(algo); err != nil {
 			return nil, err
 		}
 		db.packs = append(db.packs, d.Packs...)
@@ -88,7 +87,7 @@ func (db *DB) Close() {
 // Packs lists every pack, in the order git would walk them.
 func (db *DB) Packs() []*Pack { return db.packs }
 
-func (d *Dir) loadPacks(algo *gitobj.Algo, sequential bool) error {
+func (d *Dir) loadPacks(algo *gitobj.Algo) error {
 	entries, err := os.ReadDir(filepath.Join(d.Path, "pack"))
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -110,7 +109,7 @@ func (d *Dir) loadPacks(algo *gitobj.Algo, sequential bool) error {
 	for _, n := range names {
 		file := filepath.Join(d.Path, "pack", n)
 		shown := filepath.Join(d.Display, "pack", n)
-		p, err := OpenPack(file, shown, algo, sequential)
+		p, err := OpenPack(file, shown, algo)
 		if err != nil {
 			// git skips an index it cannot map and says so once the
 			// caller asks it to verify the pack. Record the failure
@@ -396,6 +395,46 @@ func (db *DB) Info(oid gitobj.OID) (gitobj.Type, int64, error) {
 		}
 	}
 	return gitobj.TypeNone, 0, fmt.Errorf("delta chain in %s is too deep", p.Path)
+}
+
+// TypeInPack returns a packed object's type and the pack holding it, without
+// decoding anything.
+//
+// A caller that only needs to know WHAT an object is pays a binary search and a
+// few entry headers here, against inflating the whole object. A delta's type is
+// its base's, so the chain is walked -- through headers, which is a handful of
+// bytes per level rather than a megabyte.
+//
+// ok is false for an object that is loose, missing, or in a pack that will not
+// open. Each of those is a question this cannot answer cheaply, and answering
+// it expensively is what the caller is trying to avoid.
+func (db *DB) TypeInPack(oid gitobj.OID) (gitobj.Type, *Pack, bool) {
+	loc, found := db.Find(oid)
+	if !found || loc.Loose {
+		return gitobj.TypeNone, nil, false
+	}
+	p, off := loc.Pack, loc.Pack.OffsetAt(loc.PackIdx)
+	for depth := 0; depth <= maxDeltaChain; depth++ {
+		h, err := p.ReadHeader(off)
+		if err != nil {
+			return gitobj.TypeNone, nil, false
+		}
+		switch h.Type {
+		case gitobj.TypeOfsDelta:
+			off = h.BaseOff
+		case gitobj.TypeRefDelta:
+			i, ok := p.Find(h.BaseOID)
+			if !ok {
+				// The base is in another pack, or nowhere. Either way
+				// this is not the cheap case.
+				return gitobj.TypeNone, nil, false
+			}
+			off = p.OffsetAt(i)
+		default:
+			return h.Type, loc.Pack, true
+		}
+	}
+	return gitobj.TypeNone, nil, false
 }
 
 // HasPacked reports whether the object is in a pack. git treats that as proof
