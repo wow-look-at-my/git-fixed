@@ -19,6 +19,7 @@ import (
 	"os"
 
 	"github.com/wow-look-at-my/git-fixed/internal/fsckcmd"
+	"github.com/wow-look-at-my/git-fixed/internal/memwatch"
 	"github.com/wow-look-at-my/git-fixed/internal/parseopt"
 	"github.com/wow-look-at-my/git-fixed/internal/repair"
 )
@@ -109,6 +110,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 	// only what it changed would leave nobody able to see what was wrong.
 	o := f.options(dir, rest, stdout, stderr)
 
+	// What the run cost, said once at the end, in the words the meters have
+	// been drawing all along.
+	defer reportMemory(o.ShowProgress, stderr)
+
 	// Asked before the run, not after. fsck resolves some of its options as it
 	// goes and writes them back here: with no object named it makes the index
 	// a head, so afterwards these options no longer describe the command line
@@ -187,4 +192,23 @@ func reportRepair(res *repair.Result, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintln(stdout, "\nThe repository is whole.")
 	return 0
+}
+
+// reportMemory says what the run cost the machine at its worst moment.
+//
+// It rides with the progress meters: one switch turns both on and both go to
+// stderr. A --dry-run stands in for git fsck, and a line here that git does not
+// print would be a line in that output.
+//
+// A system that publishes no marks gets no line, as it gets no heap ceiling.
+// see docs/memory.md
+func reportMemory(show bool, stderr io.Writer) {
+	if !show {
+		return
+	}
+	marks, ok := memwatch.Peak()
+	if !ok {
+		return
+	}
+	fmt.Fprintf(stderr, "Peak memory: %s.\n", marks)
 }

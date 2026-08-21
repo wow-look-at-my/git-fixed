@@ -17,6 +17,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/wow-look-at-my/git-fixed/internal/memwatch"
 )
 
 // tick is how often a meter is allowed to redraw. git arms a one second
@@ -47,9 +49,7 @@ type Meter struct {
 	// due is raised by the ticker, standing in for git's SIGALRM.
 	due atomic.Bool
 
-	// start is when the phase began, so every line says how long it has been
-	// running. git prints no time at all, which leaves a person watching a
-	// number climb with no idea whether it is minutes or hours from done.
+	// start is when the phase began, which is what every line reports from.
 	start time.Time
 
 	mu      sync.Mutex
@@ -163,9 +163,9 @@ func (m *Meter) draw(n int64, end string) {
 	if m.total > 0 {
 		p := n * 100 / m.total
 		m.pct.Store(int32(p))
-		counters = fmt.Sprintf("%3d%% (%d/%d) %s", p, n, m.total, elapsed(time.Since(m.start)))
+		counters = fmt.Sprintf("%3d%% (%d/%d) %s", p, n, m.total, m.status())
 	} else {
-		counters = fmt.Sprintf("%d %s", n, elapsed(time.Since(m.start)))
+		counters = fmt.Sprintf("%d %s", n, m.status())
 	}
 	// A shorter line than the last one leaves the tail of the last one on
 	// screen, so it is painted over with spaces.
@@ -199,16 +199,32 @@ func (m *Meter) Finish() {
 	m.draw(m.count.Load(), ", done.")
 }
 
+// status is the bracketed field after the count: how long this phase has been
+// running, and what the run has cost the machine at its worst moment.
+//
+// git prints neither. Without the clock a person watches a number climb with no
+// idea whether it is minutes or hours from the end, and without the mark no idea
+// whether the machine will last that long. A run the kernel kills for memory
+// never reaches the closing line that would have said so, which is why the mark
+// is drawn here and not only there.
+func (m *Meter) status() string {
+	s := elapsed(time.Since(m.start))
+	if marks, ok := memwatch.Peak(); ok {
+		s += ", peak " + marks.Short()
+	}
+	return "[" + s + "]"
+}
+
 // elapsed renders how long a phase has been running, in the widest unit that
 // has a whole number in it. A fixed unit is either three digits of seconds or
 // a leading zero on everything short.
 func elapsed(d time.Duration) string {
 	switch s := int64(d.Seconds()); {
 	case s < 60:
-		return fmt.Sprintf("[%ds]", s)
+		return fmt.Sprintf("%ds", s)
 	case s < 3600:
-		return fmt.Sprintf("[%dm%02ds]", s/60, s%60)
+		return fmt.Sprintf("%dm%02ds", s/60, s%60)
 	default:
-		return fmt.Sprintf("[%dh%02dm]", s/3600, s%3600/60)
+		return fmt.Sprintf("%dh%02dm", s/3600, s%3600/60)
 	}
 }

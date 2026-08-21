@@ -17,6 +17,7 @@ import (
 	"github.com/wow-look-at-my/git-fixed/internal/fsckcmd"
 	"github.com/wow-look-at-my/git-fixed/internal/gitobj"
 	"github.com/wow-look-at-my/git-fixed/internal/gittest"
+	"github.com/wow-look-at-my/git-fixed/internal/memwatch"
 )
 
 // repo builds a repository with a commit and an index, which is the shape both
@@ -341,4 +342,25 @@ func overwriteObject(t *testing.T, r *gittest.Repo, oid gitobj.OID) {
 	name := oid.String()
 	gittest.WriteOver(t, filepath.Join(r.GitDir(), "objects", name[:2], name[2:]),
 		[]byte("this is not a git object"))
+}
+
+// TestTheClosingMemoryLineRidesWithTheMeters is the compatibility half of the
+// high-water marks. What a run cost is worth saying, and a --dry-run with no
+// meters is git fsck, where a line git does not print is a bug.
+func TestTheClosingMemoryLineRidesWithTheMeters(t *testing.T) {
+	r := repo(t)
+
+	quiet := invoke(t, r, "--dry-run")
+	assert.NotContains(t, quiet.Stderr, "Peak memory:",
+		"a --dry-run with progress off prints what git fsck prints, and no more")
+	assert.NotContains(t, quiet.Stdout, "Peak memory:")
+
+	if _, ok := memwatch.Peak(); !ok {
+		t.Skip("this system publishes no memory marks, so there is no line to print")
+	}
+	loud := invoke(t, r, "--dry-run", "--progress")
+	assert.Contains(t, loud.Stderr, "Peak memory:")
+	assert.Contains(t, loud.Stderr, "resident")
+	assert.NotContains(t, loud.Stdout, "Peak memory:",
+		"the marks go to the stream the meters go to")
 }
