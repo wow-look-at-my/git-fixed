@@ -118,6 +118,10 @@ chain.
 | 4,925,280 objects | 30.38s / 1,106 MB | 12.61s / 2,074 MB | not measured   |
 | 72 x 128 MiB, one chain | 13.03s / 403 MB | 4.55s / 533 MB | 9.99s / 3,096 MB |
 
+Every row was taken on one machine and in one sitting, so the columns compare with each other and not with a number from anywhere else. The memory
+figures predate the pointer-free object entry, which took 16 bytes off each one: the same repository measures 89 MB now, against 97 MB in the table
+and a proportionally slower time on the machine that measured it.
+
 The five-million row has no before figure because the repository that produced it was built afterwards, and the run it would be compared against is
 the one that had no bound on the delta chain at all.
 
