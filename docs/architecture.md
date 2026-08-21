@@ -131,8 +131,13 @@ which is the number that answers for a per-object structure. The profile itself 
 its `alloc_space` and not its `inuse_space`.
 
 What is in those 327 bytes, measured over the million: the pack's layout is 64 (`packEntry` is 48 of it, and the child, parent and header links the
-rest), `objEntry` is 72, its slab and table slots about 25, and the recorded edges about 40. The delta base cache's 96 MiB is fixed and stops
-counting per object as the repository grows. Going below git means holding one structure per object instead of two -- the fsck's table and the pack's
+rest), `objEntry` is 56, its slab and table slots about 25, and the recorded edges about 40. The delta base cache's 96 MiB is fixed and stops
+counting per object as the repository grows.
+
+`objEntry` holds no pointer at all, and that is worth more than the sixteen bytes it saves. Its edges used to be a slice, so every entry carried a
+pointer for the collector to follow: on a hundred million objects that is several gigabytes to mark on every cycle, and near `GOMEMLIMIT` those
+cycles are constant. The edges come out of an arena now and an entry names its own by index, which leaves the whole table noscan.
+`internal/fsckcmd/edgearena.go`, and `TestAnObjectEntryHoldsNoPointer` guards it. Going below git means holding one structure per object instead of two -- the fsck's table and the pack's
 layout are alive at the same moment and describe the same objects -- and that is a change to the boundary between `internal/odb` and
 `internal/fsckcmd`, not a smaller field.
 

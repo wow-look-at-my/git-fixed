@@ -2,6 +2,7 @@ package fsckcmd
 
 import (
 	"bytes"
+	"reflect"
 	"sort"
 	"testing"
 	"unsafe"
@@ -189,6 +190,37 @@ func TestSetMsgTypeCannotDemoteFatal(t *testing.T) {
 // repository of 37 million objects. That size was written down and was wrong,
 // which is what a test is for.
 func TestAnObjectEntryStaysSmall(t *testing.T) {
-	assert.Equal(t, uintptr(72), unsafe.Sizeof(objEntry{}))
+	assert.Equal(t, uintptr(56), unsafe.Sizeof(objEntry{}))
 	assert.Equal(t, uintptr(8), unsafe.Sizeof(edge(0)))
+}
+
+// TestAnObjectEntryHoldsNoPointer guards the other half of what an entry costs.
+//
+// A pointer here is not 8 bytes, it is 8 bytes the collector follows on every
+// cycle, times one entry per object. On a repository of a hundred million that
+// is several gigabytes of marking, over and over, exactly when the heap is
+// large enough to be collecting constantly.
+func TestAnObjectEntryHoldsNoPointer(t *testing.T) {
+	assert.False(t, holdsPointer(reflect.TypeOf(objEntry{})), "objEntry")
+	assert.False(t, holdsPointer(reflect.TypeOf(slot{})), "slot")
+	assert.False(t, holdsPointer(reflect.TypeOf(edge(0))), "edge")
+}
+
+// holdsPointer reports whether a value of this type has anything in it the
+// collector has to follow.
+func holdsPointer(t reflect.Type) bool {
+	switch t.Kind() {
+	case reflect.Pointer, reflect.UnsafePointer, reflect.Slice, reflect.String,
+		reflect.Map, reflect.Chan, reflect.Func, reflect.Interface:
+		return true
+	case reflect.Struct:
+		for i := range t.NumField() {
+			if holdsPointer(t.Field(i).Type) {
+				return true
+			}
+		}
+	case reflect.Array:
+		return holdsPointer(t.Elem())
+	}
+	return false
 }

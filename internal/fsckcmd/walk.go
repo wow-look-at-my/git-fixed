@@ -65,8 +65,9 @@ func treeLinksFrom(entries []fsck.TreeEntry, name string, named bool) []link {
 // connectivity walk keeps, without the intermediate links. A tree entry is the
 // most numerous thing in a repository, so this is the path that decides how
 // much memory a run costs.
-func (r *run) treeEdges(entries []fsck.TreeEntry) (edges []edge, broken bool) {
-	edges = allocEdges(len(entries))[:0]
+func (r *run) treeEdges(entries []fsck.TreeEntry) (span edgeSpan, edges []edge, broken bool) {
+	span, edges = r.objs.arena.alloc(len(entries))
+	edges = edges[:0]
 	for i := range entries {
 		e := &entries[i]
 		typ, follow := e.WalkKind()
@@ -84,7 +85,7 @@ func (r *run) treeEdges(entries []fsck.TreeEntry) (edges []edge, broken bool) {
 		}
 		edges = append(edges, makeEdge(idx, ok, typ, false))
 	}
-	return edges, broken
+	return span, edges, broken
 }
 
 func commitLinks(oid gitobj.OID, buf []byte, algo *gitobj.Algo, name string, named bool) ([]link, []string) {

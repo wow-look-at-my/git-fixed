@@ -154,7 +154,7 @@ func (r *run) traverseOne(e *objEntry) []*objEntry {
 		return nil
 	}
 	key := sortKey{phase: phaseConnectivity, oid: e.OID}
-	if edges, cached := e.Edges(); cached {
+	if edges, cached := r.objs.Edges(e); cached {
 		// Nothing to print alongside them: an object only has edges
 		// recorded once the object pass has read it, and the object pass
 		// rejects one whose links will not parse before it gets that far.
@@ -244,7 +244,7 @@ func (r *run) markUnreachableReferents() {
 		if typ == gitobj.TypeBlob {
 			return
 		}
-		if edges, cached := e.Edges(); cached {
+		if edges, cached := r.objs.Edges(e); cached {
 			for _, ed := range edges {
 				if ed.ok() {
 					r.objs.At(ed.index()).SetFlag(flagUsed)

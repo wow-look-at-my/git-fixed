@@ -70,8 +70,9 @@ Breaking one of these costs about half the run. Each is a mistake that was made 
 - **A packed read goes through the delta base cache.** Without it an object at chain depth ten costs ten inflations. `internal/odb/cache.go`.
 - **A tree is decoded once**, into a pooled slice, with entry names as `[]byte` views into the decode buffer. Copying them to strings was the single
   largest allocation source measured.
-- **Nothing with one instance per object holds a pointer.** `packEntry`, `objEntry.edges` (one `uint64` each), and the object table's slots are all
-  pointer-free, so tens of millions of them cost the collector nothing per cycle.
+- **Nothing with one instance per object holds a pointer.** `packEntry`, `objEntry` (56 bytes, its edges named by index into an arena), the edges
+  themselves and the object table's slots are all pointer-free, so tens of millions of them cost the collector nothing per cycle.
+  `TestAnObjectEntryHoldsNoPointer`, `internal/fsckcmd/edgearena.go`.
 - **The object table is not a map, and it is sized before the first write.** Object names are already uniform, so four of their bytes are the hash;
   the size comes from the pack indexes, because growing a shard rehashes it. `docs/architecture.md` has the seven that were measured and fixed.
 - **The delta walk holds one buffer per chain level, so it is bounded.** Without the budget the cost is workers times depth times object size, which

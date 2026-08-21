@@ -22,19 +22,34 @@ const (
 // objEntry is one object the run knows about, whether or not it exists.
 //
 // There is one of these per object, so a field here costs megabytes on a large
-// repository. It is 72 bytes.
+// repository. It is 56 bytes and holds no pointer, so a hundred million of them
+// cost the collector nothing per cycle. A slice header here was 16 of those
+// bytes and put a pointer in every entry, which is seven gigabytes for the
+// collector to walk on a repository of that size, on every cycle, near a memory
+// limit that makes those cycles constant.
+// The two edge fields are an edgeSpan, written out flat: the 33 bytes of an
+// object name leave a four-byte hole after it, and edgeLen sits in the hole.
 type objEntry struct {
-	OID   gitobj.OID
-	typ   atomic.Int32
-	flags atomic.Uint32
-
-	// edges is what the object pass found this object points at. Keeping
-	// them saves the connectivity walk from inflating and parsing every
-	// object a second time. git keeps the whole parsed object for the same
-	// reason; an edge is a fraction of the memory.
+	// edgeRef and edgeLen name what the object pass found this object points
+	// at, as a place in the run's edge arena. Keeping them saves the
+	// connectivity walk from inflating and parsing every object a second
+	// time. git keeps the whole parsed object for the same reason; an edge is
+	// a fraction of the memory.
 	//
 	// see docs/architecture.md
-	edges []edge
+	edgeRef uint64
+
+	OID     gitobj.OID
+	edgeLen uint32
+	typ     atomic.Int32
+	flags   atomic.Uint32
+}
+
+// edgeSpan names a run of edges in the arena: the slab in the high half of ref,
+// the first edge's place in that slab in the low half, and how many there are.
+type edgeSpan struct {
+	ref uint64
+	n   uint32
 }
 
 // edge is one resolved reference, in the compact form the connectivity walk
@@ -87,18 +102,21 @@ func (e edge) typ() gitobj.Type { return gitobj.Type((e & edgeTypeMask) >> edgeT
 
 // SetEdges records what the object pass found. Only the goroutine that won the
 // flagSeen race calls this.
-func (e *objEntry) SetEdges(edges []edge) {
-	e.edges = edges
+//
+// The span is written before the flag, and Edges reads the flag first, so a
+// reader that sees the flag sees the span the writer put there.
+func (e *objEntry) SetEdges(span edgeSpan) {
+	e.edgeRef, e.edgeLen = span.ref, span.n
 	e.SetFlag(flagWalked)
 }
 
 // Edges returns the recorded references, and reports whether the object pass
 // recorded any.
-func (e *objEntry) Edges() ([]edge, bool) {
+func (t *objTable) Edges(e *objEntry) ([]edge, bool) {
 	if e.Flags()&flagWalked == 0 {
 		return nil, false
 	}
-	return e.edges, true
+	return t.arena.at(edgeSpan{ref: e.edgeRef, n: e.edgeLen}), true
 }
 
 // Type returns the object's type, which may be an expectation recorded by
@@ -157,6 +175,9 @@ type objSlab = [objSlabSize]objEntry
 type objTable struct {
 	shards []objShard
 	mask   uint32
+	// arena holds every edge the object pass records, so an entry can name
+	// its own without holding a pointer to them.
+	arena edgeArena
 	// created counts objects the way git's object hash does, which is what
 	// its verbose "Checking connectivity (N objects)" line reports. It is
 	// also where the next entry's index comes from, so indices are dense
