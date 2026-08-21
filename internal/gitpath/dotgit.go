@@ -46,12 +46,56 @@ func IsDotMailmap(name []byte) bool { return matches(name, dotMailmap) }
 // IsNTFSDotGit reports only the NTFS spelling of ".git". The tree check applies
 // it on its own to each segment after a backslash, because NTFS reads a
 // backslash as a directory separator and git does not.
-func IsNTFSDotGit(name []byte) bool { return isNTFSDotGit(name) }
+func IsNTFSDotGit(name []byte) bool { return couldReach(name) && isNTFSDotGit(name) }
 
 // IsNTFSDotGitmodules reports only the NTFS spelling of ".gitmodules".
-func IsNTFSDotGitmodules(name []byte) bool { return isNTFSDotGeneric(name, dotGitmodules) }
+func IsNTFSDotGitmodules(name []byte) bool {
+	return couldReach(name) && isNTFSDotGeneric(name, dotGitmodules)
+}
+
+// couldReach rules a name out on its first two bytes.
+//
+// Every spelling below starts with a period, with a tilde, with the first two
+// letters of an 8.3 short name, or with a code point HFS+ ignores -- and every
+// ignored code point is outside ASCII. Nothing any of the four filesystems do
+// can put one of those at the front of a name that does not have it: a case
+// fold and a normalization both leave an ASCII byte alone, and neither deletes
+// one.
+//
+// Two bytes rather than one because "g" and "m" begin a great many ordinary
+// names, and only "gi" and "ma" begin one of these.
+//
+// This stands in for six checks, and it runs once per tree entry per control
+// name, which is five times for every entry in the repository. The checks it
+// replaces were a twelfth of the whole run.
+func couldReach(name []byte) bool {
+	if len(name) == 0 {
+		return false
+	}
+	c := name[0]
+	if c == '.' || c == '~' || c >= utf8.RuneSelf {
+		return true
+	}
+	// An 8.3 short name is at least three characters, and its second may be
+	// the tilde that introduces the disambiguating number.
+	if len(name) < 2 {
+		return false
+	}
+	switch toLowerASCII(c) {
+	case 'g':
+		c = toLowerASCII(name[1])
+		return c == 'i' || c == '~'
+	case 'm':
+		c = toLowerASCII(name[1])
+		return c == 'a' || c == '~'
+	}
+	return false
+}
 
 func matches(name []byte, n needle) bool {
+	if !couldReach(name) {
+		return false
+	}
 	if n == dotGit {
 		if isHFSDotGeneric(name, n) || isNTFSDotGit(name) {
 			return true
