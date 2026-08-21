@@ -151,14 +151,20 @@ func (m *Meter) report(n int64) {
 		return
 	}
 	m.due.Store(false)
-	m.draw(n, "")
+	m.draw("")
 }
 
 // draw writes one line. end is empty for an update, which returns the cursor to
 // the start of the line, and ", done." for the last one.
-func (m *Meter) draw(n int64, end string) {
+//
+// The count it draws is the one the counter holds now, not the one the caller
+// was holding when it decided to draw. Those differ under workers: two that
+// step the counter can reach the lock in the other order, and each drawing its
+// own number sends the meter backwards over work that was already done.
+func (m *Meter) draw(end string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	n := m.count.Load()
 	var counters string
 	if m.total > 0 {
 		p := n * 100 / m.total
@@ -196,7 +202,7 @@ func (m *Meter) Finish() {
 	if !shown {
 		return
 	}
-	m.draw(m.count.Load(), ", done.")
+	m.draw(", done.")
 }
 
 // status is the bracketed field after the count: how long this phase has been

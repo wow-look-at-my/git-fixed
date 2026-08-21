@@ -99,3 +99,4 @@ go-toolchain          # builds, vets, tests, and writes build/git-fixed
 - [docs/multi-pack-index.md](docs/multi-pack-index.md) -- multi-pack-index checks
 - [docs/ref-consistency.md](docs/ref-consistency.md) -- the ref database check
 - [docs/zlib-messages.md](docs/zlib-messages.md) -- reproducing zlib's own complaint
+- [docs/memory.md](docs/memory.md) -- the memory and swap high-water marks, and why resident is mostly packfile
