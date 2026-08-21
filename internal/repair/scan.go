@@ -154,7 +154,7 @@ func (q queued) need() Need { return Need{Ref: q.ref, Path: q.path.String()} }
 // Scan reads the repository and reports what is damaged. meters draws the two
 // passes that take the time, or is the zero value when nobody asked.
 func Scan(repo *gitrepo.Repo, db *odb.DB, meters Meters) (*Damage, error) {
-	return scan(repo, db, meters, false)
+	return scan(repo, db, meters, nil)
 }
 
 // Meters is where a scan draws its progress. A scan of a broken repository
@@ -176,27 +176,24 @@ func (m Meters) start(title string, total int64) *progress.Meter {
 	return progress.Start(m.Stderr, title, total)
 }
 
-// ScanTrustingFsck is Scan without the two passes a clean fsck has already
-// made: verifying every packfile, and reading every object a reference leads
-// to. Those two are the whole cost of a scan, and over a healthy repository of
-// 229,960 objects they took it from 0.7s to 3.2s while finding nothing.
+// scan reads the repository, skipping the passes the caller's own fsck has
+// already made.
 //
-// The caller must have run a full default fsck and had it come back clean. That
-// run reads every object in every pack and reports any that is missing or will
-// not decode, which is exactly what the two passes look for. A narrower fsck
-// does not qualify: --connectivity-only reads no object and --no-full skips the
-// packs, so neither has looked.
+// The two it can skip are the whole cost of a scan: verifying every packfile,
+// and reading every object a reference leads to. Over a healthy repository of
+// 229,960 objects they took a scan from 0.7s to 3.2s while finding nothing, and
+// over a hundred million objects they are twenty minutes each.
+//
+// What may be skipped is decided bit by bit, because a verdict's bits answer
+// different questions. A repository whose references are broken, whose
+// commit-graph is wrong, or whose index will not parse has had every one of its
+// objects read and approved by the fsck that found those faults, and reading
+// them all again finds nothing.
 //
 // Everything else still runs, because fsck does not look at all of it. git
 // never verifies info/packs, which is a cache for dumb HTTP clients, so a
 // corrupt one leaves fsck happy and is still a file to put right.
-func ScanTrustingFsck(repo *gitrepo.Repo, db *odb.DB) (*Damage, error) {
-	// The two passes that would draw a meter are the two this skips, so a
-	// trusting scan has nothing to show and finishes in well under a second.
-	return scan(repo, db, Meters{}, true)
-}
-
-func scan(repo *gitrepo.Repo, db *odb.DB, meters Meters, fsckWasClean bool) (*Damage, error) {
+func scan(repo *gitrepo.Repo, db *odb.DB, meters Meters, v *Verdict) (*Damage, error) {
 	s := &scanner{
 		repo:   repo,
 		db:     db,
@@ -207,7 +204,7 @@ func scan(repo *gitrepo.Repo, db *odb.DB, meters Meters, fsckWasClean bool) (*Da
 	}
 	d := &Damage{}
 	s.scanDerived(d)
-	if !fsckWasClean {
+	if !v.packsRead() {
 		s.scanPacks(d)
 	}
 	s.scanIndexes(d)
@@ -216,7 +213,7 @@ func scan(repo *gitrepo.Repo, db *odb.DB, meters Meters, fsckWasClean bool) (*Da
 	// below reports.
 	s.scanRefs(d)
 	s.scanPackedRefs(d)
-	if !fsckWasClean {
+	if !v.refsReach() {
 		s.walk()
 	}
 	s.collect(d)

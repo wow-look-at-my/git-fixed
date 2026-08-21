@@ -121,17 +121,20 @@ func run(args []string, stdout, stderr io.Writer) int {
 	reusable := sameVerdict(o)
 	status := fsckcmd.Run(o)
 
-	var healthy *bool
+	// The whole status word, not a yes or no. Its bits say which of the
+	// scan's own passes have just been made for it: a repository whose
+	// references or caches are wrong has had every object read and approved
+	// by the fsck that found those faults.
+	var verdict *repair.Verdict
 	if reusable {
-		asked := status == 0
-		healthy = &asked
+		verdict = &repair.Verdict{Status: status}
 	}
 
 	res, err := repair.Run(&repair.Options{
 		Dir:          dir,
 		DryRun:       dryRun != 0,
 		Run:          runName(),
-		Healthy:      healthy,
+		Verdict:      verdict,
 		ShowProgress: o.ShowProgress,
 		Stdout:       stdout,
 		Stderr:       stderr,

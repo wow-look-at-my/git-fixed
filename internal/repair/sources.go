@@ -42,14 +42,18 @@ type Sources struct {
 	// remote is the scratch checkout a remote's objects arrive in, opened at
 	// most once and only when a local source has already failed.
 	remote *remoteSource
+	// policy says what the remote may be asked for, and whether a fetch of
+	// every ref is allowed at all.
+	policy RemotePolicy
 	// remoteErr says why the remote could not be consulted, so a run can tell
 	// the difference between "gone" and "unreachable".
 	remoteErr error
 }
 
-// NewSources reads the index once and prepares the local sources.
-func NewSources(repo *gitrepo.Repo, db *odb.DB) *Sources {
-	s := &Sources{repo: repo, db: db, byOID: map[string][]string{}}
+// NewSources reads the index once and prepares the local sources. policy is
+// how the remote at the bottom of the ladder may be used.
+func NewSources(repo *gitrepo.Repo, db *odb.DB, policy RemotePolicy) *Sources {
+	s := &Sources{repo: repo, db: db, policy: policy, byOID: map[string][]string{}}
 	for _, wt := range repo.Worktrees() {
 		idx, _, err := repo.ReadIndex(wt.IndexPath())
 		if err != nil || idx == nil {
@@ -207,7 +211,7 @@ func (s *Sources) fromRemote(b BadObject) (gitobj.Type, []byte, bool) {
 		return 0, nil, false
 	}
 	if s.remote == nil {
-		r, err := openRemote(s.repo)
+		r, err := openRemote(s.repo, s.policy)
 		if err != nil {
 			s.remoteErr = err
 			return 0, nil, false
