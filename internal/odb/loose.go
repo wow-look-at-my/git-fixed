@@ -5,8 +5,11 @@ import (
 	"compress/zlib"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"os"
+	"strconv"
+	"sync"
 
 	"github.com/wow-look-at-my/git-fixed/internal/gitobj"
 	"github.com/wow-look-at-my/git-fixed/internal/zlibmsg"
@@ -222,14 +225,42 @@ func (res *LooseResult) streamCheck(zr io.Reader, raw []byte, br *bytes.Reader, 
 	}
 }
 
+// hasher is one lent-out digest and the room to build a header in.
+//
+// This runs once per object, which is a hundred million times on a large
+// repository. A digest of its own, a formatted header, and a slice for the
+// answer are three allocations each, and the header cost more to format than
+// it did to hash.
+type hasher struct {
+	algo *gitobj.Algo
+	h    hash.Hash
+	hdr  [64]byte
+	sum  [gitobj.MaxRawSize]byte
+}
+
+// hashers lends each worker a digest to reuse.
+var hashers sync.Pool
+
 // HashLiteral hashes content under a type name the caller supplies verbatim,
 // which is how a loose object with an unknown type still gets a name.
 func HashLiteral(algo *gitobj.Algo, typeName string, content []byte) gitobj.OID {
-	h := algo.New()
-	fmt.Fprintf(h, "%s %d", typeName, len(content))
-	h.Write([]byte{0})
-	h.Write(content)
-	return gitobj.FromBytes(h.Sum(nil))
+	hs, _ := hashers.Get().(*hasher)
+	if hs == nil || hs.algo != algo {
+		// A pool shared by a run over two repositories can hand back the
+		// other one's digest, which would answer in the wrong algorithm.
+		hs = &hasher{algo: algo, h: algo.New()}
+	} else {
+		hs.h.Reset()
+	}
+	b := append(hs.hdr[:0], typeName...)
+	b = append(b, ' ')
+	b = strconv.AppendInt(b, int64(len(content)), 10)
+	b = append(b, 0)
+	hs.h.Write(b)
+	hs.h.Write(content)
+	oid := gitobj.FromBytes(hs.h.Sum(hs.sum[:0]))
+	hashers.Put(hs)
+	return oid
 }
 
 // Hash computes an object name from a known type and its content.
