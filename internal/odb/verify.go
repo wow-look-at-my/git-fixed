@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
+	"os"
 	"runtime"
 	"slices"
 	"sort"
@@ -93,19 +94,55 @@ func (p *Pack) Verify(o VerifyOpts) bool {
 
 // checksumComplaints hashes the whole pack and compares it with the two copies
 // of that hash the repository keeps, in the order git compares them.
+//
+// It reads the file rather than hashing the mapping. Both produce the same
+// hash. The mapping costs a page fault per page of a file this pass reads once,
+// end to end, and never looks at again: on a hundred-gigabyte pack that is
+// twenty-five million faults, and a hundred gigabytes added to the resident set
+// of a process that is already holding the object table, while the object walk
+// faults the same file in for its own reasons.
+//
+// The read costs a copy the mapping does not, one megabyte at a time. That copy
+// runs at memory speed on a thread whose whole purpose is to be slower than the
+// walk beside it, and it buys back every page.
 func (p *Pack) checksumComplaints() []string {
 	var out []string
 	rawsz := int64(p.Algo.RawSize)
 	sigOff := p.dataSize - rawsz
-	h := p.Algo.New()
-	h.Write(p.data[:sigOff])
-	if !bytes.Equal(h.Sum(nil), p.data[sigOff:]) {
+	sum, err := p.hashThrough(sigOff)
+	if err != nil {
+		// The pack is mapped, so it opened once already. Something that
+		// stops it being read now is a finding, not a reason to say
+		// nothing about the checksum.
+		return []string{fmt.Sprintf("%s cannot be read: %s", p.Path, errnoText(err))}
+	}
+	if !bytes.Equal(sum, p.data[sigOff:]) {
 		out = append(out, fmt.Sprintf("%s pack checksum mismatch", p.Path))
 	}
 	if !bytes.Equal(p.idx[p.idxSize-2*rawsz:p.idxSize-rawsz], p.data[sigOff:]) {
 		out = append(out, fmt.Sprintf("%s pack checksum does not match its index", p.Path))
 	}
 	return out
+}
+
+// hashBuf is what makes this pass one read instead of a fault storm: the
+// kernel is asked for a megabyte at a time, in order, and the pages go nowhere
+// near this process's resident set.
+const hashBuf = 1 << 20
+
+// hashThrough hashes the first n bytes of the pack file.
+
+func (p *Pack) hashThrough(n int64) ([]byte, error) {
+	f, err := os.Open(p.File)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	h := p.Algo.New()
+	if _, err := io.CopyBuffer(h, io.LimitReader(f, n), make([]byte, hashBuf)); err != nil {
+		return nil, err
+	}
+	return h.Sum(nil), nil
 }
 
 // verifyIndexChecksum checks the index file's own trailing hash.
