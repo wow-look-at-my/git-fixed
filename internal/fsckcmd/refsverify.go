@@ -23,6 +23,13 @@ func (r *run) checkRefs() {
 	if r.o.Verbose {
 		r.rep.Verbosef("Checking ref database")
 	}
+	// git measures this phase in one step, because it hands the whole of it
+	// to "git refs verify" and cannot see inside.
+	m := r.meterOn("Checking ref database", 1)
+	defer func() {
+		m.Advance(1)
+		m.Finish()
+	}()
 	for _, wt := range r.repo.Worktrees() {
 		dir := wt.Dir
 		prefix := ""

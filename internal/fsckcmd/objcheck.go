@@ -45,8 +45,6 @@ func (r *run) checkObject(key sortKey, e *objEntry, typ gitobj.Type, buf []byte)
 	// object checks, because decoding it twice was the single largest cost
 	// of the object pass.
 	var edges []edge
-	var badLinks []link
-	var parseErrs []string
 	broken := false
 	linkCount := 0
 	if typ == gitobj.TypeTree {
@@ -56,11 +54,11 @@ func (r *run) checkObject(key sortKey, e *objEntry, typ gitobj.Type, buf []byte)
 		}
 		entries, treeErr := fsck.ParseTreeInto(*scratch, buf, r.repo.Algo)
 		*scratch = entries
-		edges, badLinks, broken = r.treeEdges(key, e.OID, entries)
+		edges, broken = r.treeEdges(entries)
 		linkCount = len(edges)
 		ret := r.fsck.TreeEntries(key, e.OID, entries, treeErr)
 		treeScratch.Put(scratch)
-		r.recordEdges(e, edges, badLinks, parseErrs)
+		r.recordEdges(e, edges)
 		if broken {
 			r.objError(key, e.OID, "broken links")
 		}
@@ -68,23 +66,23 @@ func (r *run) checkObject(key sortKey, e *objEntry, typ gitobj.Type, buf []byte)
 			return
 		}
 	} else {
-		var links []link
-		links, parseErrs = walkLinks(typ, e.OID, buf, r.repo.Algo, r.fsck.ObjectName(e.OID), r.o.NameObjects)
+		// The errors are dropped: parsable() ran this same walk before
+		// this object got here and rejected it if the walk had anything to
+		// say, which is where git rejects it too, in parse_object_buffer()
+		// before any check runs.
+		links, _ := walkLinks(typ, e.OID, buf, r.repo.Algo, r.fsck.ObjectName(e.OID), r.o.NameObjects)
 		linkCount = len(links)
-		broken = len(parseErrs) > 0
-		for _, msg := range parseErrs {
-			r.rep.Errf(key, "error: %s", msg)
-		}
+		edges = allocEdges(len(links))[:0]
 		for _, l := range links {
-			target, ok := r.objs.Lookup(l.oid, l.typ)
+			target, idx, ok := r.objs.Lookup(l.oid, l.typ)
 			if !ok {
 				broken = true
 			} else {
 				target.SetFlag(flagUsed)
 			}
-			edges = append(edges, edge{target: target, typ: l.typ, viaTag: l.viaTag})
+			edges = append(edges, makeEdge(idx, ok, l.typ, l.viaTag))
 		}
-		r.recordEdges(e, edges, badLinks, parseErrs)
+		r.recordEdges(e, edges)
 		if broken {
 			r.objError(key, e.OID, "broken links")
 		}
@@ -108,16 +106,58 @@ func (r *run) checkObject(key sortKey, e *objEntry, typ gitobj.Type, buf []byte)
 // allocate one per tree.
 var treeScratch sync.Pool
 
+// edgeChunkSize is how many edges one allocation holds.
+const edgeChunkSize = 8192
+
+// edgeChunk is a run of edges a worker hands out from.
+type edgeChunk struct {
+	buf  []edge
+	used int
+}
+
+// edgeChunks lends each worker a chunk, the way treeScratch lends it a tree.
+var edgeChunks sync.Pool
+
+// allocEdges returns room for n edges, cut from a chunk rather than allocated.
+//
+// There is one of these per object, so on a large repository this is tens of
+// millions of allocations. Each was rounded up to a size class, and each was
+// its own object for the collector to track: measured on a repository of
+// 988,000 objects, the run's live heap was 179 bytes per object and only about
+// 40 of those were edges anyone had written to.
+//
+// The returned slice has no spare capacity, so appending to it past n allocates
+// rather than writing over the next object's edges.
+func allocEdges(n int) []edge {
+	if n == 0 {
+		return nil
+	}
+	if n > edgeChunkSize {
+		// A tree with more entries than a whole chunk gets its own.
+		return make([]edge, n)
+	}
+	c, _ := edgeChunks.Get().(*edgeChunk)
+	if c == nil || len(c.buf)-c.used < n {
+		// What is left of the old chunk is dropped, which is at most one
+		// object's worth of edges out of a chunk that holds thousands.
+		c = &edgeChunk{buf: make([]edge, edgeChunkSize)}
+	}
+	out := c.buf[c.used : c.used+n : c.used+n]
+	c.used += n
+	edgeChunks.Put(c)
+	return out
+}
+
 // recordEdges keeps the references for the connectivity walk, unless the names
 // that walk prints make them useless.
-func (r *run) recordEdges(e *objEntry, edges []edge, bad []link, errs []string) {
+func (r *run) recordEdges(e *objEntry, edges []edge) {
 	if r.o.NameObjects {
 		// --name-objects builds each name from the path the walk took to
 		// reach an object, so a recorded edge cannot carry it. The walk
 		// re-reads the object in that case.
 		return
 	}
-	e.SetEdges(edges, bad, errs)
+	e.SetEdges(edges)
 }
 
 // markReachable is git's mark_object_reachable(): a root has no parent to blame

@@ -98,7 +98,11 @@ func (d *Dir) loadPacks(algo *gitobj.Algo, sequential bool) error {
 	}
 	var names []string
 	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), "pack-") && strings.HasSuffix(e.Name(), ".idx") {
+		// Any .idx here is a pack index. git's prepare_pack() asks for
+		// nothing but the suffix, and a pack whose name this skipped was
+		// a pack the run could not see at all: its objects read as
+		// missing and its damage read as a clean repository.
+		if strings.HasSuffix(e.Name(), ".idx") {
 			names = append(names, e.Name())
 		}
 	}

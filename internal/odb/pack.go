@@ -214,6 +214,12 @@ type ObjHeader struct {
 	BaseOID gitobj.OID // base name, for a ref-delta
 }
 
+// badDeltaBase is git's one complaint about a delta whose base it cannot
+// locate, from unpack_entry(). at is where the base reference starts.
+func badDeltaBase(at int64, path string) error {
+	return fmt.Errorf("failed to validate delta base reference at offset %d from %s", at, path)
+}
+
 // ReadHeader decodes the entry header at a pack offset without inflating.
 func (p *Pack) ReadHeader(off int64) (ObjHeader, error) {
 	var h ObjHeader
@@ -243,20 +249,30 @@ func (p *Pack) ReadHeader(off int64) (ObjHeader, error) {
 	h.Size = size
 	switch h.Type {
 	case gitobj.TypeOfsDelta:
+		// git reports the position the base reference starts at, not the
+		// entry's, and it reports the same line whichever way the number
+		// is wrong. get_delta_base() leaves curpos here on every failure.
+		basePos := pos
 		if c, err = p.byteAt(pos); err != nil {
 			return h, err
 		}
 		pos++
 		delta := int64(c & 0x7f)
 		for c&0x80 != 0 {
+			delta++
+			if delta <= 0 || delta&^(1<<57-1) != 0 {
+				return h, badDeltaBase(basePos, p.Path)
+			}
 			if c, err = p.byteAt(pos); err != nil {
 				return h, err
 			}
 			pos++
-			delta = (delta+1)<<7 | int64(c&0x7f)
+			delta = delta<<7 | int64(c&0x7f)
 		}
-		if delta <= 0 || delta > off {
-			return h, fmt.Errorf("delta base offset out of bound at %d in %s", off, p.Path)
+		// git's test is on the base's own offset: it must be inside the
+		// pack and before this entry.
+		if base := off - delta; base <= 0 || base >= off {
+			return h, badDeltaBase(basePos, p.Path)
 		}
 		h.BaseOff = off - delta
 	case gitobj.TypeRefDelta:
@@ -292,6 +308,12 @@ type Inflater struct {
 func (in *Inflater) Inflate(p *Pack, dataOff, size int64) ([]byte, error) {
 	if dataOff < 0 || dataOff > int64(len(p.data)) {
 		return nil, fmt.Errorf("read past the end of %s", p.Path)
+	}
+	if !plausibleSize(size, int64(len(p.data))-dataOff) {
+		// size is the entry header's word for it, and this pack does not
+		// hold enough bytes to inflate to that however it is read.
+		// see inflatebound.go
+		return nil, fmt.Errorf("object at %d in %s claims a size no stream there could hold", dataOff, p.Path)
 	}
 	in.br.Reset(p.data[dataOff:])
 	if in.zr == nil {

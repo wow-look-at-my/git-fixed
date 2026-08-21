@@ -20,12 +20,13 @@ func (r *run) checkConnectivity() {
 	if r.o.Verbose {
 		r.rep.Verbosef("Checking connectivity (%d objects)", r.objs.HashSlots())
 	}
-	all := r.objs.All()
+	n := int(r.objs.Len())
 	if r.o.Verbose {
 		// The verbose line names each object as it is checked, and that
 		// order is part of what the reader is watching, so this stays on one
 		// goroutine when it is asked for.
-		for _, e := range all {
+		for i := range n {
+			e := r.objs.At(uint32(i))
 			r.rep.Verbosef("Checking %s", r.fsck.Describe(e.OID))
 			r.checkOneObject(e)
 		}
@@ -34,7 +35,7 @@ func (r *run) checkConnectivity() {
 	// Every object in the repository passes through here. The checks touch
 	// only their own entry and the reporter, both of which are safe to share,
 	// so this runs across the workers like the phases before it.
-	r.parallel(len(all), func(i int) { r.checkOneObject(all[i]) })
+	r.parallel(n, func(i int) { r.checkOneObject(r.objs.At(uint32(i))) })
 }
 
 // checkOneObject reports on one object's reachability.
@@ -56,6 +57,10 @@ func (r *run) traverseReachable() {
 	if len(stack) == 0 {
 		return
 	}
+	// git counts the objects it walks here, with no total to measure them
+	// against, and stays quiet for a second first.
+	m := r.meterDelayed("Checking connectivity", 0)
+	defer m.Finish()
 	workers := r.o.Workers
 	if workers <= 0 {
 		workers = runtime.GOMAXPROCS(0)
@@ -64,6 +69,7 @@ func (r *run) traverseReachable() {
 		for len(stack) > 0 {
 			e := stack[len(stack)-1]
 			stack = append(stack[:len(stack)-1], r.traverseOne(e)...)
+			m.Step()
 		}
 		return
 	}
@@ -117,6 +123,7 @@ func (r *run) traverseReachable() {
 				e := local[len(local)-1]
 				local = local[:len(local)-1]
 				local = append(local, r.traverseOne(e)...)
+				m.Step()
 
 				// Hand back a surplus so the others have something to take.
 				// History is narrow in places, and a worker that hoarded its
@@ -147,17 +154,17 @@ func (r *run) traverseOne(e *objEntry) []*objEntry {
 		return nil
 	}
 	key := sortKey{phase: phaseConnectivity, oid: e.OID}
-	if edges, badLinks, parseErrs, cached := e.Edges(); cached {
-		for _, msg := range parseErrs {
-			r.rep.Errf(key, "error: %s", msg)
-		}
-		for _, l := range badLinks {
-			r.rep.Errf(key, "error: in tree %s: entry %s has bad mode %.6o",
-				r.fsck.Describe(e.OID), l.entry, l.rawMode)
-		}
+	if edges, cached := e.Edges(); cached {
+		// Nothing to print alongside them: an object only has edges
+		// recorded once the object pass has read it, and the object pass
+		// rejects one whose links will not parse before it gets that far.
 		var out []*objEntry
 		for _, ed := range edges {
-			out = r.markLinkInto(key, e, ed.typ, ed.viaTag, ed.target, ed.ok(), out)
+			var target *objEntry
+			if ed.ok() {
+				target = r.objs.At(ed.index())
+			}
+			out = r.markLinkInto(key, e, ed.typ(), ed.viaTag(), target, ed.ok(), out)
 		}
 		return out
 	}
@@ -172,15 +179,10 @@ func (r *run) traverseOne(e *objEntry) []*objEntry {
 	}
 	var out []*objEntry
 	for _, l := range links {
-		if l.badMode {
-			r.rep.Errf(key, "error: in tree %s: entry %s has bad mode %.6o",
-				r.fsck.Describe(e.OID), l.entry, l.rawMode)
-			continue
-		}
 		if l.name != "" {
 			r.fsck.PutObjectName(l.oid, "%s", l.name)
 		}
-		target, ok := r.objs.Lookup(l.oid, l.typ)
+		target, _, ok := r.objs.Lookup(l.oid, l.typ)
 		out = r.markLinkInto(key, e, l.typ, l.viaTag, target, ok, out)
 	}
 	return out
@@ -222,9 +224,8 @@ func (r *run) markLinkInto(key sortKey, parent *objEntry, typ gitobj.Type, viaTa
 // --connectivity-only needs this, because otherwise the object pass already
 // marked them.
 func (r *run) markUnreachableReferents() {
-	all := r.objs.All()
-	r.parallel(len(all), func(i int) {
-		e := all[i]
+	r.parallel(int(r.objs.Len()), func(i int) {
+		e := r.objs.At(uint32(i))
 		if e.Flags()&flagHasObj == 0 || e.Flags()&flagReachable != 0 {
 			return
 		}
@@ -240,10 +241,10 @@ func (r *run) markUnreachableReferents() {
 		if typ == gitobj.TypeBlob {
 			return
 		}
-		if edges, _, _, cached := e.Edges(); cached {
+		if edges, cached := e.Edges(); cached {
 			for _, ed := range edges {
-				if ed.target != nil {
-					ed.target.SetFlag(flagUsed)
+				if ed.ok() {
+					r.objs.At(ed.index()).SetFlag(flagUsed)
 				}
 			}
 			return
@@ -254,10 +255,7 @@ func (r *run) markUnreachableReferents() {
 		}
 		links, _ := walkLinks(typ, e.OID, buf, r.repo.Algo, "", false)
 		for _, l := range links {
-			if l.badMode {
-				continue
-			}
-			if target, ok := r.objs.Lookup(l.oid, l.typ); ok && target != nil {
+			if target, _, ok := r.objs.Lookup(l.oid, l.typ); ok && target != nil {
 				target.SetFlag(flagUsed)
 			}
 		}

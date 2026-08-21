@@ -23,7 +23,11 @@ import (
 	"github.com/wow-look-at-my/git-fixed/internal/odb"
 )
 
-// Exit status bits, the same ones builtin/fsck.c returns.
+// Exit status bits. The first eight are the ones builtin/fsck.c returns.
+//
+// ErrorIndex is this implementation's own, and it exists because git has no
+// bit for an unreadable index: git dies with status 128 instead, which says
+// "I gave up" and says nothing about the repository. see docs/exit-status.md
 const (
 	ErrorObject         = 001
 	ErrorReachable      = 002
@@ -33,6 +37,7 @@ const (
 	ErrorMultiPackIndex = 040
 	ErrorPackRevIndex   = 0100
 	ErrorBitmap         = 0200
+	ErrorIndex          = 0400
 )
 
 // Options are the command's settings, one field per git fsck option.
@@ -98,6 +103,20 @@ type run struct {
 
 func (r *run) fail(bits uint32) { r.errors.Or(bits) }
 
+// packedObjects is how many objects the pack indexes account for, which is what
+// the object table is sized from. The loose ones are not counted: finding them
+// means reading 256 directories, and a repository whose objects are mostly
+// loose is a repository small enough for the table to grow into.
+func packedObjects(db *odb.DB) int64 {
+	n := int64(0)
+	for _, p := range db.Packs() {
+		if p.OpenErr == nil {
+			n += int64(p.Num)
+		}
+	}
+	return n
+}
+
 // Run performs the whole check and returns the status git would exit with.
 func Run(o *Options) int {
 	rep := newReporter(o.Stdout, o.Stderr)
@@ -114,7 +133,7 @@ func Run(o *Options) int {
 	defer db.Close()
 	db.BigFileThreshold = repo.Config.Int("core.bigfilethreshold", 512*1024*1024)
 
-	r := &run{o: o, repo: repo, db: db, objs: newObjTable(), rep: rep}
+	r := &run{o: o, repo: repo, db: db, objs: newObjTable(packedObjects(db)), rep: rep}
 	r.fsck = fsck.NewOptions(repo.Algo)
 	r.fsck.Strict = o.Strict
 	if o.NameObjects {
@@ -173,10 +192,7 @@ func Run(o *Options) int {
 	}
 
 	if o.KeepCacheObjects {
-		if code := r.checkIndexes(); code != 0 {
-			rep.Flush()
-			return code
-		}
+		r.checkIndexes()
 	}
 	rep.Flush()
 

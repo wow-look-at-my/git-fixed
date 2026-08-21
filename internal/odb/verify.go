@@ -30,9 +30,26 @@ type VerifyOpts struct {
 	// BigFileThreshold matches core.bigFileThreshold: a larger undeltified
 	// blob is hashed by streaming instead of being held in memory.
 	BigFileThreshold int64
-	// Progress is called with the count of objects finished so far.
-	Progress func(done int)
+	// Progress is called once per object finished, from every worker.
+	Progress func()
+	// ChainBudget bounds the decoded delta bases the walk holds at once.
+	// Zero takes DefaultChainBudget.
+	ChainBudget int64
 }
+
+// DefaultChainBudget is how many bytes of decoded delta bases one pack's walk
+// may hold at a time.
+//
+// A chain is decoded from the top down, so a base stays in memory while the
+// deltas built on it are made. Holding a whole chain of large objects, on every
+// worker at once, is what took 96 GB on one repository: twenty-four revisions
+// of a 128 MB file cost 3.1 GB on four cores, and a real machine has far more
+// than four. Past this cap the walk leaves a delta for later and rebuilds it
+// from its own chain, which costs inflations and bounds the memory.
+//
+// It is deliberately larger than core.deltaBaseCacheLimit, which is 96 MB: this
+// is the working set of a walk that decodes each object once, not a cache.
+const DefaultChainBudget = 256 << 20
 
 // Verify checks a pack the way git's verify_pack() does, in parallel.
 //
@@ -57,20 +74,38 @@ func (p *Pack) Verify(o VerifyOpts) bool {
 		fail(fmt.Sprintf("packfile %s cannot be accessed", p.Path))
 		return false
 	}
+	// The pack's own hash is one thread reading every byte of the pack, and
+	// on a multi-gigabyte one that is a minute of a single core with the
+	// rest of the machine waiting for it. It answers a question the object
+	// walk does not ask, so it runs alongside the walk instead of in front
+	// of it, and the run costs whichever of the two is slower.
+	sums := make(chan []string, 1)
+	go func() { sums <- p.checksumComplaints() }()
+	objectsOK := p.verifyObjects(o)
+	for _, text := range <-sums {
+		fail(text)
+	}
+	if !objectsOK {
+		ok = false
+	}
+	return ok
+}
+
+// checksumComplaints hashes the whole pack and compares it with the two copies
+// of that hash the repository keeps, in the order git compares them.
+func (p *Pack) checksumComplaints() []string {
+	var out []string
 	rawsz := int64(p.Algo.RawSize)
 	sigOff := p.dataSize - rawsz
 	h := p.Algo.New()
 	h.Write(p.data[:sigOff])
 	if !bytes.Equal(h.Sum(nil), p.data[sigOff:]) {
-		fail(fmt.Sprintf("%s pack checksum mismatch", p.Path))
+		out = append(out, fmt.Sprintf("%s pack checksum mismatch", p.Path))
 	}
 	if !bytes.Equal(p.idx[p.idxSize-2*rawsz:p.idxSize-rawsz], p.data[sigOff:]) {
-		fail(fmt.Sprintf("%s pack checksum does not match its index", p.Path))
+		out = append(out, fmt.Sprintf("%s pack checksum does not match its index", p.Path))
 	}
-	if !p.verifyObjects(o) {
-		ok = false
-	}
-	return ok
+	return out
 }
 
 // verifyIndexChecksum checks the index file's own trailing hash.
@@ -122,6 +157,25 @@ func cannotUnpack(emit func(gitobj.OID, string), p *Pack, l *packLayout, oid git
 	emit(oid, fmt.Sprintf("cannot unpack %s from %s at offset %d", oid, p.Path, e.off))
 }
 
+// failSubtree reports every delta standing on an entry that could not be
+// produced. The caller has already reported the entry itself.
+//
+// An object whose base cannot be built cannot be built either, and git says so
+// about each of them: it decodes every object from its own root, so it meets
+// the same fault once per object below it. Walking the forest once instead
+// means the deltas under a fault are the ones nothing else will visit, and
+// leaving them out reports a pack as holding objects it cannot produce.
+func failSubtree(emit func(gitobj.OID, string), p *Pack, l *packLayout, root int32) {
+	stack := append([]int32(nil), l.children(root)...)
+	for len(stack) > 0 {
+		i := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		e := l.ents[i]
+		cannotUnpack(emit, p, l, p.OIDAt(e.idx), e)
+		stack = append(stack, l.children(i)...)
+	}
+}
+
 // packEntry is one object as the pack stores it, in offset order. It holds no
 // pointer on purpose: there is one entry per object, so a pointer here puts
 // every allocation and every sweep of the slice through the write barrier. The
@@ -152,8 +206,12 @@ type packLayout struct {
 	// The children of entry i are childList[childStart[i]:childStart[i+1]].
 	childStart []int32
 	childList  []int32
-	roots      []int32
-	bad        []int32
+	// parents is the other direction, which is how a delta the walk could
+	// not afford to hold gets rebuilt later from its own chain. It is four
+	// bytes an entry and the walk computes it anyway.
+	parents []int32
+	roots   []int32
+	bad     []int32
 	// headerErrs holds what stopped an entry header from being read, which
 	// happens before anything decompresses. Element 0 is the empty string.
 	headerErrs []string
@@ -226,9 +284,17 @@ func (p *Pack) buildLayout() *packLayout {
 		case gitobj.TypeRefDelta:
 			if bi, ok := p.Find(h.BaseOID); ok {
 				parent[i] = posOf[bi]
+				break
 			}
-			// A base outside this pack leaves this entry a root, and
-			// the worker resolves it through the whole database.
+			// git's get_delta_base() looks in this pack and nowhere
+			// else, so a base that is not in it is an entry nothing
+			// can produce. It reports the base it could not find and
+			// then the object it could not build, naming the offset
+			// just past the base's name.
+			l.bad = append(l.bad, int32(i))
+			l.ents[i].typ = gitobj.TypeBad
+			l.headerErrs = append(l.headerErrs, badDeltaBase(h.DataOff, p.Path).Error())
+			l.ents[i].headerErr = int32(len(l.headerErrs) - 1)
 		}
 	}
 
@@ -255,6 +321,7 @@ func (p *Pack) buildLayout() *packLayout {
 			l.roots = append(l.roots, int32(i))
 		}
 	}
+	l.parents = parent
 	return l
 }
 
@@ -284,6 +351,7 @@ func (p *Pack) verifyObjects(o VerifyOpts) bool {
 		e := l.ents[i]
 		oid := p.OIDAt(e.idx)
 		cannotUnpack(emit, p, l, oid, e)
+		failSubtree(emit, p, l, i)
 	}
 
 	// The index records a CRC over each entry's raw bytes. Checking those is
@@ -293,6 +361,11 @@ func (p *Pack) verifyObjects(o VerifyOpts) bool {
 	}
 
 	w := &walker{p: p, l: l, o: &o, emit: emit, object: object}
+	budget := o.ChainBudget
+	if budget <= 0 {
+		budget = DefaultChainBudget
+	}
+	w.budget.Store(budget)
 	var wg sync.WaitGroup
 	var next int64
 	for i := 0; i < workers; i++ {
@@ -310,9 +383,6 @@ func (p *Pack) verifyObjects(o VerifyOpts) bool {
 		}()
 	}
 	wg.Wait()
-	if o.Progress != nil {
-		o.Progress(int(atomic.LoadInt64(&w.done)))
-	}
 	return good
 }
 
@@ -355,7 +425,9 @@ type walker struct {
 	o      *VerifyOpts
 	emit   func(gitobj.OID, string)
 	object func(gitobj.OID, gitobj.Type, int64, []byte)
-	done   int64
+	// budget is the decoded base data every worker on this pack may still
+	// hold between them. see DefaultChainBudget.
+	budget atomic.Int64
 }
 
 // frame is one level of an in-progress delta chain.
@@ -363,6 +435,31 @@ type frame struct {
 	entry int32
 	data  []byte
 	next  int32 // position in childList of the next child to visit
+}
+
+// take reserves room to hold one decoded base. The bottom of a worker's stack
+// is always allowed: a worker that could hold nothing would decode nothing.
+func (w *walker) take(depth int, n int64) bool {
+	if depth == 0 {
+		return true
+	}
+	for {
+		cur := w.budget.Load()
+		if cur < n {
+			return false
+		}
+		if w.budget.CompareAndSwap(cur, cur-n) {
+			return true
+		}
+	}
+}
+
+// give hands a reservation back.
+func (w *walker) give(depth int, n int64) {
+	if depth == 0 {
+		return
+	}
+	w.budget.Add(n)
 }
 
 // walkChain decodes one base object and every delta built on it, reusing the
@@ -382,21 +479,53 @@ func (w *walker) walkChain(root int32, in *Inflater) {
 	if err != nil {
 		oid := p.OIDAt(e.idx)
 		cannotUnpack(w.emit, p, l, oid, *e)
+		failSubtree(w.emit, p, l, root)
 		return
 	}
 	w.finish(root, typ, data)
 	if len(l.children(root)) == 0 {
 		return
 	}
-	stack := []frame{{entry: root, data: data, next: l.childStart[root]}}
+	// Anything the spread could not afford to hold comes back here, already
+	// checked, and is rebuilt from its own chain so that its own children
+	// can be made from it.
+	deferred := w.spread(root, typ, data, in, nil)
+	for len(deferred) > 0 {
+		d := deferred[len(deferred)-1]
+		deferred = deferred[:len(deferred)-1]
+		data, err := w.rebuild(d, in)
+		if err != nil {
+			cannotUnpack(w.emit, p, l, p.OIDAt(l.ents[d].idx), l.ents[d])
+			failSubtree(w.emit, p, l, d)
+			continue
+		}
+		deferred = w.spread(d, typ, data, in, deferred)
+	}
+}
+
+// spread builds every delta standing on base, and every delta standing on those,
+// in one pass down the chain. base is spread's to drop.
+//
+// It holds one decoded object per level, and releases a level as soon as
+// nothing below will read it again: descending into a node's last child hands
+// the buffer over rather than stacking a second one on top of it, which is the
+// whole of a chain that never branches. Past the budget a child is returned for
+// the caller to rebuild later instead of being held here.
+func (w *walker) spread(base int32, typ gitobj.Type, data []byte, in *Inflater, deferred []int32) []int32 {
+	l, p := w.l, w.p
+	stack := []frame{{entry: base, data: data, next: l.childStart[base]}}
 	for len(stack) > 0 {
-		top := &stack[len(stack)-1]
-		if top.next >= l.childStart[top.entry+1] {
-			stack = stack[:len(stack)-1]
+		i := len(stack) - 1
+		top := &stack[i]
+		end := l.childStart[top.entry+1]
+		if top.next >= end {
+			w.give(i, int64(len(top.data)))
+			stack = stack[:i]
 			continue
 		}
 		child := l.childList[top.next]
 		top.next++
+		last := top.next >= end
 		ce := &l.ents[child]
 		if ce.typ == gitobj.TypeBad {
 			continue
@@ -407,15 +536,64 @@ func (w *walker) walkChain(root int32, in *Inflater) {
 			out, err = applyDelta(top.data, delta)
 		}
 		if err != nil {
-			oid := p.OIDAt(ce.idx)
-			cannotUnpack(w.emit, p, l, oid, *ce)
+			cannotUnpack(w.emit, p, l, p.OIDAt(ce.idx), *ce)
+			failSubtree(w.emit, p, l, child)
 			continue
 		}
 		w.finish(child, typ, out)
-		if len(l.children(child)) > 0 {
-			stack = append(stack, frame{entry: child, data: out, next: l.childStart[child]})
+		if l.childStart[child+1] == l.childStart[child] {
+			continue
+		}
+		if last {
+			// The parent has no more children, so nothing will read it
+			// again: the child takes its place instead of standing on
+			// top of it.
+			w.give(i, int64(len(top.data)))
+			if !w.take(i, int64(len(out))) {
+				deferred = append(deferred, child)
+				stack = stack[:i]
+				continue
+			}
+			stack[i] = frame{entry: child, data: out, next: l.childStart[child]}
+			continue
+		}
+		if !w.take(i+1, int64(len(out))) {
+			deferred = append(deferred, child)
+			continue
+		}
+		stack = append(stack, frame{entry: child, data: out, next: l.childStart[child]})
+	}
+	return deferred
+}
+
+// rebuild decodes one entry from the bottom of its own chain, for a delta the
+// walk could not afford to keep when it first passed it. It holds two objects
+// at a time rather than the chain.
+func (w *walker) rebuild(i int32, in *Inflater) ([]byte, error) {
+	l := w.l
+	var path []int32
+	for j := i; ; {
+		path = append(path, j)
+		if l.parents[j] < 0 {
+			break
+		}
+		j = l.parents[j]
+	}
+	_, data, err := w.materializeRoot(&l.ents[path[len(path)-1]], in)
+	if err != nil {
+		return nil, err
+	}
+	for k := len(path) - 2; k >= 0; k-- {
+		e := &l.ents[path[k]]
+		delta, err := in.Inflate(w.p, e.dataOff, e.size)
+		if err != nil {
+			return nil, err
+		}
+		if data, err = applyDelta(data, delta); err != nil {
+			return nil, err
 		}
 	}
+	return data, nil
 }
 
 // materializeRoot decodes a non-delta entry, or a ref-delta whose base lives
@@ -424,7 +602,11 @@ func (w *walker) materializeRoot(e *packEntry, in *Inflater) (gitobj.Type, []byt
 	p := w.p
 	switch e.typ {
 	case gitobj.TypeRefDelta, gitobj.TypeOfsDelta:
-		return gitobj.TypeBad, nil, fmt.Errorf("delta base is unresolved in %s", p.Path)
+		// buildLayout marks an unresolved delta bad, and walkChain drops
+		// a bad entry before it reaches here. This stands between a
+		// future mistake in either of those and a delta inflated as
+		// though it were a whole object.
+		return gitobj.TypeBad, nil, badDeltaBase(e.dataOff, p.Path)
 	}
 	data, err := in.Inflate(p, e.dataOff, e.size)
 	if err != nil {
@@ -453,9 +635,8 @@ func (w *walker) finishStreamed(i int32) {
 	if w.object != nil {
 		w.object(oid, e.typ, e.size, nil)
 	}
-	n := atomic.AddInt64(&w.done, 1)
-	if w.o.Progress != nil && n&1023 == 0 {
-		w.o.Progress(int(n))
+	if w.o.Progress != nil {
+		w.o.Progress()
 	}
 }
 
@@ -470,9 +651,8 @@ func (w *walker) finish(i int32, typ gitobj.Type, data []byte) {
 	if w.object != nil {
 		w.object(oid, typ, int64(len(data)), data)
 	}
-	n := atomic.AddInt64(&w.done, 1)
-	if w.o.Progress != nil && n&1023 == 0 {
-		w.o.Progress(int(n))
+	if w.o.Progress != nil {
+		w.o.Progress()
 	}
 }
 

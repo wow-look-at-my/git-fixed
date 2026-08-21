@@ -131,6 +131,15 @@ func readLooseBytes(raw []byte, shown string, expected gitobj.OID, algo *gitobj.
 		return res
 	}
 
+	if !plausibleSize(size, int64(len(raw))) {
+		// The header's size is bigger than this file could inflate to
+		// however it is read, so it is damage rather than a size. Taking
+		// it at its word here asks for that many bytes. see
+		// inflatebound.go
+		res.Failed = true
+		res.Errors = append(res.Errors, fmt.Sprintf("unable to unpack contents of %s", shown))
+		return res
+	}
 	out := make([]byte, size)
 	pre := copy(out, hdr[nul+1:n])
 	readErr := fillFrom(zr, out[pre:])

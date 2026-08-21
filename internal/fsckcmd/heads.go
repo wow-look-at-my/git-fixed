@@ -1,8 +1,6 @@
 package fsckcmd
 
 import (
-	"fmt"
-
 	"github.com/wow-look-at-my/git-fixed/internal/fsck"
 	"github.com/wow-look-at-my/git-fixed/internal/gitobj"
 	"github.com/wow-look-at-my/git-fixed/internal/gitrepo"
@@ -144,7 +142,7 @@ func (r *run) handleReflogOID(refname string, oid gitobj.OID, timestamp int64) {
 }
 
 // checkIndexes walks every worktree's index, which is git's fsck_index().
-func (r *run) checkIndexes() int {
+func (r *run) checkIndexes() {
 	for _, wt := range r.repo.Worktrees() {
 		path := wt.IndexPath()
 		// Every message below names the index the way git names it. git
@@ -159,13 +157,21 @@ func (r *run) checkIndexes() int {
 			r.rep.Errf(sortKey{phase: phaseIndex}, "error: %s", e)
 		}
 		if err != nil {
-			r.rep.Flush()
-			fmt.Fprintf(r.o.Stderr, "fatal: %s\n", err)
-			return 128
+			// git dies here, which takes the reverse-index checks, the
+			// bitmap checks, the connectivity walk and the graph checks
+			// with it -- none of which reads the index. This says what is
+			// wrong with the file and goes on to check the repository.
+			// see docs/exit-status.md
+			r.rep.Errf(sortKey{phase: phaseIndex}, "error: %s", err)
+			r.fail(ErrorIndex)
+			continue
+		}
+		for _, sig := range idx.Ignored {
+			r.rep.Errf(sortKey{phase: phaseIndex}, "ignoring %s extension", sig)
 		}
 		r.fsckIndex(idx, shown, wt.IsMain)
 	}
-	return 0
+
 }
 
 func (r *run) fsckIndex(idx *gitrepo.Index, path string, isCurrent bool) {
@@ -174,7 +180,7 @@ func (r *run) fsckIndex(idx *gitrepo.Index, path string, isCurrent bool) {
 		if ce.Mode&0o170000 == 0o160000 {
 			continue // a submodule commit is not this repository's object
 		}
-		e, ok := r.objs.Lookup(ce.OID, gitobj.TypeBlob)
+		e, _, ok := r.objs.Lookup(ce.OID, gitobj.TypeBlob)
 		if !ok || e == nil {
 			continue
 		}

@@ -30,6 +30,9 @@ var usage = []string{
 }
 
 func main() {
+	// Here rather than in an init, so it runs after the guard go-toolchain
+	// injects and can see whether that guard already set a limit.
+	capHeap()
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
@@ -95,6 +98,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	defer stop()
 
+	heapStop, err := startHeapProfile(stderr)
+	if err != nil {
+		fmt.Fprintf(stderr, "fatal: %s\n", err)
+		return 128
+	}
+	defer heapStop()
+
 	// The diagnosis comes first, and it is git's own. A repair that printed
 	// only what it changed would leave nobody able to see what was wrong.
 	o := f.options(dir, rest, stdout, stderr)
@@ -113,12 +123,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	res, err := repair.Run(&repair.Options{
-		Dir:     dir,
-		DryRun:  dryRun != 0,
-		Run:     runName(),
-		Healthy: healthy,
-		Stdout:  stdout,
-		Stderr:  stderr,
+		Dir:          dir,
+		DryRun:       dryRun != 0,
+		Run:          runName(),
+		Healthy:      healthy,
+		ShowProgress: o.ShowProgress,
+		Stdout:       stdout,
+		Stderr:       stderr,
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "fatal: %s\n", err)
@@ -145,9 +156,13 @@ func reportPlan(res *repair.Result, status int, stdout, stderr io.Writer) int {
 	switch {
 	case res.Nothing():
 	case res.FoundNothingToDo():
-		fmt.Fprintln(stderr, "The damage above is not something this tool repairs.")
+		fmt.Fprintln(stderr, "Every finding above is something this tool does not repair, so a run\n"+
+			"would change nothing. It repairs a corrupt or missing object, a broken\n"+
+			"reference, a packfile that will not verify, an index or a packed-refs\n"+
+			"that will not parse, and a rebuildable cache. Nothing above is one of those.")
 	default:
 		res.Report(stdout, true)
+		res.ReportPlanTotals(stdout)
 	}
 	return status
 }

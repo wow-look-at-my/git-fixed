@@ -14,6 +14,7 @@ import (
 
 	"github.com/wow-look-at-my/git-fixed/internal/gitobj"
 	"github.com/wow-look-at-my/git-fixed/internal/odb"
+	"github.com/wow-look-at-my/git-fixed/internal/progress"
 )
 
 // checkObjectDirs walks every object directory and every pack. This is the
@@ -26,8 +27,19 @@ func (r *run) checkObjectDirs() {
 	if !r.o.CheckFull {
 		return
 	}
-	for pi, p := range r.db.Packs() {
-		r.checkPack(pi, p)
+	// One meter spans every pack, as git's does: its total is the whole
+	// repository's packed object count, not this pack's.
+	packs := r.db.Packs()
+	total := int64(0)
+	for _, p := range packs {
+		if p.OpenErr == nil {
+			total += int64(p.Num)
+		}
+	}
+	m := r.meterOn("Checking objects", total)
+	defer m.Finish()
+	for pi, p := range packs {
+		r.checkPack(pi, p, m)
 	}
 }
 
@@ -41,6 +53,10 @@ func (r *run) checkLooseDir(group int, path, shown string) {
 		oid   gitobj.OID
 		path  string
 		shown string
+		// sub is the fanout directory this object came from, which is what
+		// the meter counts: git measures this phase in directories, so a
+		// repository with a handful of loose objects is done at once.
+		sub int
 	}
 	var (
 		jobs  []job
@@ -61,7 +77,7 @@ func (r *run) checkLooseDir(group int, path, shown string) {
 			full := filepath.Join(path, sub, name)
 			shownFull := filepath.Join(shown, sub, name)
 			if oid, ok := r.repo.Algo.Parse(sub + name); ok && len(name) == hexsz-2 {
-				jobs = append(jobs, job{oid: oid, path: full, shown: shownFull})
+				jobs = append(jobs, job{oid: oid, path: full, shown: shownFull, sub: i})
 				continue
 			}
 			if !strings.HasPrefix(name, "tmp_obj_") {
@@ -72,10 +88,14 @@ func (r *run) checkLooseDir(group int, path, shown string) {
 	for _, c := range cruft {
 		r.rep.Errf(sortKey{phase: phaseObjects, group: group}, "bad sha1 file: %s", c)
 	}
+	m := r.meterOn("Checking object directories", 256)
 	r.parallel(len(jobs), func(i int) {
 		j := jobs[i]
 		r.checkLooseObject(sortKey{phase: phaseObjects, group: group, oid: j.oid}, j.oid, j.path, j.shown)
+		m.Advance(int64(j.sub) + 1)
 	})
+	m.Advance(256)
+	m.Finish()
 }
 
 // checkLooseObject reads one loose object and checks it, following git's
@@ -97,7 +117,7 @@ func (r *run) checkLooseObject(key sortKey, oid gitobj.OID, path, shown string) 
 		r.fail(ErrorObject)
 		return
 	}
-	e, ok := r.objs.Lookup(oid, res.Type)
+	e, _, ok := r.objs.Lookup(oid, res.Type)
 	if !ok || !r.parsable(key, oid, res.Type, res.Contents) {
 		r.fail(ErrorObject)
 		r.rep.Errf(key, "error: %s: object could not be parsed: %s", oid, shown)
@@ -124,13 +144,14 @@ func (r *run) parsable(key sortKey, oid gitobj.OID, typ gitobj.Type, buf []byte)
 }
 
 // checkPack verifies one pack and checks every object in it.
-func (r *run) checkPack(group int, p *odb.Pack) {
+func (r *run) checkPack(group int, p *odb.Pack, m *progress.Meter) {
 	key := func(oid gitobj.OID, pos int64) sortKey {
 		return sortKey{phase: phaseObjects, group: 1 + group, pos: pos, oid: oid}
 	}
 	ok := p.Verify(odb.VerifyOpts{
 		Workers:          r.o.Workers,
 		BigFileThreshold: r.db.BigFileThreshold,
+		Progress:         m.Step,
 		Emit: func(oid gitobj.OID, text string) {
 			if oid.Valid() && strings.HasPrefix(text, "cannot unpack ") {
 				// The pack check reports an entry that will not
@@ -142,7 +163,7 @@ func (r *run) checkPack(group int, p *odb.Pack) {
 			r.rep.Errf(key(oid, 0), "error: %s", text)
 		},
 		Object: func(oid gitobj.OID, typ gitobj.Type, size int64, data []byte) {
-			e, lookupOK := r.objs.Lookup(oid, typ)
+			e, _, lookupOK := r.objs.Lookup(oid, typ)
 			k := key(oid, 0)
 			if !lookupOK || !r.parsable(k, oid, typ, data) {
 				r.fail(ErrorObject)
@@ -205,7 +226,7 @@ func (r *run) markForConnectivity() {
 					continue
 				}
 				if oid, ok := r.repo.Algo.Parse(sub + ent.Name()); ok {
-					e, _ := r.objs.Lookup(oid, gitobj.TypeAny)
+					e, _, _ := r.objs.Lookup(oid, gitobj.TypeAny)
 					e.SetFlag(flagHasObj)
 				}
 			}
@@ -216,7 +237,7 @@ func (r *run) markForConnectivity() {
 			continue
 		}
 		for i := uint32(0); i < p.Num; i++ {
-			e, _ := r.objs.Lookup(p.OIDAt(i), gitobj.TypeAny)
+			e, _, _ := r.objs.Lookup(p.OIDAt(i), gitobj.TypeAny)
 			e.SetFlag(flagHasObj)
 		}
 	}

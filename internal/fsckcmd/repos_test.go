@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/wow-look-at-my/git-fixed/internal/fsckcmd"
 	"github.com/wow-look-at-my/git-fixed/internal/gitobj"
 	"github.com/wow-look-at-my/git-fixed/internal/gittest"
 )
@@ -134,6 +135,76 @@ func TestDeltaChainsInPack(t *testing.T) {
 	r.Git("repack", "-adq", "--depth=50", "--window=50")
 	sameAsGit(t, r)
 	sameAsGit(t, r, "--unreachable")
+}
+
+// TestTreeEntryWithAModeThatNamesNoObject pins what the link walk does with a
+// mode that is not a file, a link or a directory.
+//
+// git canonicalises the mode as it decodes the tree, in canon_mode(), and
+// everything left over becomes a gitlink, which the walk steps over without a
+// word. Its object check still sees the mode as written and warns about it
+// twice. Reading the raw mode in the walk as well produced an error git never
+// prints, and a repository git is happy with came back damaged.
+func TestTreeEntryWithAModeThatNamesNoObject(t *testing.T) {
+	gittest.RequireGit(t)
+	r := gittest.New(t)
+	blob := r.Blob("content\n")
+	tree := r.WriteRaw("tree", gittest.Tree(
+		gittest.TreeEntry{Mode: "100644", Name: "a", OID: blob},
+		gittest.TreeEntry{Mode: "060000", Name: "b", OID: blob},
+	))
+	commit := r.Commit(tree, nil, "one")
+	r.UpdateRef("refs/heads/master", commit)
+	r.SetHEAD("refs/heads/master")
+
+	got := sameAsGit(t, r)
+	assert.Equal(t, 0, got.Code, "git is happy with this repository, so this must be")
+	joined := strings.Join(got.Lines(), "\n")
+	assert.Contains(t, joined, "badFilemode", "the object check still reads the mode as written")
+	assert.NotContains(t, joined, "has bad mode", "the walk does not")
+	sameAsGit(t, r, "--name-objects")
+	sameAsGit(t, r, "--connectivity-only")
+	sameAsGit(t, r, "--unreachable")
+}
+
+// TestLooseObjectCannotAskForMoreThanItsFileHolds is a deliberate divergence.
+// see docs/allocation-bounds.md
+//
+// The size in a loose object's header is read before its contents are, and a
+// read that reserves it outright asks the allocator for whatever number is
+// written there. git does exactly that, and on the repository below it dies:
+//
+//	fatal: Out of memory, malloc failed (tried to allocate 1099511627777 bytes)
+//
+// naming no object, checking nothing else, and exiting 128. A tool for
+// repositories that are already broken cannot answer a corrupt size that way.
+// No deflate stream of this file's length can inflate that far, so the file is
+// reported like any other that will not read and the run carries on.
+func TestLooseObjectCannotAskForMoreThanItsFileHolds(t *testing.T) {
+	gittest.RequireGit(t)
+	r := gittest.New(t)
+	blob, tree, commit := r.SimpleHistory()
+
+	// A tree, because a blob this size is streamed rather than held.
+	var oid gitobj.OID
+	oid.N = uint8(r.Algo.RawSize)
+	for i := range oid.H[:oid.N] {
+		oid.H[i] = byte(i + 1)
+	}
+	r.WriteLooseBytes(oid, []byte("tree 1099511627776\x00short"))
+
+	got := ours(t, r.Dir)
+	lines := strings.Join(got.Lines(), "\n")
+	assert.Equal(t, fsckcmd.ErrorObject, got.Code,
+		"a file that will not read is a broken object, not a reason to stop")
+	assert.Contains(t, lines, oid.String(), "the report must name the file it could not read")
+	assert.Contains(t, lines, "unable to unpack contents of")
+	// The rest of the repository is still checked, rather than the run
+	// ending wherever the allocator gave up. Nothing sound is complained
+	// about, and the sound objects are still reachable.
+	for _, sound := range []gitobj.OID{blob, tree, commit} {
+		assert.NotContains(t, lines, sound.String())
+	}
 }
 
 func TestCorruptPackData(t *testing.T) {

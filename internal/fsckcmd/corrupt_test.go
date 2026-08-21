@@ -3,14 +3,18 @@ package fsckcmd_test
 import (
 	"bytes"
 	"compress/zlib"
+	"crypto/sha1"
+	"encoding/binary"
 	"fmt"
 	"math/rand"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/wow-look-at-my/git-fixed/internal/fsckcmd"
 	"github.com/wow-look-at-my/git-fixed/internal/gitobj"
 	"github.com/wow-look-at-my/git-fixed/internal/gittest"
 	"github.com/wow-look-at-my/git-fixed/internal/odb"
@@ -153,8 +157,204 @@ func TestUnreadableIndex(t *testing.T) {
 	require.Greater(t, len(data), 12, "git wrote no index to truncate")
 	gittest.WriteOver(t, index, data[:8])
 
+	want := r.GitFsck()
+	got := ours(t, r.Dir)
+
+	// git gives up here: status 128, and the reverse-index checks, the bitmap
+	// checks, the connectivity walk and the graph checks never run -- none of
+	// which reads the index. see docs/exit-status.md
+	assert.Equal(t, 128, want.Code, "git's own behaviour, which this deliberately does not copy")
+	assert.Equal(t, fsckcmd.ErrorIndex, got.Code, "the index is unusable, and that is what the status says")
+
+	// The message is still git's, and it still names the index the way git
+	// names it rather than the absolute path this process opened.
+	assert.Contains(t, got.Stderr, ".git/index: index file smaller than expected")
+	assert.NotContains(t, got.Stderr, r.Dir)
+
+	// And the phases git skipped were run. A repository whose only fault is
+	// its index has nothing else to say, so the proof is that the run reached
+	// the end rather than stopping at the index.
+	assert.NotContains(t, got.Stderr, "fatal:")
+}
+
+// TestADeltaWhoseBaseIsNotInThePack covers git's get_delta_base() finding
+// nothing.
+//
+// A pack that carries a delta on an object it does not hold is what a thin pack
+// is, and one on disk is a pack whose index was built and whose bytes then
+// moved. git reports the entry twice: once for the base it could not locate,
+// and once for the object it could not produce.
+func TestADeltaWhoseBaseIsNotInThePack(t *testing.T) {
+	gittest.RequireGit(t)
+	r := gittest.New(t)
+	r.SimpleHistory()
+	base := bytes.Repeat([]byte("a line that deltas well\n"), 400)
+	child := append(append([]byte{}, base...), []byte("child\n")...)
+	path, offsets := r.WritePack("delta", []gittest.PackObject{
+		{Type: gitobj.TypeBlob, Data: base, Base: -1},
+		{Type: gitobj.TypeBlob, Data: child, Base: 0},
+	})
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	// The base offset is a varint that follows the entry's type and size.
+	// Winding it back further than the pack is long leaves the delta with
+	// no base at all, and the index still describes the pack as it was.
+	at := afterObjHeader(data, offsets[1])
+	require.Zero(t, data[at]&0x80, "this fixture's base offset must be one byte")
+	require.Greater(t, int64(0x7f), offsets[1], "0x7f must wind back past the start")
+	data[at] = 0x7f
+	gittest.WriteOver(t, path, data)
+
+	sameAsGit(t, r)
+}
+
+// afterObjHeader returns the offset just past a pack entry's type and size,
+// which is where an offset delta records its base.
+func afterObjHeader(data []byte, off int64) int64 {
+	i := off
+	for data[i]&0x80 != 0 {
+		i++
+	}
+	return i + 1
+}
+
+// TestARefDeltaWhoseBaseIsNotInThePack is the same failure through git's other
+// delta encoding, where the base is named rather than pointed at.
+//
+// git's get_delta_base() looks the name up in this pack and in no other, so a
+// name that is not in it fails exactly as an offset that runs off the front
+// does. It reports a different offset: past the name, rather than in front of
+// it.
+func TestARefDeltaWhoseBaseIsNotInThePack(t *testing.T) {
+	gittest.RequireGit(t)
+	r := gittest.New(t)
+	r.SimpleHistory()
+	base := bytes.Repeat([]byte("a line that deltas well\n"), 400)
+	child := append(append([]byte{}, base...), []byte("child\n")...)
+	path, offsets := r.WritePack("refdelta", []gittest.PackObject{
+		{Type: gitobj.TypeBlob, Data: base, Base: -1},
+		{Type: gitobj.TypeBlob, Data: child, Base: 0, ByName: true},
+	})
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	// One byte of the base's name is enough: the pack still holds the base,
+	// and the delta now asks for an object nothing has.
+	at := afterObjHeader(data, offsets[1])
+	data[at] ^= 0xff
+	gittest.WriteOver(t, path, data)
+
+	sameAsGit(t, r)
+}
+
+// TestAPackWithAnUnusualName is about which files count as packs.
+//
+// git's prepare_pack() asks for the .idx suffix and nothing else, so a pack
+// under any name is a pack it reads. Requiring the "pack-" prefix here made
+// such a pack invisible: every object in it read as missing, and a repository
+// that is whole reported as broken.
+func TestAPackWithAnUnusualName(t *testing.T) {
+	gittest.RequireGit(t)
+	r := gittest.New(t)
+	r.SimpleHistory()
+	r.Git("repack", "-adq")
+
+	dir := filepath.Join(r.GitDir(), "objects", "pack")
+	idxs, err := filepath.Glob(filepath.Join(dir, "pack-*.idx"))
+	require.NoError(t, err)
+	require.Len(t, idxs, 1)
+	base := strings.TrimSuffix(idxs[0], ".idx")
+	for _, ext := range []string{".idx", ".pack", ".rev"} {
+		if _, err := os.Stat(base + ext); err != nil {
+			continue
+		}
+		require.NoError(t, os.Rename(base+ext, filepath.Join(dir, "odd"+ext)))
+	}
+
 	res := sameAsGit(t, r)
-	assert.Equal(t, 128, res.Code, "an index that will not parse is fatal, not a finding")
-	assert.Contains(t, res.Stderr, ".git/index: index file smaller than expected")
-	assert.NotContains(t, res.Stderr, r.Dir, "the message named the absolute path this process opened")
+	assert.Equal(t, 0, res.Code, "the repository is whole, whatever its pack is called")
+}
+
+// TestAnIndexExtensionThisDoesNotRead is git's rule about optional extensions,
+// which this had backwards.
+//
+// git skips an extension whose name starts with a capital letter and refuses
+// one whose name does not. Reading that the other way round made every index
+// with an untracked cache in it a fatal error, and an untracked cache is
+// something a person turns on to make git faster.
+func TestAnIndexExtensionThisDoesNotRead(t *testing.T) {
+	gittest.RequireGit(t)
+	r := gittest.New(t)
+	r.SimpleHistory()
+	r.Git("read-tree", "HEAD")
+	r.Git("config", "core.untrackedCache", "true")
+	r.Git("update-index", "--untracked-cache")
+	r.Git("status", "--porcelain")
+
+	data, err := os.ReadFile(filepath.Join(r.GitDir(), "index"))
+	require.NoError(t, err)
+	require.True(t, bytes.Contains(data, []byte("UNTR")),
+		"this fixture has no untracked cache in it, so it proves nothing")
+
+	res := sameAsGit(t, r)
+	assert.Equal(t, 0, res.Code, "an extension git reads is not a reason to refuse the index")
+}
+
+// TestAnUnknownIndexExtension covers git's rule for a name it has never seen,
+// which is the other half of the rule TestAnIndexExtensionThisDoesNotRead
+// covers. A capital first letter means the extension is optional: git skips it
+// with a note and carries on. Any other first letter means the index holds
+// something required that nobody can read, and git refuses the whole file.
+//
+// Neither half had a test. The rule was implemented backwards once already.
+func TestAnUnknownIndexExtension(t *testing.T) {
+	t.Run("optional", func(t *testing.T) {
+		gittest.RequireGit(t)
+		r := gittest.New(t)
+		r.SimpleHistory()
+		r.Git("read-tree", "HEAD")
+		addIndexExtension(t, r, "ZZZZ", []byte("whatever this is"))
+
+		res := sameAsGit(t, r)
+		assert.Equal(t, 0, res.Code, "an optional extension is not a reason to refuse the index")
+		assert.Contains(t, res.Stderr, "ignoring ZZZZ extension")
+	})
+
+	t.Run("required", func(t *testing.T) {
+		gittest.RequireGit(t)
+		r := gittest.New(t)
+		r.SimpleHistory()
+		r.Git("read-tree", "HEAD")
+		addIndexExtension(t, r, "zzzz", []byte("whatever this is"))
+
+		want := r.GitFsck()
+		got := ours(t, r.Dir)
+
+		// git dies, taking four later phases that never open the index with
+		// it. This reports the same complaint and checks the rest.
+		// see docs/exit-status.md
+		assert.Equal(t, 128, want.Code, "git's own behaviour, which this deliberately does not copy")
+		assert.Equal(t, fsckcmd.ErrorIndex, got.Code)
+		assert.Contains(t, want.Stderr, "index uses zzzz extension, which we do not understand")
+		assert.Contains(t, got.Stderr, "index uses zzzz extension, which we do not understand")
+		assert.NotContains(t, got.Stderr, "fatal:", "nothing here is fatal, so no line may say it is")
+	})
+}
+
+// addIndexExtension appends one extension record to the index git wrote, and
+// puts back the trailing checksum over the whole file.
+func addIndexExtension(t *testing.T, r *gittest.Repo, sig string, body []byte) {
+	t.Helper()
+	path := filepath.Join(r.GitDir(), "index")
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Greater(t, len(data), sha1.Size)
+
+	out := append([]byte{}, data[:len(data)-sha1.Size]...)
+	out = append(out, sig...)
+	out = binary.BigEndian.AppendUint32(out, uint32(len(body)))
+	out = append(out, body...)
+	sum := sha1.Sum(out) //nolint:gosec // git's own index checksum
+	gittest.WriteOver(t, path, append(out, sum[:]...))
 }

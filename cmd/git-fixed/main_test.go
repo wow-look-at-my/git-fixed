@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/wow-look-at-my/git-fixed/internal/fsckcmd"
+	"github.com/wow-look-at-my/git-fixed/internal/gitobj"
 	"github.com/wow-look-at-my/git-fixed/internal/gittest"
 )
 
@@ -133,7 +134,11 @@ func TestDryRunPlansARepairWithoutMakingOne(t *testing.T) {
 	assert.Contains(t, got.Stdout, "would rebuild: .git/index")
 	assert.Contains(t, got.Stderr, ".git/index: index file smaller than expected",
 		"the diagnosis git prints must come out before the plan")
-	assert.Equal(t, r.GitFsck().Code, got.Code, "a --dry-run must exit with the status git fsck reached")
+	// git exits 128 here and stops. This says which file is unusable and
+	// checks the rest of the repository. see docs/exit-status.md
+	assert.Equal(t, 128, r.GitFsck().Code)
+	assert.Equal(t, fsckcmd.ErrorIndex, got.Code,
+		"the status must name the fault, not say the run gave up")
 	assert.Equal(t, before, fingerprint(t, r.GitDir()), "a --dry-run repaired something")
 }
 
@@ -291,4 +296,49 @@ func TestDryRunStillWritesWhatLostFoundWrites(t *testing.T) {
 	assert.Equal(t, 0, got.Code)
 	assert.DirExists(t, filepath.Join(r.GitDir(), "lost-found"),
 		"--lost-found stopped writing, so it no longer does what git's option does")
+}
+
+// TestDryRunSaysWhatItCouldAndCouldNotRepair is the whole job of a plan.
+//
+// It used to list every damaged object as one that could not be recovered,
+// because it never asked. A person whose objects were all one command away
+// from being put back was told they were gone.
+func TestDryRunSaysWhatItCouldAndCouldNotRepair(t *testing.T) {
+	gittest.RequireGit(t)
+
+	t.Run("recoverable", func(t *testing.T) {
+		r := gittest.New(t)
+		_, tree, _ := r.SimpleHistory()
+		r.Git("read-tree", "HEAD")
+		// The tree's only copy is corrupt and the index still records what
+		// was in it, so a repair rebuilds the tree from there.
+		overwriteObject(t, r, tree)
+		before := fingerprint(t, r.GitDir())
+
+		got := invoke(t, r, "--dry-run")
+		assert.Contains(t, got.Stdout, "would recover: tree "+tree.String())
+		assert.Contains(t, got.Stdout, "1 fault(s) would be repaired, 0 would not.")
+		assert.NotContains(t, got.Stdout, "could not be recovered")
+		assert.Equal(t, before, fingerprint(t, r.GitDir()), "a --dry-run repaired something")
+	})
+
+	t.Run("unrecoverable", func(t *testing.T) {
+		r := gittest.New(t)
+		blob, _, _ := r.SimpleHistory()
+		// Nothing else in this repository holds the blob's content, and
+		// there is no worktree and no remote to ask.
+		overwriteObject(t, r, blob)
+
+		got := invoke(t, r, "--dry-run")
+		assert.Contains(t, got.Stdout, "0 fault(s) would be repaired, 1 would not.")
+		assert.Contains(t, got.Stdout, "could not be recovered")
+	})
+}
+
+// overwriteObject makes one object's only file unreadable.
+func overwriteObject(t *testing.T, r *gittest.Repo, oid gitobj.OID) {
+	t.Helper()
+	name := oid.String()
+	gittest.WriteOver(t, filepath.Join(r.GitDir(), "objects", name[:2], name[2:]),
+		[]byte("this is not a git object"))
 }
