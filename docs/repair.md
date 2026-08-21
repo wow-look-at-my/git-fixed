@@ -118,10 +118,10 @@ check at the end means every source produces the identical bytes or none at all.
 0. Diagnose. `git-fixed` runs a full fsck first and prints git's own findings, so a person sees what was wrong before anything moves.
 1. Scan. Read every ref, every pack, every object, and the index. Nothing is written in this phase.
 
-   When the fsck in step 0 came back clean, the pack verification and the object walk are skipped: that run has already read every object in every
-   pack and would have reported any that is missing or will not decode. Everything else still runs, because git does not look at all of it -- it
-   never verifies `objects/info/packs`, so a stale one leaves fsck happy and is still a file to put right. `ScanTrustingFsck` holds the rule, and
-   only the first scan of a run may use it; every later one follows a change this run made, which nobody has checked.
+   Most of that work has just been done, and the fsck in step 0 hands over what it found so this does not do it again. See "What the scan takes
+   from the fsck" below. Everything else still runs, because git does not look at all of it -- it never verifies `objects/info/packs`, so a stale
+   one leaves fsck happy and is still a file to put right. Only the first scan of a run may take anything on trust; every later one follows a change
+   this run made, which nobody has checked.
 2. Classify each fault into one of the six kinds above.
 3. Quarantine the derived caches, which need nothing else.
 4. Empty out and displace any packfile that will not verify, then scan again. This comes first among the repairs because a corrupt pack entry hides
@@ -138,6 +138,33 @@ Every step appends to the run manifest as it goes, so an interrupted run is stil
 
 `--dry-run` stops after step 2 and prints the plan, including which source would answer for each object. It promises to repair nothing rather than to
 write nothing: `--lost-found` is git's own option and saving dangling objects is all it does, so under a dry run it still saves them.
+
+## What the scan takes from the fsck
+
+The scan's two long passes are the ones the fsck has just made: verifying every packfile, and reading every object a reference leads to. Over
+229,960 objects they take a scan from 0.7s to 3.2s while finding nothing. Over a hundred million they are twenty minutes and forty-eight.
+
+The fsck hands back three things, and each answers something its exit status cannot.
+
+- **The packs it read end to end**, by path (`Options.PackVerified`). The status word is per run: one corrupt loose object sets `ErrorObject`, which
+  says nothing whatever about the packs, and acting on the bit read every pack in the repository a second time to find that out. A pack on this list
+  is not read again, and neither is any blob in it -- a pack that verified has decoded every object in it and required each one to hash to the name
+  its index gives it, which is the whole question a walk asks of a blob.
+- **The objects it could not produce** (`Options.ObjectsDamaged`), with whether the connectivity walk reached each one. A bit does not say what it
+  is about: `ErrorObject` is what a loose file that will not decode sets and also what a commit with no author sets, and `ErrorReachable` is what a
+  missing object sets and also what a reflog entry naming a pruned object sets. One of each pair is the reason this tool exists and the other is not
+  damage at all. An empty list means the walk has nothing to find and does not run.
+- **Whether that list is the whole of it.** A fault that no single object name describes -- a link refused on the type it implies, a reflog entry
+  naming an object that is gone -- marks the list partial, and a partial list is not counted against.
+
+With a whole list, the walk is an errand rather than a search: it goes and finds the route to each damaged object and stops at the last one. It
+reports the first route to each, where a search reports every route. That is the price of not reading a hundred million objects to list the rest.
+
+A run that stops part way hands back nothing. It checked part of the repository, so none of it may be taken on trust.
+
+`Verdict` in `internal/repair/repair.go` holds all of it, and `sameVerdict` in `cmd/git-fixed/fsck.go` decides whether the fsck that produced it
+asked the question this asks. A narrower fsck -- `--strict`, `--connectivity-only`, a named object -- answers something else, and its verdict is not
+used at all.
 
 ## The three container files
 

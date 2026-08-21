@@ -153,13 +153,14 @@ One worker over the 229,960 costs 0.92s against four workers' 0.37s, so about th
 `--strict` only changes how findings are graded: it adds no pass, and it reads nothing extra. It costs the same 2.5s as the two modes that read
 LESS, which is what says where the time goes. It is not the fsck. It is the repair scan underneath, and it is there in every row but the first.
 
-That scan verifies every pack and walks everything the references reach. `ScanTrustingFsck` skips both when the run above it was a full default fsck
-that came back clean, because such a run has already read every object and reported any that would not decode. A narrower fsck has not looked --
-`--connectivity-only` reads no object and `--no-full` skips the packs -- so the scan has to look itself, and the 2.2s is work git never does at all.
+That scan verifies every pack and walks everything the references reach, and a full default fsck has just done both. What it found is handed over
+rather than rediscovered: the packs it read end to end, the objects it could not produce, and whether that list accounts for everything. See "What
+the scan takes from the fsck" in `docs/repair.md`. A narrower fsck has not looked -- `--connectivity-only` reads no object and `--no-full` skips the
+packs -- so the scan has to look itself, and the 2.2s is work git never does at all.
 
 The narrow modes therefore pay the full damage scan to save a fraction of a full fsck, which is a bad trade for anyone who reaches for them to go
-faster. Making it a good one means letting the fsck hand its object table to the scan instead of the scan re-reading everything, which is a real
-change to the boundary between the two halves and is not attempted here.
+faster. What is still not handed over is the object table itself, with the edges the fsck recorded. The scan builds its own and re-reads every
+commit and tree to fill it, which is the last of this duplication and a real change to the boundary between the two halves.
 
 ## What is still serial
 

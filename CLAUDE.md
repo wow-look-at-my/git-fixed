@@ -5,9 +5,9 @@ after the fsck. There is one binary and there must stay one. More commands are p
 
 - **`--dry-run` is the drop-in for `git fsck`**, so its output and its exit status are git's whenever there is nothing to repair. A line printed
   there that git does not print is a bug, not a nicety.
-- **A run must cost what the fsck costs.** The scan skips the pack verification and the object walk when the caller's fsck came back clean, which is
-  the difference between 0.37s and 2.56s over 229,960 objects. Any narrower fsck pays the full scan. `repair.ScanTrustingFsck`,
-  `docs/architecture.md`.
+- **A run must cost what the fsck costs.** The fsck hands the scan the packs it read end to end, the objects it could not produce, and whether that
+  list is the whole of it -- so the scan re-reads neither. A status bit answers none of those: `ErrorObject` is a corrupt file and also a commit
+  with no author. `repair.Verdict`, `docs/repair.md`.
 - **A phase that takes time draws a meter, and the meter says what the run costs.** git shows one on five phases of its fsck and this shows one on
   the same five, plus two on the repair scan, which git has nothing to copy for. Every line carries the clock and the memory high-water mark,
   because a run the kernel kills for memory never reaches the line that would have said so. `internal/progress`, `internal/memwatch`,
