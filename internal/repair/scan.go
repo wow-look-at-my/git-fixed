@@ -75,9 +75,6 @@ type Damage struct {
 	Index *BadIndex
 	// PackedRefs is packed-refs when it will not parse, with the reason.
 	PackedRefs *BadPackedRefs
-	// Unreachable counts the dangling and unreachable objects, which are not
-	// damage. It is carried so a report can say so out loud.
-	Unreachable int
 }
 
 // Empty reports whether the scan found nothing to repair.
@@ -108,6 +105,15 @@ type scanner struct {
 	// pending counts what is queued plus what a worker is still reading, so
 	// an empty bag is not mistaken for a finished walk.
 	pending atomic.Int64
+
+	// hunt is how many damaged objects the walk is looking for, when somebody
+	// else has already found them all. Zero means the walk must read
+	// everything, because nobody knows what is out there.
+	hunt int
+	// found counts the damaged objects the walk has reached, and enough is
+	// the end of the walk. see walkWorker.
+	found atomic.Int64
+	stop  atomic.Bool
 
 	// trusted holds the packs that have been read end to end, object by
 	// object, with every one of them decoding and hashing to its own name --
@@ -229,6 +235,11 @@ func scan(repo *gitrepo.Repo, db *odb.DB, meters Meters, v *Verdict) (*Damage, e
 	// below reports.
 	s.scanRefs(d)
 	s.scanPackedRefs(d)
+	// When the fsck named every damaged object, the walk is not out looking
+	// for damage: it is out looking for the route to damage somebody else
+	// found. It stops at the last one rather than reading the other hundred
+	// million objects to say nothing about them.
+	s.hunt, _ = v.damageNamed()
 	if !v.refsReach() {
 		s.walk()
 	}
@@ -374,6 +385,13 @@ func (s *scanner) recordNeed(oid gitobj.OID, need Need) {
 
 // walk reads every queued object and follows what it points at, so the scan
 // reaches everything a reference needs rather than only the tips.
+//
+// It has two shapes. With no verdict to go on it is a search, and it reads
+// everything. With one it is an errand: the fsck has already named what cannot
+// be produced, and the walk goes and finds the route to each of those and
+// stops. An errand reports the first route to each damaged object rather than
+// every route, which is the price of not reading a hundred million objects to
+// list the rest of them.
 func (s *scanner) walk() {
 	// There is no total to count against: the queue grows as the walk finds
 	// what each object points at, so the number of objects it will reach is
@@ -441,6 +459,12 @@ func (s *scanner) provenBlob(oid gitobj.OID) bool {
 // "is there any more".
 func (s *scanner) walkWorker(m *progress.Meter) {
 	for {
+		if s.stop.Load() {
+			// Every object the fsck could not produce has a route to it
+			// now, and the fsck says there is nothing else to find. What
+			// is left in the bag is objects that are known to be fine.
+			return
+		}
 		q, ok := s.queue.TryTake()
 		if !ok {
 			if s.pending.Load() == 0 {
@@ -483,13 +507,18 @@ func (s *scanner) note(q queued, err error) {
 	// lock. A second worker reaching the same object builds the same answer
 	// and one of the two is dropped.
 	files, corrupt := s.copiesOf(q.oid)
+	first := false
 	s.bad.Compute(q.oid, func(old *BadObject, loaded bool) (*BadObject, bool) {
 		if !loaded {
 			old = &BadObject{OID: q.oid, Type: q.typ, Files: files, Corrupt: corrupt}
+			first = true
 		}
 		old.Needs = appendNeed(old.Needs, need)
 		return old, false
 	})
+	if first && s.hunt > 0 && s.found.Add(1) >= int64(s.hunt) {
+		s.stop.Store(true)
+	}
 	// Raised after the object is in the map, so a reader that sees the flag
 	// finds the object behind it.
 	s.anyBad.Store(true)

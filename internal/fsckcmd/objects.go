@@ -115,7 +115,7 @@ func (r *run) checkLooseObject(key sortKey, oid gitobj.OID, path, shown string) 
 	}
 	if failed {
 		r.fail(ErrorObject)
-		r.noteDamaged(oid)
+		r.noteDamaged(oid, false)
 		return
 	}
 	e, _, ok := r.objs.Lookup(oid, res.Type)
@@ -196,7 +196,7 @@ func (r *run) finishDeferredBlobs() {
 			if err != nil {
 				// A tree named this blob, so something wants it and
 				// the database will not produce it.
-				r.noteDamaged(oid)
+				r.noteDamaged(oid, false)
 				if r.fsck.ReportMissingBlob(key, oid, kind) != 0 {
 					r.fail(ErrorObject)
 				}

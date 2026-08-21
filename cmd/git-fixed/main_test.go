@@ -8,7 +8,9 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -425,4 +427,53 @@ func TestACorruptObjectAReferenceReachesStartsTheWalk(t *testing.T) {
 		"a reference leads to the broken object, so the walk must go and find it")
 	assert.Contains(t, got.Stdout, blob.String(),
 		"the object a reference cannot reach must be reported")
+}
+
+// walkReached is how far the walk's own meter got, and what it was counting
+// against. The meter redraws in place, so the last line is the final count.
+func walkReached(t *testing.T, stderr string) (reached, total int) {
+	t.Helper()
+	re := regexp.MustCompile(`Checking what the references reach: +\d+% \((\d+)/(\d+)\)`)
+	all := re.FindAllStringSubmatch(stderr, -1)
+	require.NotEmpty(t, all, "the walk drew no meter, so this proves nothing")
+	last := all[len(all)-1]
+	reached, err := strconv.Atoi(last[1])
+	require.NoError(t, err)
+	total, err = strconv.Atoi(last[2])
+	require.NoError(t, err)
+	return reached, total
+}
+
+// TestTheWalkStopsAtTheLastDamagedObject is the errand shape of the walk.
+//
+// The fsck has already read every object and named the ones it could not
+// produce. What the walk adds is the route to each of them, so it has nothing
+// left to do once it has found the last one -- and reading the rest of the
+// history to say that they are fine is the longest part of a repair.
+//
+// The history here is a chain, so the only way to the far end of it is one
+// commit at a time, while the damaged blob hangs off the tip.
+func TestTheWalkStopsAtTheLastDamagedObject(t *testing.T) {
+	gittest.RequireGit(t)
+	r := gittest.New(t)
+
+	var parents []gitobj.OID
+	for i := range 300 {
+		blob := r.Blob(fmt.Sprintf("old %d\n", i))
+		tree := r.WriteRaw("tree", gittest.Tree(gittest.TreeEntry{Mode: "100644", Name: "f", OID: blob}))
+		parents = []gitobj.OID{r.Commit(tree, parents, fmt.Sprintf("commit %d", i))}
+	}
+	broken := r.Blob("this one is damaged\n")
+	tip := r.WriteRaw("tree", gittest.Tree(gittest.TreeEntry{Mode: "100644", Name: "f", OID: broken}))
+	head := r.Commit(tip, parents, "tip")
+	r.UpdateRef("refs/heads/master", head)
+	r.SetHEAD("refs/heads/master")
+	r.Overwrite(broken, []byte("this is not a git object"))
+
+	got := invoke(t, r, "--dry-run", "--progress")
+	assert.Contains(t, got.Stdout, broken.String(), "the damaged object must still be reported")
+
+	reached, total := walkReached(t, got.Stderr)
+	assert.Less(t, reached, total/2,
+		"the walk read the whole history after it had already found what it came for")
 }

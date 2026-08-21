@@ -131,10 +131,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	// The same for the other thing the status word cannot say: which objects
 	// were actually unreadable, rather than merely badly written.
 	var damaged []gitobj.OID
-	o.ObjectDamaged = func(oid gitobj.OID, reachable bool) {
-		if reachable {
-			damaged = append(damaged, oid)
-		}
+	damageWhole := false
+	o.ObjectsDamaged = func(oids []gitobj.OID, whole bool) {
+		damaged, damageWhole = oids, whole
 	}
 
 	// A run that stops part way has checked part of the repository, so
@@ -155,7 +154,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 	// by the fsck that found those faults.
 	var verdict *repair.Verdict
 	if reusable && !stopped {
-		verdict = &repair.Verdict{Status: status, Verified: verified, Damaged: damaged}
+		verdict = &repair.Verdict{
+			Status:      status,
+			Verified:    verified,
+			Damaged:     damaged,
+			DamageWhole: damageWhole,
+		}
 	}
 
 	res, err := repair.Run(&repair.Options{

@@ -63,6 +63,10 @@ type Verdict struct {
 	// reachable wants. They are what the walk below would go looking for, so
 	// an empty list is what lets the walk be skipped.
 	Damaged []gitobj.OID
+	// DamageWhole says the list above accounts for every object fault that
+	// run found. Without it the list is a start and not an answer, and the
+	// walk has to go and look for itself.
+	DamageWhole bool
 }
 
 // verifiedPacks are the packfiles that fsck read end to end, every object in
@@ -83,22 +87,28 @@ func (v *Verdict) Whole() bool { return v != nil && v.Status == 0 }
 
 // refsReach reports whether everything the references lead to was there and
 // readable.
-//
-// ErrorReachable is git's bit for an object something reachable names and the
-// repository does not have. The walk here starts from the same references and
-// asks the same question of every object it meets, so with that bit clear --
-// and with no damaged object or pack under it -- the walk has nothing left to
-// find.
-//
-// The damaged objects are a list and not a bit, because ErrorObject is the same
-// bit for a commit with no author and for a loose file that will not decode.
-// One is a badly written object and not damage at all; the other is the reason
-// this tool exists. Reading the bit sent the walk over a hundred million
-// objects to find out which.
 func (v *Verdict) refsReach() bool {
-	return v != nil &&
-		v.Status&(fsckcmd.ErrorPack|fsckcmd.ErrorReachable) == 0 &&
-		len(v.Damaged) == 0
+	n, named := v.damageNamed()
+	return named && n == 0
+}
+
+// damageNamed is how many damaged objects the fsck named, and whether that list
+// is everything the walk below could find.
+//
+// The damage is a list and not a status bit, because a bit does not say what it
+// is about. ErrorObject is what a loose file that will not decode sets and also
+// what a commit with no author sets; ErrorReachable is what a missing object
+// sets and also what a reflog entry naming a pruned one sets. One of each pair
+// is the reason this tool exists and the other is not damage at all. Reading
+// the bits sent the walk over a hundred million objects to find out which.
+//
+// ErrorPack stays a bit, because a pack that failed to verify holds objects
+// nobody has read yet and no list can name them.
+func (v *Verdict) damageNamed() (int, bool) {
+	if v == nil || !v.DamageWhole || v.Status&fsckcmd.ErrorPack != 0 {
+		return 0, false
+	}
+	return len(v.Damaged), true
 }
 
 // meters is where a scan started by this run draws its progress.
