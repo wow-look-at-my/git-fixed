@@ -98,7 +98,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	defer stop()
 
-	heapStop, err := startHeapProfile()
+	heapStop, err := startHeapProfile(stderr)
 	if err != nil {
 		fmt.Fprintf(stderr, "fatal: %s\n", err)
 		return 128

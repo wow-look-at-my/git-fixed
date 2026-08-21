@@ -107,14 +107,34 @@ guard covers a container and finds nothing to read anywhere else; `/proc/meminfo
 Against git 2.55.0, on four cores, so read every ratio against four. `scripts/bench.sh` produces the time and refuses to print one unless the two
 implementations agreed on the output first. Each figure is the best of several runs, on a warm page cache, and memory is peak RSS.
 
-The main repository is the synthetic 229,960 objects `scripts/make-bench-repo.sh` builds. Two others are here because they are the shapes that break
-a tool rather than the shape that is common: 988,000 small objects, and 72 objects that are 128 MiB blobs in one delta chain.
+The main repository is the synthetic 229,960 objects `scripts/make-bench-repo.sh` builds. Three others are here because they are the shapes that
+break a tool rather than the shape that is common: a million small objects, five million of them, and 72 objects that are 128 MiB blobs in one delta
+chain.
 
 | repository        | git             | git-fixed       | before this work |
 |-------------------|-----------------|-----------------|------------------|
 | 229,960 objects   | 1.10s / 114 MB  | 0.37s / 97 MB   | 0.44s / 179 MB   |
 | 988,000 objects   | 6.02s / 332 MB  | 2.07s / 407 MB  | 2.71s / 772 MB   |
+| 4,925,280 objects | 30.38s / 1,106 MB | 12.61s / 2,074 MB | not measured   |
 | 72 x 128 MiB, one chain | 13.03s / 403 MB | 4.55s / 533 MB | 9.99s / 3,096 MB |
+
+The five-million row has no before figure because the repository that produced it was built afterwards, and the run it would be compared against is
+the one that had no bound on the delta chain at all.
+
+The two large rows are what to read for a repository of tens of millions of objects, and they say two things. The time is 2.4x to 2.9x git's and
+scales with the object count rather than worse than it. The memory is linear too -- the peak Go heap is 321 bytes an object over a million of them
+and 327 over five million -- but it is above git's, and the RSS figures understate the gap, because both implementations map the same packfile.
+
+Peak RSS is what a person sees in `top` and it is not the number a change here moves: most of the difference between it and the heap is packfile
+pages the kernel maps and reclaims on its own. `GIT_FIXED_MEMPROFILE` names a file for the heap profile and prints the peak Go heap on the way out,
+which is the number that answers for a per-object structure. The profile itself is written at exit, when the tables are already unreachable, so read
+its `alloc_space` and not its `inuse_space`.
+
+What is in those 327 bytes, measured over the million: the pack's layout is 64 (`packEntry` is 48 of it, and the child, parent and header links the
+rest), `objEntry` is 72, its slab and table slots about 25, and the recorded edges about 40. The delta base cache's 96 MiB is fixed and stops
+counting per object as the repository grows. Going below git means holding one structure per object instead of two -- the fsck's table and the pack's
+layout are alive at the same moment and describe the same objects -- and that is a change to the boundary between `internal/odb` and
+`internal/fsckcmd`, not a smaller field.
 
 The last row is what the whole memory bound is for. A delta chain is decoded by keeping every parent alive down to the leaf, so the cost was workers
 times chain depth times object size, and nothing in the repository's own size predicted it. `docs/pack-verification.md`.
