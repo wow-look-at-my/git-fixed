@@ -397,11 +397,13 @@ func (s *scanner) walk() {
 	// what each object points at, so the number of objects it will reach is
 	// not known until it has reached them. git's own connectivity meter
 	// counts the same way, and for the same reason.
-	// The walk reads each object it reaches once, so the repository's own
-	// object count is an upper bound on what it will read. A meter counting
-	// against it finishes at or below 100%, and until this had a total it
-	// showed a rising number that said nothing about how far along it was.
-	m := s.meters.start("Checking what the references reach", s.objectCount())
+	// The walk reads each object it reaches once, so the objects the
+	// repository holds, plus the ones somebody has already said it does not,
+	// is what it will read. Until this had a total it showed a rising number
+	// that said nothing about how far along it was. It is still an estimate:
+	// a walk with no verdict behind it meets a missing object without warning,
+	// and the meter raises its own total when that happens.
+	m := s.meters.start("Checking what the references reach", s.objectCount()+int64(s.hunt))
 	defer m.Finish()
 
 	var wg sync.WaitGroup

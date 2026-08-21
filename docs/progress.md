@@ -17,16 +17,20 @@ it is a second full pass over the repository and git has nothing there to copy.
 | `Verifying reverse pack-indexes` | packs | yes | `fsckcmd/graphs.go` |
 | `Checking ref database` | 1 | no | `fsckcmd/refsverify.go` |
 | `Verifying packs` | packed objects, whole repository | no | `repair/packs.go`, `scanPacks` |
-| `Checking what the references reach` | countless | no | `repair/scan.go`, `walk` |
+| `Checking what the references reach` | objects held, plus the damage already named | no | `repair/scan.go`, `walk` |
 
 Each title is `builtin/fsck.c`'s own string, at lines 203, 804, 931, 961 and 1088 of git 2.55.0. The two totals worth noticing are that
 `Checking object directories` counts the 256 fanout directories rather than the objects in them -- so a repository with a handful of loose objects
 finishes it at once -- and that `Checking objects` counts every packed object in the repository rather than in one pack, so a single meter spans
 every pack.
 
-The last two are the repair scan's. That scan verifies every pack again and walks everything the references reach, and it runs whenever the fsck's
-verdict cannot be reused, which is every damaged repository -- that is, exactly the repositories this tool is for. It was the longest silence in a
-run.
+The last two are the repair scan's, and each draws only for the work the fsck above it did not already do: a pack that fsck read end to end is not
+verified again, and the walk does not run at all when fsck named no damage anything reachable wants. See "What the scan takes from the fsck" in
+`docs/repair.md`. Between them they were the longest silence in a run.
+
+The walk's total is an estimate and the only one here that can be wrong low. It counts against the objects the repository holds, and a walk exists
+to find an object it does not hold: one that is missing is reached, counted, and has no file to have been counted in. So `Meter.raise` moves a total
+up to meet a count that passes it, rather than printing 150%.
 
 ## Turning it on
 

@@ -1,7 +1,8 @@
 package progress
 
-// The meter's two promises: it only ever goes forwards, and every line says
-// how long the phase has run and what the run is costing.
+// The meter's three promises: it only ever goes forwards, it never passes a
+// hundred percent, and every line says how long the phase has run and what the
+// run is costing.
 
 import (
 	"bytes"
@@ -140,4 +141,55 @@ func TestAMeterThatBeatItsDelayPrintsNothing(t *testing.T) {
 	m.Step()
 	m.Finish()
 	assert.Empty(t, out.String())
+}
+
+// percent is the percentage out of every line a meter wrote.
+var percent = regexp.MustCompile(`(\d+)% \((\d+)/(\d+)\)`)
+
+// TestAMeterNeverPassesAHundredPercent is the third promise, and it is about a
+// total that was wrong.
+//
+// The repair walk counts against the objects the repository holds and then
+// reaches one it does not hold, which is the entire reason that walk runs. The
+// arithmetic then says 150%, which reports on the meter and not on the run.
+func TestAMeterNeverPassesAHundredPercent(t *testing.T) {
+	var buf safeBuffer
+	m := Start(&buf, "Checking", 2)
+	for range 5 {
+		m.Step()
+	}
+	m.Finish()
+
+	lines := percent.FindAllStringSubmatch(buf.String(), -1)
+	require.NotEmpty(t, lines, "the meter drew nothing")
+	for _, l := range lines {
+		p, err := strconv.Atoi(l[1])
+		require.NoError(t, err)
+		count, err := strconv.Atoi(l[2])
+		require.NoError(t, err)
+		total, err := strconv.Atoi(l[3])
+		require.NoError(t, err)
+		assert.LessOrEqual(t, p, 100, "%q", l[0])
+		assert.LessOrEqual(t, count, total, "the count passed the total it was drawn against: %q", l[0])
+	}
+	last := lines[len(lines)-1]
+	assert.Equal(t, "5", last[2], "the count is what it counted")
+	assert.Equal(t, "5", last[3], "the total moved up to meet it")
+}
+
+// TestATotalThatWasRightIsLeftAlone keeps the correction from touching the
+// ordinary case, where the caller knew what it was counting.
+func TestATotalThatWasRightIsLeftAlone(t *testing.T) {
+	var buf safeBuffer
+	m := Start(&buf, "Checking", 10)
+	for range 4 {
+		m.Step()
+	}
+	m.Finish()
+
+	lines := percent.FindAllStringSubmatch(buf.String(), -1)
+	require.NotEmpty(t, lines)
+	last := lines[len(lines)-1]
+	assert.Equal(t, "40", last[1])
+	assert.Equal(t, "10", last[3], "a total the count never reached must not move")
 }

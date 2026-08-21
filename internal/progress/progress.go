@@ -38,7 +38,9 @@ const delay = time.Second
 type Meter struct {
 	w     io.Writer
 	title string
-	total int64
+	// total is what the caller believed the count would reach. It is an
+	// estimate and it moves: see raise.
+	total atomic.Int64
 
 	count atomic.Int64
 	// pct is the percentage last drawn, so a step that does not move it
@@ -73,7 +75,8 @@ func StartDelayed(w io.Writer, title string, total int64) *Meter {
 }
 
 func start(w io.Writer, title string, total int64, delayed bool) *Meter {
-	m := &Meter{w: w, title: title, total: total, start: time.Now(), stop: make(chan struct{})}
+	m := &Meter{w: w, title: title, start: time.Now(), stop: make(chan struct{})}
+	m.total.Store(total)
 	m.pct.Store(-1)
 	m.quiet.Store(delayed)
 	m.wg.Add(1)
@@ -134,14 +137,34 @@ func (m *Meter) Advance(n int64) {
 	}
 }
 
+// raise moves the total up to meet a count that has passed it, and returns the
+// total to measure against.
+//
+// A total is what the caller believed the count would reach, and a caller can
+// be wrong low. The repair walk counts against the objects the repository holds
+// and then reaches one it does not hold, which is the whole reason that walk
+// runs. A meter that answered "150%" there would be reporting on its own
+// arithmetic and not on the run.
+func (m *Meter) raise(n int64) int64 {
+	for {
+		total := m.total.Load()
+		if n <= total || total == 0 {
+			return total
+		}
+		if m.total.CompareAndSwap(total, n) {
+			return n
+		}
+	}
+}
+
 // report draws when the count has moved the percentage or the timer has come
 // round, which is what git's display() decides.
 func (m *Meter) report(n int64) {
 	if m.quiet.Load() {
 		return
 	}
-	if m.total > 0 {
-		p := int32(n * 100 / m.total)
+	if total := m.raise(n); total > 0 {
+		p := int32(n * 100 / total)
 		if m.pct.Load() == p && !m.due.Load() {
 			return
 		}
@@ -166,10 +189,10 @@ func (m *Meter) draw(end string) {
 	defer m.mu.Unlock()
 	n := m.count.Load()
 	var counters string
-	if m.total > 0 {
-		p := n * 100 / m.total
+	if total := m.raise(n); total > 0 {
+		p := n * 100 / total
 		m.pct.Store(int32(p))
-		counters = fmt.Sprintf("%3d%% (%d/%d) %s", p, n, m.total, m.status())
+		counters = fmt.Sprintf("%3d%% (%d/%d) %s", p, n, total, m.status())
 	} else {
 		counters = fmt.Sprintf("%d %s", n, m.status())
 	}
