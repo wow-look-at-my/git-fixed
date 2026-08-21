@@ -180,6 +180,31 @@ The last row is the errand. The walk read 14 objects of 1,241,684 and stopped, a
 asked the question this asks. A narrower fsck -- `--strict`, `--connectivity-only`, a named object -- answers something else, and its verdict is not
 used at all.
 
+## What one pass takes from the pass before it
+
+A repair goes round more than once. A missing tree hides everything under it, so a scan sees only the top of a chain, one pass repairs one layer,
+and the layer below only becomes visible once that pass is done. The loop is what reaches the bottom.
+
+Every pass after the first used to begin with a full scan, which handed over nothing at all. On a repository of 104 million objects that is fifteen
+to twenty minutes of packs and five minutes of walking, per layer, and a run seen doing four passes spent over an hour of it. Both are now carried
+across the passes, for the same reason and by the same rule: hand over the fact, and check it rather than assume it.
+
+- **The packs.** A pass writes loose objects and moves whole packs to quarantine. It never writes into a pack, so a pack still standing is still the
+  pack that was read. The scan hands the next scan of the same run its `Damage.Verified`: each pack's path, size and modification time. `rescan`
+  compares all three before trusting any of it, so a pack that grew, that was rewritten to the same size, or that is no longer there gets read.
+  `trustUnchanged`, `internal/repair/scan.go`.
+- **The route back to the damage.** A later pass does not scan at all. `descend` starts the walk under the objects the pass before it put back,
+  because that is where the next layer is, and everything else reachable was approved by the walk that already ran. It reads nothing a full scan
+  would not have had to read: the earlier walk stopped at the object that was missing, so nothing below it has been looked at yet.
+  `internal/repair/walk.go`.
+
+Two things do still scan the whole repository again, and must. Displacing a corrupt pack or rewriting `packed-refs` changes what the repository can
+produce and what its references reach, globally -- a line git's reader refuses hides every reference below it -- so each is followed by a `rescan`.
+And the run ends with a full `git fsck` of its own, which is the proof that the repair worked and is not something to take on trust from anybody.
+
+An object no source had is carried by hand from pass to pass (`stillBad`), because nothing re-reports it now. Dropping it would leave a failed run
+calling itself `Ok`.
+
 ## The three container files
 
 An object, a ref file and a cache each hold one thing. A packfile, an index and `packed-refs` each hold many, and that changes what repairing them
