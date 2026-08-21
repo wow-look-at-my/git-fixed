@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync"
 
 	"github.com/wow-look-at-my/git-fixed/internal/fsckcmd"
 	"github.com/wow-look-at-my/git-fixed/internal/memwatch"
@@ -114,6 +115,18 @@ func run(args []string, stdout, stderr io.Writer) int {
 	// been drawing all along.
 	defer reportMemory(o.ShowProgress, stderr)
 
+	// Collected while fsck runs, because it is the one thing the status word
+	// cannot say: which packs were read end to end and were fine. The repair
+	// scan is about to want exactly that, and reading them again is the
+	// longest part of a run.
+	var verified []string
+	var verifiedMu sync.Mutex
+	o.PackVerified = func(path string) {
+		verifiedMu.Lock()
+		verified = append(verified, path)
+		verifiedMu.Unlock()
+	}
+
 	// Asked before the run, not after. fsck resolves some of its options as it
 	// goes and writes them back here: with no object named it makes the index
 	// a head, so afterwards these options no longer describe the command line
@@ -127,7 +140,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	// by the fsck that found those faults.
 	var verdict *repair.Verdict
 	if reusable {
-		verdict = &repair.Verdict{Status: status}
+		verdict = &repair.Verdict{Status: status, Verified: verified}
 	}
 
 	res, err := repair.Run(&repair.Options{

@@ -364,3 +364,30 @@ func TestTheClosingMemoryLineRidesWithTheMeters(t *testing.T) {
 	assert.NotContains(t, loud.Stdout, "Peak memory:",
 		"the marks go to the stream the meters go to")
 }
+
+// TestOneBadLooseObjectDoesNotRereadEveryPack is the longest thing a run used
+// to do for no reason.
+//
+// The fsck reads every object in every pack and hashes each one. When it then
+// reports a corrupt LOOSE object, its status word says ErrorObject -- which
+// says nothing about the packs, and used to send the repair scan through every
+// one of them a second time. On a hundred million objects that is twenty
+// minutes to rediscover that the packs are fine.
+//
+// The meter is the evidence: the scan's pack pass draws "Verifying packs", and
+// a pass that is skipped draws nothing.
+func TestOneBadLooseObjectDoesNotRereadEveryPack(t *testing.T) {
+	r := repo(t)
+	r.Git("repack", "-adq")
+
+	// A loose object whose file is there and whose content is not the object
+	// it is named after. git fsck reports it and sets ErrorObject.
+	blob := r.Blob("loose and broken\n")
+	r.Overwrite(blob, []byte("this is not a git object"))
+
+	got := invoke(t, r, "--dry-run", "--progress")
+	require.Contains(t, got.Stderr, "Checking objects",
+		"the fsck's own object phase must have run, or this proves nothing")
+	assert.NotContains(t, got.Stderr, "Verifying packs",
+		"a corrupt loose object sent the scan back through every pack")
+}

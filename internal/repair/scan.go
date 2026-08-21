@@ -216,14 +216,12 @@ func scan(repo *gitrepo.Repo, db *odb.DB, meters Meters, v *Verdict) (*Damage, e
 	}
 	d := &Damage{}
 	s.scanDerived(d)
-	if v.packsRead() {
-		// The caller's fsck read every object in every pack and was
-		// satisfied with all of them.
-		s.trustEveryPack()
-	} else {
-		s.scanPacks(d)
-		s.trustPacksBut(d.Packs)
-	}
+	// Every pack the caller's fsck read end to end is a pack this does not
+	// read again, whatever else that fsck was unhappy about. One corrupt
+	// loose object used to condemn every pack in the repository to a second
+	// full read.
+	s.trustNamed(v.verifiedPacks())
+	s.scanPacks(d)
 	s.scanIndexes(d)
 	// scanRefs first: reading the references is what makes git's own reader
 	// pass over packed-refs, and its verdict on that file is what the check
@@ -398,22 +396,20 @@ func (s *scanner) walk() {
 	wg.Wait()
 }
 
-// trustEveryPack records that every pack has been read end to end.
-func (s *scanner) trustEveryPack() {
-	s.trusted = map[string]bool{}
-	for _, p := range s.db.Packs() {
-		if p.OpenErr == nil {
-			s.trusted[p.File] = true
-		}
+// trustNamed records the packs somebody else has already read end to end.
+func (s *scanner) trustNamed(paths []string) {
+	s.trusted = make(map[string]bool, len(paths))
+	for _, p := range paths {
+		s.trusted[p] = true
 	}
 }
 
-// trustPacksBut records the packs this scan's own pass was satisfied with.
-func (s *scanner) trustPacksBut(bad []BadPack) {
-	s.trustEveryPack()
-	for _, b := range bad {
-		delete(s.trusted, b.Pack)
+// trust records one more pack this scan verified for itself.
+func (s *scanner) trust(path string) {
+	if s.trusted == nil {
+		s.trusted = map[string]bool{}
 	}
+	s.trusted[path] = true
 }
 
 // provenBlob reports whether this object is a blob that has already been read

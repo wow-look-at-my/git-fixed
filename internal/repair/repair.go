@@ -56,21 +56,26 @@ type Options struct {
 // found the damage in the first place.
 type Verdict struct {
 	Status int
+	// Verified are the packfiles that run read end to end without complaint,
+	// by path. A scan takes each of them on trust and does not read it again.
+	Verified []string
+}
+
+// verifiedPacks are the packfiles that fsck read end to end, every object in
+// them decoding and hashing to the name its index gives it.
+//
+// This is per pack, where the status word is per run: one corrupt loose object
+// sets ErrorObject and says nothing whatever about the packs, and acting on the
+// status alone read every pack in the repository a second time to find that out.
+func (v *Verdict) verifiedPacks() []string {
+	if v == nil {
+		return nil
+	}
+	return v.Verified
 }
 
 // Whole reports whether the fsck found nothing at all.
 func (v *Verdict) Whole() bool { return v != nil && v.Status == 0 }
-
-// packsRead reports whether that fsck read every object in every pack and was
-// satisfied with all of them.
-//
-// The object phase decodes every packed object and hashes it against the name
-// the index gives it. A pack that would not verify sets ErrorPack, and an
-// object that would not decode or did not hash sets ErrorObject. With both
-// clear, verifying the packs again finds what it found: nothing.
-func (v *Verdict) packsRead() bool {
-	return v != nil && v.Status&(fsckcmd.ErrorObject|fsckcmd.ErrorPack) == 0
-}
 
 // refsReach reports whether everything the references lead to was there and
 // readable.

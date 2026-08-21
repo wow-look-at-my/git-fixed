@@ -58,6 +58,19 @@ type Options struct {
 	ShowProgress     bool
 	Args             []string
 
+	// PackVerified, when set, is called with the path of every packfile this
+	// run read end to end with every object in it decoding and hashing to the
+	// name its index gives it.
+	//
+	// It is for a caller that is about to make the same pass. That pass is
+	// the longest part of a repair -- twenty minutes over a hundred million
+	// objects -- and without this the only thing it could go on was the exit
+	// status, where one corrupt loose object condemns every pack to being
+	// read again.
+	//
+	// It is called from the goroutine that checked the pack.
+	PackVerified func(path string)
+
 	// Workers is how many goroutines decode and check objects at once.
 	Workers int
 

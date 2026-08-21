@@ -46,25 +46,36 @@ type RescuedPack struct {
 // longer there, which is a second fault to repair.
 var companionSuffixes = []string{".pack", ".idx", ".rev", ".bitmap", ".keep", ".promisor", ".mtimes"}
 
-// scanPacks verifies every pack and records the ones that fail.
+// scanPacks verifies the packs nobody has verified yet, and records the ones
+// that fail.
 //
 // This runs the same check `git fsck` runs, so a pack it accepts is a pack git
-// accepts. It costs a full read of every pack, which is the price of knowing
-// rather than guessing.
+// accepts. It costs a full read of the pack, which is the price of knowing
+// rather than guessing -- and it is why a pack the caller's fsck has already
+// read is left alone here. Reading it again asks a question that has an answer.
 func (s *scanner) scanPacks(d *Damage) {
-	packs := s.db.Packs()
+	var todo []*odb.Pack
 	total := int64(0)
-	for _, p := range packs {
+	for _, p := range s.db.Packs() {
+		if s.trusted[p.File] {
+			continue
+		}
+		todo = append(todo, p)
 		if p.OpenErr == nil {
 			total += int64(p.Num)
 		}
 	}
+	if len(todo) == 0 {
+		return
+	}
 	m := s.meters.start("Verifying packs", total)
 	defer m.Finish()
-	for _, p := range packs {
+	for _, p := range todo {
 		if bad, ok := verifyPack(p, m); ok {
 			d.Packs = append(d.Packs, bad)
+			continue
 		}
+		s.trust(p.File)
 	}
 }
 

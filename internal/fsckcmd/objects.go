@@ -177,6 +177,10 @@ func (r *run) checkPack(group int, p *odb.Pack, m *progress.Meter) {
 	})
 	if !ok {
 		r.fail(ErrorPack)
+		return
+	}
+	if r.o.PackVerified != nil {
+		r.o.PackVerified(p.File)
 	}
 }
 
