@@ -22,7 +22,7 @@ const (
 // objEntry is one object the run knows about, whether or not it exists.
 //
 // There is one of these per object, so a field here costs megabytes on a large
-// repository: it is 64 bytes, and was 128.
+// repository. It is 72 bytes.
 type objEntry struct {
 	OID   gitobj.OID
 	typ   atomic.Int32

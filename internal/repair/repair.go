@@ -149,7 +149,7 @@ func Run(o *Options) (*Result, error) {
 		return res, err
 	}
 	if o.DryRun {
-		return plan(repo, damage, res), nil
+		return plan(repo, db, damage, res), nil
 	}
 
 	q := NewQuarantine(repo.CommonDir, o.Run)
@@ -347,11 +347,28 @@ func open(dir string) (*gitrepo.Repo, *odb.DB, error) {
 }
 
 // plan fills in what a dry run would have done, without doing it.
-func plan(repo *gitrepo.Repo, damage *Damage, res *Result) *Result {
+func plan(repo *gitrepo.Repo, db *odb.DB, damage *Damage, res *Result) *Result {
 	for _, path := range damage.Derived {
 		res.Derived = append(res.Derived, repo.Shown(path))
 	}
-	res.Unrecovered = append(res.Unrecovered, damage.Objects...)
+	// Every damaged object is put to the recovery ladder, which reads and
+	// writes nothing: the remote it may consult is fetched into a scratch
+	// repository of its own. Listing them all as unrecoverable instead --
+	// which is what this did -- tells someone their objects are gone while
+	// the repair that follows would have put most of them back.
+	if len(damage.Objects) > 0 {
+		src := NewSources(repo, db)
+		defer src.Close()
+		for _, b := range damage.Objects {
+			f, err := src.Find(b)
+			if err != nil {
+				res.Unrecovered = append(res.Unrecovered, b)
+				continue
+			}
+			res.Objects = append(res.Objects, Recovered{OID: b.OID, Type: f.Type, Source: f.Source})
+		}
+		res.RemoteError = src.RemoteError()
+	}
 	for _, bad := range damage.Packs {
 		// A dry run does not extract, so it cannot say yet whether the pack
 		// will yield anything -- and that is what decides whether it moves.
@@ -363,6 +380,9 @@ func plan(repo *gitrepo.Repo, damage *Damage, res *Result) *Result {
 	if damage.PackedRefs != nil {
 		res.PackedRefs = &RepairedPackedRefs{Why: damage.PackedRefs.Why}
 	}
+	sort.Slice(res.Objects, func(i, j int) bool {
+		return res.Objects[i].OID.Compare(res.Objects[j].OID) < 0
+	})
 	sort.Slice(res.Unrecovered, func(i, j int) bool {
 		return res.Unrecovered[i].OID.Compare(res.Unrecovered[j].OID) < 0
 	})
@@ -501,4 +521,33 @@ func (r *Result) reportPartialRepairs(w io.Writer) {
 	fmt.Fprint(w, "Their CONTENT is not lost: git add writes a blob before the index records\n"+
 		"it, so it is in the object database, unreferenced. `git fsck --lost-found`\n"+
 		"writes those out. The original index is in the quarantine directory above.\n")
+}
+
+// ReportPlanTotals closes a --dry-run by accounting for everything the scan
+// found: what a repair would put right, and what it would leave.
+//
+// The lines above name each one, and a person reading a long list of them
+// needs to know whether the list adds up. A plan that ends without saying so
+// leaves the one question it was run to answer -- can this be repaired --
+// for the reader to work out by counting.
+func (r *Result) ReportPlanTotals(w io.Writer) {
+	would := len(r.Derived) + len(r.Objects) + len(r.Refs) + len(r.Packs)
+	if r.Index != nil {
+		would++
+	}
+	if r.PackedRefs != nil {
+		would++
+	}
+	fmt.Fprintf(w, "\n%d fault(s) would be repaired, %d would not.\n", would, len(r.Unrecovered))
+	if len(r.Packs) > 0 {
+		// The pack lines above say "would empty out" and cannot say how much
+		// comes out, because that needs the extraction itself. Saying which
+		// number is a plan and which is a measurement is the difference
+		// between a report and a guess.
+		fmt.Fprint(w, "A packfile's own count is not in those totals: how many objects it still\n"+
+			"yields is only known once they are written out, which a --dry-run does not do.\n")
+	}
+	if len(r.Unrecovered) == 0 && len(r.Packs) == 0 {
+		fmt.Fprint(w, "Run without --dry-run to make these repairs.\n")
+	}
 }

@@ -23,7 +23,11 @@ import (
 	"github.com/wow-look-at-my/git-fixed/internal/odb"
 )
 
-// Exit status bits, the same ones builtin/fsck.c returns.
+// Exit status bits. The first eight are the ones builtin/fsck.c returns.
+//
+// ErrorIndex is this implementation's own, and it exists because git has no
+// bit for an unreadable index: git dies with status 128 instead, which says
+// "I gave up" and says nothing about the repository. see docs/exit-status.md
 const (
 	ErrorObject         = 001
 	ErrorReachable      = 002
@@ -33,6 +37,7 @@ const (
 	ErrorMultiPackIndex = 040
 	ErrorPackRevIndex   = 0100
 	ErrorBitmap         = 0200
+	ErrorIndex          = 0400
 )
 
 // Options are the command's settings, one field per git fsck option.
@@ -187,10 +192,7 @@ func Run(o *Options) int {
 	}
 
 	if o.KeepCacheObjects {
-		if code := r.checkIndexes(); code != 0 {
-			rep.Flush()
-			return code
-		}
+		r.checkIndexes()
 	}
 	rep.Flush()
 

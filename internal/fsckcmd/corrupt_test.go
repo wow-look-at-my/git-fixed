@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/wow-look-at-my/git-fixed/internal/fsckcmd"
 	"github.com/wow-look-at-my/git-fixed/internal/gitobj"
 	"github.com/wow-look-at-my/git-fixed/internal/gittest"
 	"github.com/wow-look-at-my/git-fixed/internal/odb"
@@ -154,10 +155,24 @@ func TestUnreadableIndex(t *testing.T) {
 	require.Greater(t, len(data), 12, "git wrote no index to truncate")
 	gittest.WriteOver(t, index, data[:8])
 
-	res := sameAsGit(t, r)
-	assert.Equal(t, 128, res.Code, "an index that will not parse is fatal, not a finding")
-	assert.Contains(t, res.Stderr, ".git/index: index file smaller than expected")
-	assert.NotContains(t, res.Stderr, r.Dir, "the message named the absolute path this process opened")
+	want := r.GitFsck()
+	got := ours(t, r.Dir)
+
+	// git gives up here: status 128, and the reverse-index checks, the bitmap
+	// checks, the connectivity walk and the graph checks never run -- none of
+	// which reads the index. see docs/exit-status.md
+	assert.Equal(t, 128, want.Code, "git's own behaviour, which this deliberately does not copy")
+	assert.Equal(t, fsckcmd.ErrorIndex, got.Code, "the index is unusable, and that is what the status says")
+
+	// The message is still git's, and it still names the index the way git
+	// names it rather than the absolute path this process opened.
+	assert.Contains(t, got.Stderr, ".git/index: index file smaller than expected")
+	assert.NotContains(t, got.Stderr, r.Dir)
+
+	// And the phases git skipped were run. A repository whose only fault is
+	// its index has nothing else to say, so the proof is that the run reached
+	// the end rather than stopping at the index.
+	assert.NotContains(t, got.Stderr, "fatal:")
 }
 
 // TestADeltaWhoseBaseIsNotInThePack covers git's get_delta_base() finding

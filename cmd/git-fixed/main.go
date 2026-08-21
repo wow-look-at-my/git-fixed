@@ -30,6 +30,9 @@ var usage = []string{
 }
 
 func main() {
+	// Here rather than in an init, so it runs after the guard go-toolchain
+	// injects and can see whether that guard already set a limit.
+	capHeap()
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
@@ -153,9 +156,13 @@ func reportPlan(res *repair.Result, status int, stdout, stderr io.Writer) int {
 	switch {
 	case res.Nothing():
 	case res.FoundNothingToDo():
-		fmt.Fprintln(stderr, "The damage above is not something this tool repairs.")
+		fmt.Fprintln(stderr, "Every finding above is something this tool does not repair, so a run\n"+
+			"would change nothing. It repairs a corrupt or missing object, a broken\n"+
+			"reference, a packfile that will not verify, an index or a packed-refs\n"+
+			"that will not parse, and a rebuildable cache. Nothing above is one of those.")
 	default:
 		res.Report(stdout, true)
+		res.ReportPlanTotals(stdout)
 	}
 	return status
 }

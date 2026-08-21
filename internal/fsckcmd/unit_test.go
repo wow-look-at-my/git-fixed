@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"sort"
 	"testing"
+	"unsafe"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -180,4 +181,14 @@ func TestSetMsgTypeCannotDemoteFatal(t *testing.T) {
 	r = newTestRun(&errBuf)
 	assert.Zero(t, r.setMsgType("nulinheader", "error"))
 	assert.Empty(t, errBuf.String())
+}
+
+// TestAnObjectEntryStaysSmall guards the number the comment on objEntry states.
+//
+// There is one of these per object, so a field added here costs 37 MB on a
+// repository of 37 million objects. That size was written down and was wrong,
+// which is what a test is for.
+func TestAnObjectEntryStaysSmall(t *testing.T) {
+	assert.Equal(t, uintptr(72), unsafe.Sizeof(objEntry{}))
+	assert.Equal(t, uintptr(8), unsafe.Sizeof(edge(0)))
 }

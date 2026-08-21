@@ -9,7 +9,8 @@ Two runs agree when they print the same SET of lines and exit with the same stat
 order and of its internal hash table, so it is not reproducible from one machine to the next. `internal/gittest/fsck.go` compares that way. It runs
 the system `git fsck` in the same repository, splits both outputs into non-empty lines, sorts them, and requires equality along with the exit code.
 
-`internal/fsckcmd/differential_test.go`, `repos_test.go`, `refs_test.go` and `corrupt_test.go` hold 77 such comparisons. Each builds a repository
+`internal/fsckcmd/differential_test.go`, `repos_test.go`, `refs_test.go` and `corrupt_test.go` hold 54 test functions making that comparison, most
+of them table-driven over several repositories each. Each builds a repository
 that is broken in one specific way -- a tree entry named `.git`, a duplicate tree entry, a bad committer line, a corrupt loose object, a pack whose
 CRC no longer matches, a commit-graph with a wrong parent, a `packed-refs` line with no newline -- and then requires the two implementations to
 agree.
@@ -48,11 +49,32 @@ rev-index 64, bitmap 128. A condition git calls `die()` for exits 128 instead, a
 - **The object checks themselves** run inside the worker that decoded the object. This is the whole point: the check is most of the work, so running
   it under a lock would leave one core doing everything while the others decode ahead of it.
 
+## The object table
+
+There is one entry per object the run has heard of, so every field in it is paid for a million times over. The entry is 64 bytes: the name, an
+atomic type, atomic flags, and the edge slice. `internal/fsckcmd/objtable.go`.
+
+It is not a Go map. An object name is already a uniform hash, so a table that takes four of its bytes as the hash needs no hash function at all --
+with a map, `Lookup` was a quarter of the whole run on a million-object repository. Four properties follow from being written once per tree entry,
+which is tens of millions of times:
+
+- **The slots are open-addressed and eight bytes wide**: four bytes of the name, and the entry's index plus one so that zero is empty. At the
+  half-full load factor that is sixteen bytes an object for the index, against a Go map's pointer-bearing buckets.
+- **Entries come from 4096-entry slabs**, so a million objects cost a few hundred allocations rather than a million, and each entry has a dense
+  index that an edge can name without a pointer.
+- **The table is sized from the pack indexes before the first write.** A shard that starts at eight slots and grows to eight thousand rehashes ten
+  times, which was five percent of a million-object run spent reaching a size that was known in advance. `newObjTable(expect)`.
+- **Nothing in a slot or an edge is a pointer**, so neither the slot table nor the edges cost the collector anything on a cycle.
+
 ## The edge cache
 
 git parses each object once and keeps the parsed object, so its connectivity walk re-reads nothing. Keeping whole parsed objects for a repository of
 half a million objects is expensive, so this implementation keeps only what the walk actually needs: for each object, the list of objects it points
-at, already resolved to table entries. That is `objEntry.edges`, three words per reference and no strings.
+at, already resolved. That is `objEntry.edges`, and one edge is a single `uint64` -- the target's index into the slabs in the low 32 bits, then the
+bit that says it resolved, the bit that marks a tag's target, and four bits for the type the reference implies.
+
+Packing it into one word rather than holding a pointer and a type is not about the eight bytes saved. There is one edge per tree entry, so a pointer
+here puts tens of millions of words under the collector on every cycle, for a structure nothing ever frees until the run ends.
 
 Two cases fall outside it and re-read the object. `--connectivity-only` never ran an object pass, so there is nothing to cache. `--name-objects`
 builds each object's name from the path the walk took to reach it, which a recorded edge cannot carry.
@@ -66,45 +88,84 @@ git's own `core.deltaBaseCacheLimit` default of 96 MiB. Only a base goes in it, 
 This is what the object pass avoids entirely by walking the delta forest instead, and what `--connectivity-only` depends on, since that mode reads
 objects in reachability order rather than pack order.
 
+## The heap ceiling
+
+A repository can be larger than the machine, and the failure that produces is the worst one available: the kernel kills the process near the end of a
+diagnosis that had found everything and printed none of it.
+
+`capHeap` in `cmd/git-fixed` sets `runtime/debug.SetMemoryLimit` to three quarters of `MemTotal`. The limit is soft. The collector runs more often as
+the heap approaches it, an allocation that needs more still gets it, and no check is skipped or downgraded to reach it -- the run trades CPU, and Go
+holds the collector to half of that, so a repository over the line is slow rather than stopped. The quarter left over is not spare: a packfile is read
+through a mapping, which is not Go heap and does not count against this number, and the machine has other work on it.
+
+Two things override it, and both are somebody's decision rather than this one. An explicit `GOMEMLIMIT` wins outright, including `GOMEMLIMIT=off`.
+So does a limit already in effect when `main` starts, which is what go-toolchain's injected guard sets from the container's cgroup ceiling. That
+guard covers a container and finds nothing to read anywhere else; `/proc/meminfo` is what covers the machine these repositories are usually opened on.
+
 ## Measured
 
-On a synthetic repository of 229,960 objects, built by `scripts/make-bench-repo.sh`, against git 2.55.0. `scripts/bench.sh` produces these numbers,
-and refuses to print a time unless the two implementations agreed on the output first. It times `--dry-run`, which is the comparable command and
-also the one that cannot touch the repository being measured.
+Against git 2.55.0, on four cores, so read every ratio against four. `scripts/bench.sh` produces the time and refuses to print one unless the two
+implementations agreed on the output first. Each figure is the best of several runs, on a warm page cache, and memory is peak RSS.
 
-The repair half is not in these numbers because on a healthy repository it costs nothing. Its scan skips the pack verification and the object walk
-when the fsck above it came back clean, which is the difference between 0.65s and 3.2s here. `internal/repair.ScanTrustingFsck` says what it still
-checks and why.
+The main repository is the synthetic 229,960 objects `scripts/make-bench-repo.sh` builds. Two others are here because they are the shapes that break
+a tool rather than the shape that is common: 988,000 small objects, and 72 objects that are 128 MiB blobs in one delta chain.
 
-Four cores, so read every ratio against four. Each figure is the best of nine runs, because the machine's own noise is wider than several of the
-differences below.
+| repository        | git             | git-fixed       | before this work |
+|-------------------|-----------------|-----------------|------------------|
+| 229,960 objects   | 1.10s / 114 MB  | 0.37s / 97 MB   | 0.44s / 179 MB   |
+| 988,000 objects   | 6.02s / 332 MB  | 2.07s / 407 MB  | 2.71s / 772 MB   |
+| 72 x 128 MiB, one chain | 13.03s / 403 MB | 4.55s / 533 MB | 9.99s / 3,096 MB |
 
-| run                        | git   | git-fixed | git-fixed, one worker |
-|----------------------------|-------|-----------|-----------------------|
-| `fsck`                     | 1.27s | 0.66s     | 1.31s                 |
-| `fsck --connectivity-only` | 0.48s | 0.80s     | 1.53s                 |
-| `fsck --no-full`           | 0.03s | 0.08s     |                       |
+The last row is what the whole memory bound is for. A delta chain is decoded by keeping every parent alive down to the leaf, so the cost was workers
+times chain depth times object size, and nothing in the repository's own size predicted it. `docs/pack-verification.md`.
 
-`--connectivity-only` is the one mode that is still slower than git. It has no object pass, so it has no edge cache to walk and pays a full object
-read per node; git's advantage there is that its parsed objects are already in memory from the mark pass. `--no-full` is far too short to say
-anything.
+One worker over the 229,960 costs 0.92s against four workers' 0.37s, so about three quarters of the run is parallel.
+
+### The narrow modes cost more than git, and it is the repair scan
+
+| run over the 229,960       | git            | git-fixed      |
+|----------------------------|----------------|----------------|
+| `--dry-run`                | 1.10s / 114 MB | 0.37s / 97 MB  |
+| `--dry-run --connectivity-only` | 0.33s / 81 MB  | 2.62s / 246 MB |
+| `--dry-run --no-full`      | 0.02s / 13 MB  | 2.28s / 249 MB |
+| `--dry-run --strict`       |                | 2.56s / 240 MB |
+
+`--strict` only changes how findings are graded: it adds no pass, and it reads nothing extra. It costs the same 2.5s as the two modes that read
+LESS, which is what says where the time goes. It is not the fsck. It is the repair scan underneath, and it is there in every row but the first.
+
+That scan verifies every pack and walks everything the references reach. `ScanTrustingFsck` skips both when the run above it was a full default fsck
+that came back clean, because such a run has already read every object and reported any that would not decode. A narrower fsck has not looked --
+`--connectivity-only` reads no object and `--no-full` skips the packs -- so the scan has to look itself, and the 2.2s is work git never does at all.
+
+The narrow modes therefore pay the full damage scan to save a fraction of a full fsck, which is a bad trade for anyone who reaches for them to go
+faster. Making it a good one means letting the fsck hand its object table to the scan instead of the scan re-reading everything, which is a real
+change to the boundary between the two halves and is not attempted here.
 
 ## What is still serial
 
-Four workers give 1.99x of one, not 4x, so about two thirds of the run is parallel. The rest runs on the main goroutine while the workers wait, and
-it is what a machine with many cores hits first. The largest piece left is `checkPackRevIndexes`, which verifies each `.rev` file one pack at a time.
+Four workers give 2.49x of one, not 4x, so about four fifths of the run is parallel. The rest runs on the main goroutine while the workers wait, and
+it is what a machine with many cores hits first. A profile of the 229,960 charges the main goroutine 150ms of a 449ms run, and the largest piece of
+that is `checkPackRevIndexes` at 70ms, which verifies each `.rev` file one pack at a time.
 
-Four things that used to be serial, or that scaled badly, are fixed. Each was found in a profile, not by reading the code:
+Seven things that used to be serial, or that scaled badly, are fixed. Each was found in a profile, not by reading the code:
 
 - **The object table used to be 256 shards.** A shard is taken once per tree entry, millions of times, so on ninety six cores a third of those takes
   would collide. It is 64 shards per core now, and each shard's lock is padded off its neighbour's cache line.
-- **`objTable.All()` used to sort every object by name.** Nothing needed it -- the reporter sorts the whole report by `sortKey` before printing -- and
-  it was a single-threaded sort of the entire repository on the critical path.
+- **`objTable.All()` used to build a slice of every object and sort it by name.** Nothing needed either half -- the reporter sorts the whole report
+  by `sortKey` before printing -- and it was a single-threaded sort of the entire repository on the critical path. Indices are dense now, so a phase
+  that visits every object counts up to `Len` and calls `At`, and there is no slice to build.
 - **The connectivity walk used to take the shared stack once per object.** With a worker per core, that one lock was the ceiling. A worker now claims
   `walkBatch` objects at a time and hands a surplus back, which divides the traffic by the batch size.
 - **`buildLayout` used to sort `packEntry` itself, and `packEntry` held a string.** Every swap was a write barrier and moved 48 bytes. It now sorts a
   16-byte pointer-free pair, and the entry's one string moved to `packLayout.headerErrs`, which took the phase from 230ms of profiled CPU to 100ms.
   This runs before any worker starts, so all of it was on the critical path.
+- **The object table used to be a Go map.** `Lookup` was a quarter of the whole run on a million-object repository, hashing names that are already
+  hashes. It is open-addressed over 8-byte slots now, keyed on four bytes of the name itself.
+- **Each shard used to start at eight slots and grow into its size.** A shard that ends at eight thousand slots rehashes its contents ten times over,
+  and that was five percent of a million-object run spent reaching a size the pack indexes already knew. The table is sized before the first write.
+- **The pack's own checksum used to run in front of the object walk.** It is one thread reading every byte of the pack, so on a multi-gigabyte pack
+  that is a minute of one core with the rest of the machine waiting. It answers a question the walk does not ask, so it now runs beside it and the
+  pack costs whichever of the two is slower.
 
 ## zlib's own messages
 
@@ -125,6 +186,9 @@ separately. `internal/zlibmsg` is an inflate that produces nothing but the first
 | `internal/fsck`     | the checks themselves, matching `fsck.c`: trees, commits, tags, blobs, the severity table   |
 | `internal/gitpath`  | whether a tree entry name can reach `.git` on some filesystem                               |
 | `internal/fsckcmd`  | the ref pass, the object phases, the object table, the connectivity walk, the reporter                         |
+| `internal/zlibmsg`  | the decompressor's own complaint about a corrupt object, which `compress/flate` does not distinguish |
+| `internal/progress` | the phase meters, drawn the way `progress.c` draws them: `docs/progress.md`                  |
+| `internal/repair`   | the damage scan, the recovery ladder, the quarantine: `docs/repair.md`                       |
 | `internal/gittest`  | test repositories, including deliberately broken ones, and the comparison against real git  |
 
 `internal/parseopt` exists instead of cobra because a drop-in replacement has to accept exactly what git accepts and refuse exactly what git refuses.
