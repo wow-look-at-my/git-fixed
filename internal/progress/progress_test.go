@@ -140,6 +140,19 @@ func TestAMeterThatBeatItsDelayPrintsNothing(t *testing.T) {
 	assert.Empty(t, out.String())
 }
 
+// TestAShortPhaseWithNoTotalStillDrawsItsLine is the other half of the delay
+// rule. A meter that was not delayed announces its phase however quickly the
+// phase ends, and a phase with no total has only the timer to draw from.
+func TestAShortPhaseWithNoTotalStillDrawsItsLine(t *testing.T) {
+	for range 200 {
+		var out safeBuffer
+		m := Start(&out, "Checking what came back", 0)
+		m.Step()
+		m.Finish()
+		require.Contains(t, out.String(), "Checking what came back", "the phase ran and said nothing")
+	}
+}
+
 // percent is the percentage out of every line a meter wrote.
 var percent = regexp.MustCompile(`(\d+)% \((\d+)/(\d+)\)`)
 
