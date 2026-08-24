@@ -146,12 +146,13 @@ func (p *Pack) validatePackHeader() (string, bool) {
 // cannotUnpack reports an entry that will not decode. Whatever stopped the read
 // says so first, and only then does its caller add the line naming the entry.
 // An entry whose own header is unreadable never reaches the decompressor.
-func cannotUnpack(emit func(gitobj.OID, string), p *Pack, l *packLayout, oid gitobj.OID, e packEntry) {
-	switch {
-	case l.headerErr(e) != "":
-		emit(oid, l.headerErr(e))
+func cannotUnpack(emit func(gitobj.OID, string), p *Pack, l *packLayout, oid gitobj.OID, i int32) {
+	e := l.ents[i]
+	switch msg := l.headerErr(i); {
+	case msg != "":
+		emit(oid, msg)
 	default:
-		if msg := p.InflateMessage(e.dataOff, e.size); msg != "" {
+		if msg := p.InflateMessage(e.dataOff(), e.size); msg != "" {
 			emit(oid, msg)
 		}
 	}
@@ -164,30 +165,34 @@ func failSubtree(emit func(gitobj.OID, string), p *Pack, l *packLayout, root int
 	for len(stack) > 0 {
 		i := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
-		e := l.ents[i]
-		cannotUnpack(emit, p, l, p.OIDAt(e.idx), e)
+		cannotUnpack(emit, p, l, p.OIDAt(l.ents[i].idx), i)
 		stack = append(stack, l.children(i)...)
 	}
 }
 
-// packEntry is one object as the pack stores it, in offset order.
+// Flags a layout keeps on an entry rather than in a list of its own.
+const (
+	// entRoot marks an entry no other entry in this pack deltas against.
+	entRoot uint8 = 1 << 0
+)
+
+// packEntry is one object as the pack stores it, in offset order. It is 24
+// bytes: everything derivable is derived. see docs/pack-verification.md
 type packEntry struct {
-	off     int64
-	dataOff int64
-	size    int64
-	end     int64
-	idx     uint32 // position in index order
-	// headerErr indexes packLayout.headerErrs, whose first element is the empty string.
-	headerErr int32
-	typ       gitobj.Type
+	off  int64
+	size int64
+	idx  uint32 // position in index order
+	// hdr is the length of the entry header, which is under fifty bytes.
+	hdr   uint8
+	typ   int8
+	flags uint8
 }
 
-// offIdx is one entry's offset and its position in index order. It exists so
-// the offset sort moves no pointers.
-type offIdx struct {
-	off int64
-	idx uint32
-}
+// objType is the entry's type as the rest of the package spells it.
+func (e packEntry) objType() gitobj.Type { return gitobj.Type(e.typ) }
+
+// dataOff is where the entry's zlib stream starts.
+func (e packEntry) dataOff() int64 { return e.off + int64(e.hdr) }
 
 // packLayout is every entry in offset order, plus the base-to-children links
 // that let each delta chain be decoded exactly once.
@@ -196,48 +201,51 @@ type packLayout struct {
 	// The children of entry i are childList[childStart[i]:childStart[i+1]].
 	childStart []int32
 	childList  []int32
-	// parents is the other direction, which is how a delta the walk could not afford to hold gets rebuilt later.
-	parents []int32
-	roots   []int32
-	bad     []int32
+	bad        []int32
 	// headerErrs holds what stopped an entry header from being read, which happens before anything decompresses.
-	headerErrs []string
+	headerErrs map[int32]string
+	// trailer is where the last entry ends.
+	trailer int64
 }
 
 // headerErr returns why an entry's header would not read, or the empty string.
-func (l *packLayout) headerErr(e packEntry) string { return l.headerErrs[e.headerErr] }
+func (l *packLayout) headerErr(i int32) string { return l.headerErrs[i] }
+
+// end is where an entry's bytes stop, which is where the next entry starts.
+func (l *packLayout) end(i int32) int64 {
+	if int(i)+1 < len(l.ents) {
+		return l.ents[i+1].off
+	}
+	return l.trailer
+}
 
 func (l *packLayout) children(i int32) []int32 {
 	return l.childList[l.childStart[i]:l.childStart[i+1]]
 }
 
+// setType records a type that has to survive in one byte.
+func (e *packEntry) setType(t gitobj.Type) { e.typ = int8(t) }
+
 // buildLayout reads every entry header and links each delta to its base.
+//
+// Nothing here holds a second structure per entry that outlives it: the offsets
+// are sorted in place, the parent links are spent on the child lists and
+// dropped, and what is left is the entries and the two child arrays.
 func (p *Pack) buildLayout() *packLayout {
 	n := int(p.Num)
-	// The sort moves a 16-byte pair, not the whole 48-byte packEntry, on a quarter of a million entries.
-	order := make([]offIdx, n)
-	for i := range order {
-		order[i] = offIdx{off: p.OffsetAt(uint32(i)), idx: uint32(i)}
-	}
-	slices.SortFunc(order, func(a, b offIdx) int { return cmp.Compare(a.off, b.off) })
-
-	l := &packLayout{ents: make([]packEntry, n), headerErrs: []string{""}}
-	for i, o := range order {
-		l.ents[i] = packEntry{off: o.off, idx: o.idx}
-	}
-
-	// posOf maps an index-order position to an offset-order position.
-	posOf := make([]int32, n)
-	for pos := range l.ents {
-		posOf[l.ents[pos].idx] = int32(pos)
-	}
-	trailer := p.TrailerOffset()
+	l := &packLayout{ents: make([]packEntry, n), headerErrs: map[int32]string{}, trailer: p.TrailerOffset()}
 	for i := range l.ents {
-		if i+1 < n {
-			l.ents[i].end = l.ents[i+1].off
-		} else {
-			l.ents[i].end = trailer
+		l.ents[i] = packEntry{off: p.OffsetAt(uint32(i)), idx: uint32(i)}
+	}
+	slices.SortFunc(l.ents, func(a, b packEntry) int { return cmp.Compare(a.off, b.off) })
+
+	// posAt finds an entry by its offset, which is what the entries are sorted by.
+	posAt := func(off int64) int32 {
+		pos := sort.Search(n, func(k int) bool { return l.ents[k].off >= off })
+		if pos < n && l.ents[pos].off == off {
+			return int32(pos)
 		}
+		return -1
 	}
 
 	parent := make([]int32, n)
@@ -245,36 +253,36 @@ func (p *Pack) buildLayout() *packLayout {
 		parent[i] = -1
 	}
 	for i := range l.ents {
-		h, err := p.ReadHeader(l.ents[i].off)
+		e := &l.ents[i]
+		h, err := p.ReadHeader(e.off)
 		if err != nil {
 			l.bad = append(l.bad, int32(i))
-			l.ents[i].typ = gitobj.TypeBad
-			l.headerErrs = append(l.headerErrs, err.Error())
-			l.ents[i].headerErr = int32(len(l.headerErrs) - 1)
+			e.setType(gitobj.TypeBad)
+			l.headerErrs[int32(i)] = err.Error()
 			continue
 		}
-		l.ents[i].typ = h.Type
-		l.ents[i].size = h.Size
-		l.ents[i].dataOff = h.DataOff
+		e.setType(h.Type)
+		e.size = h.Size
+		e.hdr = uint8(h.DataOff - e.off)
 		switch h.Type {
 		case gitobj.TypeOfsDelta:
-			pos := sort.Search(n, func(k int) bool { return l.ents[k].off >= h.BaseOff })
-			if pos < n && l.ents[pos].off == h.BaseOff {
-				parent[i] = int32(pos)
+			if pos := posAt(h.BaseOff); pos >= 0 {
+				parent[i] = pos
 			} else {
 				l.bad = append(l.bad, int32(i))
-				l.ents[i].typ = gitobj.TypeBad
+				e.setType(gitobj.TypeBad)
 			}
 		case gitobj.TypeRefDelta:
-			if bi, ok := p.Find(h.BaseOID); ok {
-				parent[i] = posOf[bi]
-				break
-			}
 			// git's get_delta_base() looks in this pack and nowhere else.
+			if bi, ok := p.Find(h.BaseOID); ok {
+				if pos := posAt(p.OffsetAt(bi)); pos >= 0 {
+					parent[i] = pos
+					break
+				}
+			}
 			l.bad = append(l.bad, int32(i))
-			l.ents[i].typ = gitobj.TypeBad
-			l.headerErrs = append(l.headerErrs, badDeltaBase(h.DataOff, p.Path).Error())
-			l.ents[i].headerErr = int32(len(l.headerErrs) - 1)
+			e.setType(gitobj.TypeBad)
+			l.headerErrs[int32(i)] = badDeltaBase(h.DataOff, p.Path).Error()
 		}
 	}
 
@@ -282,6 +290,8 @@ func (p *Pack) buildLayout() *packLayout {
 	for i := range parent {
 		if parent[i] >= 0 {
 			l.childStart[parent[i]+1]++
+		} else {
+			l.ents[i].flags |= entRoot
 		}
 	}
 	for i := 1; i <= n; i++ {
@@ -296,13 +306,34 @@ func (p *Pack) buildLayout() *packLayout {
 			fill[parent[i]]++
 		}
 	}
-	for i := range l.ents {
-		if parent[i] < 0 {
-			l.roots = append(l.roots, int32(i))
+	return l
+}
+
+// parentOf reads an entry's base back off the pack, for the one path that walks
+// up a chain rather than down it. A layout that kept the link would hold four
+// bytes per object in the repository for a step taken on a handful of them.
+func (l *packLayout) parentOf(p *Pack, i int32) int32 {
+	e := l.ents[i]
+	h, err := p.ReadHeader(e.off)
+	if err != nil {
+		return -1
+	}
+	pos := func(off int64) int32 {
+		k := sort.Search(len(l.ents), func(k int) bool { return l.ents[k].off >= off })
+		if k < len(l.ents) && l.ents[k].off == off {
+			return int32(k)
+		}
+		return -1
+	}
+	switch h.Type {
+	case gitobj.TypeOfsDelta:
+		return pos(h.BaseOff)
+	case gitobj.TypeRefDelta:
+		if bi, ok := p.Find(h.BaseOID); ok {
+			return pos(p.OffsetAt(bi))
 		}
 	}
-	l.parents = parent
-	return l
+	return -1
 }
 
 // verifyObjects decodes every object in the pack and hands it to the caller.
@@ -325,9 +356,8 @@ func (p *Pack) verifyObjects(o VerifyOpts) bool {
 	object := o.Object
 
 	for _, i := range l.bad {
-		e := l.ents[i]
-		oid := p.OIDAt(e.idx)
-		cannotUnpack(emit, p, l, oid, e)
+		oid := p.OIDAt(l.ents[i].idx)
+		cannotUnpack(emit, p, l, oid, i)
 		failSubtree(emit, p, l, i)
 	}
 
@@ -343,6 +373,7 @@ func (p *Pack) verifyObjects(o VerifyOpts) bool {
 		budget = DefaultChainBudget
 	}
 	w.budget.Store(budget)
+	// The workers claim entries and walk the ones nothing deltas against: a list of those is four bytes an object.
 	var wg sync.WaitGroup
 	var next int64
 	for i := 0; i < workers; i++ {
@@ -352,10 +383,12 @@ func (p *Pack) verifyObjects(o VerifyOpts) bool {
 			in := &Inflater{}
 			for {
 				ri := int(atomic.AddInt64(&next, 1)) - 1
-				if ri >= len(l.roots) {
+				if ri >= len(l.ents) {
 					return
 				}
-				w.walkChain(l.roots[ri], in)
+				if l.ents[ri].flags&entRoot != 0 {
+					w.walkChain(int32(ri), in)
+				}
 			}
 		}()
 	}
@@ -377,13 +410,14 @@ func (p *Pack) checkCRCs(l *packLayout, workers int, emit func(gitobj.OID, strin
 				if start >= len(l.ents) {
 					return
 				}
-				end := min(start+batch, len(l.ents))
-				for i := start; i < end; i++ {
+				last := min(start+batch, len(l.ents))
+				for i := start; i < last; i++ {
 					e := l.ents[i]
-					if e.off < 0 || e.end > int64(len(p.data)) || e.end < e.off {
+					end := l.end(int32(i))
+					if e.off < 0 || end > int64(len(p.data)) || end < e.off {
 						continue
 					}
-					if crc32.ChecksumIEEE(p.data[e.off:e.end]) != p.CRCAt(e.idx) {
+					if crc32.ChecksumIEEE(p.data[e.off:end]) != p.CRCAt(e.idx) {
 						oid := p.OIDAt(e.idx)
 						emit(oid, fmt.Sprintf("index CRC mismatch for object %s from %s at offset %d",
 							oid, p.Path, e.off))
