@@ -112,6 +112,12 @@ Two things override it, and both are somebody's decision rather than this one. A
 So does a limit already in effect when `main` starts, which is what go-toolchain's injected guard sets from the container's cgroup ceiling. That
 guard covers a container and finds nothing to read anywhere else; `/proc/meminfo` is what covers the machine these repositories are usually opened on.
 
+The same function lowers the collector's target to `GOGC=50`, and an explicit `GOGC` wins there the same way. Go's default lets the heap reach twice
+what is live, which on a hundred million objects is tens of gigabytes of garbage held for no reason. A collection here is cheap enough to pay for
+more often: every structure with one instance per object is pointer-free, so a cycle marks almost nothing however large the table is. Measured, the
+target takes about a fifth off the peak heap for about a percent of the wall clock -- 844 to 700 MiB on the 2.36M repository, 65 to 51 MiB on the
+1.13 GB one.
+
 ## Measured
 
 Against git 2.55.0, on four cores, so read every ratio against four. `scripts/bench.sh` produces the time and refuses to print one unless the two
@@ -155,12 +161,12 @@ What was in those 327 bytes, measured over the million, and what is in them now:
 The delta base cache's 96 MiB is fixed and stops counting per object as the repository grows. How many edges an object has is the repository's to
 say: a tree entry is an edge, so a history of wide trees pays for more of them than one of deep ones.
 
-Two measurements of the whole of it, on four cores and 16 GiB, each against the same tree before any of this work:
+Two measurements of the whole of it, on four cores and 16 GiB. Each cell is the same tree before any of this work, then with it:
 
-| repository                     | peak Go heap | peak resident | wall |
-|--------------------------------|--------------|---------------|------|
-| 2,360,944 objects, 156 MB pack | m1           | m2            | m3   |
-| 215,981 objects, 1.13 GB pack  | m4           | m5            | m6   |
+| repository                     | peak Go heap      | peak resident       | wall            |
+|--------------------------------|-------------------|---------------------|-----------------|
+| 2,360,944 objects, 156 MB pack | 1,450 -> 700 MiB  | 1.63 GiB -> 929 MiB | 12.89s -> 12.08s |
+| 215,981 objects, 1.13 GB pack  | 104 -> 51 MiB     | 1.17 GiB -> 317 MiB | 5.74s -> 5.81s  |
 
 The first repository is what a per-object structure answers for, and the second is what the pages of a pack do: its resident set was the size of its
 packfile, and is now the sweep window plus the run. `scripts/make-bench-repo.sh` builds both -- `20000 60000 40` and `2500 20000 25 16384`.

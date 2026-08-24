@@ -67,3 +67,19 @@ func TestAnExplicitLimitWins(t *testing.T) {
 	capHeap()
 	assert.Equal(t, int64(chosen), debug.SetMemoryLimit(-1))
 }
+
+// TestTheCollectorTargetDefersToGOGC is the same deference for the other knob.
+// A person who names a target has said what this run may hold, and the default
+// this sets is only for a run where nobody has.
+func TestTheCollectorTargetDefersToGOGC(t *testing.T) {
+	restore := debug.SetGCPercent(300)
+	t.Cleanup(func() { debug.SetGCPercent(restore) })
+
+	t.Setenv("GOGC", "300")
+	setGCTarget()
+	assert.Equal(t, 300, debug.SetGCPercent(300), "a target somebody chose is left alone")
+
+	os.Unsetenv("GOGC")
+	setGCTarget()
+	assert.Equal(t, gcTarget, debug.SetGCPercent(gcTarget), "and one nobody chose is lowered")
+}

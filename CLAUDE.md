@@ -84,8 +84,9 @@ Breaking one of these costs about half the run. Each is a mistake that was made 
   the size comes from the pack indexes, because growing a shard rehashes it. `docs/architecture.md` has the seven that were measured and fixed.
 - **The delta walk holds one buffer per chain level, so it is bounded.** Without the budget the cost is workers times depth times object size, which
   reached 3 GB on a pack of 72 large blobs. `odb.DefaultChainBudget`, `docs/pack-verification.md`.
-- **The heap is capped at three quarters of the machine.** A repository larger than the machine costs time, not the run: the limit is soft, so no
-  check is skipped to stay under it. `GOMEMLIMIT` and go-toolchain's cgroup guard both win. `cmd/git-fixed/memlimit.go`, `docs/architecture.md`.
+- **The heap is capped at three quarters of the machine, and the collector's target is halved.** A repository larger than the machine costs time,
+  not the run: the limit is soft, so no check is skipped to stay under it. `GOGC=50` because a table that holds no pointer is cheap to collect and
+  expensive to double. `GOMEMLIMIT`, `GOGC` and go-toolchain's cgroup guard all win. `cmd/git-fixed/memlimit.go`, `docs/architecture.md`.
 - `scripts/bench.sh <repo>` measures against the system git and refuses to print a time unless the output matched.
 
 ## Deliberate divergences

@@ -26,11 +26,16 @@ byte of a pack is read -- the CRC pass scans the mapping end to end, and the obj
 ended holding the whole of every pack. On a hundred-gigabyte pack that is a hundred gigabytes of resident memory for bytes the run has finished with,
 next to a heap a fraction of the size.
 
-So the walk hands them back. `Pack.Release` is `madvise(MADV_DONTNEED)` over the pack's mapping: the file stays mapped, the kernel keeps its page
-cache, and a later read of any of it faults the page back rather than reading the disk again. It runs after the CRC pass, once more when the pack has
-been read end to end, and every `releaseEvery` (256 MiB) of pack the walk reads, because a single pack can be larger than the machine and the sweep
-at the end of it would come far too late. What this costs is a minor fault on a page read twice; what it saves is the difference between a resident
-set the size of the repository and one the size of the run.
+So the passes that read a pack hand its pages back as they go. `Pack.Release` is `madvise(MADV_DONTNEED)` over the pack's mapping: the file stays
+mapped, the kernel keeps its page cache, and a later read of any of it faults the page back rather than reading the disk again. One `releaser` counts
+what all three passes read and sweeps every `releaseEvery` (256 MiB), because a single pack can be larger than the machine and a sweep at the end of
+one comes after the moment that decides whether the run survives. The pack is swept once more when it has been read end to end. What this costs is a
+minor fault on a page that is read twice; what it saves is the difference between a resident set the size of the repository and one the size of the
+run.
+
+Measured on a 215,981-object repository whose packfile is 1.13 GB, which `scripts/make-bench-repo.sh <dir> 2500 20000 25 16384` builds: peak
+resident falls from 1.17 GiB to 317 MiB, and the fsck says exactly what it said before. What is left is the sweep window, the pack's index, and the
+run's own heap.
 
 The pack's index keeps its pages. `OIDAt` and `Find` read it for every object in every phase, so it is memory the run is using rather than memory it
 has finished with -- about 28 bytes an object, which is 2.8 GiB on a hundred million.
