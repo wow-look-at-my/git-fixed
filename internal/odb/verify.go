@@ -31,10 +31,39 @@ type VerifyOpts struct {
 	Progress func()
 	// ChainBudget bounds the decoded delta bases the walk holds at once.
 	ChainBudget int64
+	// ReleaseEvery is how much of the pack is read before its pages go back. see releaseEvery.
+	ReleaseEvery int64
 }
 
 // DefaultChainBudget is how many bytes of decoded delta bases one pack's walk may hold at a time.
 const DefaultChainBudget = 256 << 20
+
+// releaseEvery is how much of a pack a pass reads before it hands the pages back. see docs/memory.md
+const releaseEvery = 256 << 20
+
+// releaser hands a pack's pages back as a pass reads past them. A pack can be
+// larger than the machine, so a sweep at the end of one is too late.
+type releaser struct {
+	p     *Pack
+	every int64
+	// read is how many of the pack's bytes have been read since the last sweep.
+	read atomic.Int64
+}
+
+// newReleaser builds one for a pack, at the caller's interval or the default.
+func newReleaser(p *Pack, every int64) *releaser {
+	if every <= 0 {
+		every = releaseEvery
+	}
+	return &releaser{p: p, every: every}
+}
+
+// spent counts bytes as read, and sweeps once enough of them have been.
+func (r *releaser) spent(n int64) {
+	if r.read.Add(n) >= r.every && r.read.Swap(0) >= r.every {
+		r.p.Release()
+	}
+}
 
 // Verify checks a pack the way git's verify_pack() does, in parallel.
 //
@@ -66,6 +95,8 @@ func (p *Pack) Verify(o VerifyOpts) bool {
 	for _, text := range <-sums {
 		fail(text)
 	}
+	// This pack has been read end to end. What a later phase wants from it, it faults back.
+	p.Release()
 	if !objectsOK {
 		ok = false
 	}
@@ -176,6 +207,9 @@ const (
 	entRoot uint8 = 1 << 0
 )
 
+// maxHeader is the longest header ReadHeader makes: a size varint, then a base name or an offset varint.
+const maxHeader = 1 + 9 + gitobj.MaxRawSize
+
 // packEntry is one object as the pack stores it, in offset order. It is 24
 // bytes: everything derivable is derived. see docs/pack-verification.md
 type packEntry struct {
@@ -231,7 +265,7 @@ func (e *packEntry) setType(t gitobj.Type) { e.typ = int8(t) }
 // Nothing here holds a second structure per entry that outlives it: the offsets
 // are sorted in place, the parent links are spent on the child lists and
 // dropped, and what is left is the entries and the two child arrays.
-func (p *Pack) buildLayout() *packLayout {
+func (p *Pack) buildLayout(pages *releaser) *packLayout {
 	n := int(p.Num)
 	l := &packLayout{ents: make([]packEntry, n), headerErrs: map[int32]string{}, trailer: p.TrailerOffset()}
 	for i := range l.ents {
@@ -254,11 +288,20 @@ func (p *Pack) buildLayout() *packLayout {
 	}
 	for i := range l.ents {
 		e := &l.ents[i]
+		// One header is one page of the pack, and there is an entry every kilobyte or so: this pass reads all of it.
+		pages.spent(l.end(int32(i)) - e.off)
 		h, err := p.ReadHeader(e.off)
 		if err != nil {
 			l.bad = append(l.bad, int32(i))
 			e.setType(gitobj.TypeBad)
 			l.headerErrs[int32(i)] = err.Error()
+			continue
+		}
+		if h.DataOff-e.off > maxHeader {
+			// The entry holds this as a length in one byte. see maxHeader.
+			l.bad = append(l.bad, int32(i))
+			e.setType(gitobj.TypeBad)
+			l.headerErrs[int32(i)] = fmt.Sprintf("object header at %d in %s is malformed", e.off, p.Path)
 			continue
 		}
 		e.setType(h.Type)
@@ -342,7 +385,9 @@ func (p *Pack) verifyObjects(o VerifyOpts) bool {
 	if workers <= 0 {
 		workers = runtime.GOMAXPROCS(0)
 	}
-	l := p.buildLayout()
+	// One releaser over every pass, so a sweep counts what all of them read.
+	pages := newReleaser(p, o.ReleaseEvery)
+	l := p.buildLayout(pages)
 
 	var mu sync.Mutex
 	good := true
@@ -361,13 +406,14 @@ func (p *Pack) verifyObjects(o VerifyOpts) bool {
 		failSubtree(emit, p, l, i)
 	}
 
-	// The index records a CRC over each entry's raw bytes. Checking those is
-	// a flat scan of the mapping, so it parallelizes on its own.
+	// The index records a CRC over each entry's raw bytes. Checking those is a
+	// flat scan of the mapping, so it parallelizes on its own.
 	if p.IdxVer > 1 {
-		p.checkCRCs(l, workers, emit)
+		p.checkCRCs(l, workers, emit, pages)
+		p.Release()
 	}
 
-	w := &walker{p: p, l: l, o: &o, emit: emit, object: object}
+	w := &walker{p: p, l: l, o: &o, emit: emit, object: object, pages: pages}
 	budget := o.ChainBudget
 	if budget <= 0 {
 		budget = DefaultChainBudget
@@ -397,7 +443,7 @@ func (p *Pack) verifyObjects(o VerifyOpts) bool {
 }
 
 // checkCRCs verifies the index's CRC over every entry's compressed bytes.
-func (p *Pack) checkCRCs(l *packLayout, workers int, emit func(gitobj.OID, string)) {
+func (p *Pack) checkCRCs(l *packLayout, workers int, emit func(gitobj.OID, string), pages *releaser) {
 	var next int64
 	var wg sync.WaitGroup
 	const batch = 512
@@ -417,6 +463,7 @@ func (p *Pack) checkCRCs(l *packLayout, workers int, emit func(gitobj.OID, strin
 					if e.off < 0 || end > int64(len(p.data)) || end < e.off {
 						continue
 					}
+					pages.spent(end - e.off)
 					if crc32.ChecksumIEEE(p.data[e.off:end]) != p.CRCAt(e.idx) {
 						oid := p.OIDAt(e.idx)
 						emit(oid, fmt.Sprintf("index CRC mismatch for object %s from %s at offset %d",

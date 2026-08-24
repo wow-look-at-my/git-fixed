@@ -51,8 +51,13 @@ rev-index 64, bitmap 128. A condition git calls `die()` for exits 128 instead, a
 
 ## The object table
 
-There is one entry per object the run has heard of, so every field in it is paid for a million times over. The entry is 64 bytes: the name, an
-atomic type, atomic flags, and the edge slice. `internal/fsckcmd/objtable.go`.
+There is one entry per object the run has heard of, so every field in it is paid for a million times over. The entry is 48 bytes: the name, the type
+and the flags in one word, and where the edges are. `internal/fsckcmd/objtable.go`.
+
+Two of those came from the field widths rather than the fields. The name is the raw hash without the length its algorithm gives it, which the table
+holds once for the repository -- an `OID` is 33 bytes, and 33 in a structure aligned to 8 costs 40. The type shares a word with the flags, because
+two atomic words rounded the entry back up to 56 for four bits of type and five of flags. `run.oid` puts a name back together for the handful of
+places that print one.
 
 It is not a Go map. An object name is already a uniform hash, so a table that takes four of its bytes as the hash needs no hash function at all --
 with a map, `Lookup` was a quarter of the whole run on a million-object repository. Four properties follow from being written once per tree entry,
@@ -70,11 +75,16 @@ which is tens of millions of times:
 
 git parses each object once and keeps the parsed object, so its connectivity walk re-reads nothing. Keeping whole parsed objects for a repository of
 half a million objects is expensive, so this implementation keeps only what the walk actually needs: for each object, the list of objects it points
-at, already resolved. That is `objEntry.edges`, and one edge is a single `uint64` -- the target's index into the slabs in the low 32 bits, then the
-bit that says it resolved, the bit that marks a tag's target, and four bits for the type the reference implies.
+at, already resolved. That is `objEntry.edges`, and one edge is a single `uint32` -- the target's index into the slabs, or the top bit set and the
+type the reference implied when the table refused it.
 
-Packing it into one word rather than holding a pointer and a type is not about the eight bytes saved. There is one edge per tree entry, so a pointer
-here puts tens of millions of words under the collector on every cycle, for a structure nothing ever frees until the run ends.
+There is one edge per tree entry, which makes this the largest thing a repository's size multiplies: on a hundred million objects, four bytes an edge
+against eight is gigabytes. What paid for the other four bits was the type. A resolved edge does not need one, because `Lookup` refuses a reference
+that contradicts the object it names -- so a resolved edge's target already holds the type the reference implied, and the walk reads it from there.
+Only an edge that resolved to nothing still carries a type, and that is the only place the walk prints one: `broken link from tree unknown`.
+
+Packing it into one word rather than holding a pointer and a type is not about the four bytes saved. A pointer here puts tens of millions of words
+under the collector on every cycle, for a structure nothing ever frees until the run ends.
 
 Two cases fall outside it and re-read the object. `--connectivity-only` never ran an object pass, so there is nothing to cache. `--name-objects`
 builds each object's name from the path the walk took to reach it, which a recorded edge cannot carry.
@@ -129,21 +139,38 @@ The two large rows are what to read for a repository of tens of millions of obje
 scales with the object count rather than worse than it. The memory is linear too -- the peak Go heap is 321 bytes an object over a million of them
 and 327 over five million -- but it is above git's, and the RSS figures understate the gap, because both implementations map the same packfile.
 
-Peak RSS is what a person sees in `top` and it is not the number a change here moves: most of the difference between it and the heap is packfile
-pages the kernel maps and reclaims on its own. `GIT_FIXED_MEMPROFILE` names a file for the heap profile and prints the peak Go heap on the way out,
-which is the number that answers for a per-object structure. The profile itself is written at exit, when the tables are already unreachable, so read
-its `alloc_space` and not its `inuse_space`.
+Peak RSS is what a person sees in `top` and it is what the kernel decides an out-of-memory kill by. `GIT_FIXED_MEMPROFILE` names a file for the heap
+profile and prints the peak Go heap on the way out, which is the number that answers for a per-object structure. The profile itself is written at
+exit, when the tables are already unreachable, so read its `alloc_space` and not its `inuse_space`.
 
-What is in those 327 bytes, measured over the million: the pack's layout is 64 (`packEntry` is 48 of it, and the child, parent and header links the
-rest), `objEntry` is 56, its slab and table slots about 25, and the recorded edges about 40. The delta base cache's 96 MiB is fixed and stops
-counting per object as the repository grows.
+What was in those 327 bytes, measured over the million, and what is in them now:
 
-`objEntry` holds no pointer at all, and that is worth more than the sixteen bytes it saves. Its edges used to be a slice, so every entry carried a
+| per object              | was | is | how                                                             |
+|-------------------------|-----|----|-----------------------------------------------------------------|
+| the pack's layout       | 64  | 31 | `packEntry` 48 to 24, and three of its side arrays gone          |
+| `objEntry`              | 56  | 48 | the hash without its length, the type in the flags' word         |
+| its slab and table slots| ~25 | ~25| unchanged                                                        |
+| each recorded edge      | 8   | 4  | an index, or the top bit and a type for one that resolved to nothing |
+
+The delta base cache's 96 MiB is fixed and stops counting per object as the repository grows. How many edges an object has is the repository's to
+say: a tree entry is an edge, so a history of wide trees pays for more of them than one of deep ones.
+
+Two measurements of the whole of it, on four cores and 16 GiB, each against the same tree before any of this work:
+
+| repository                     | peak Go heap | peak resident | wall |
+|--------------------------------|--------------|---------------|------|
+| 2,360,944 objects, 156 MB pack | m1           | m2            | m3   |
+| 215,981 objects, 1.13 GB pack  | m4           | m5            | m6   |
+
+The first repository is what a per-object structure answers for, and the second is what the pages of a pack do: its resident set was the size of its
+packfile, and is now the sweep window plus the run. `scripts/make-bench-repo.sh` builds both -- `20000 60000 40` and `2500 20000 25 16384`.
+
+`objEntry` holds no pointer at all, and that is worth more than the bytes it saves. Its edges used to be a slice, so every entry carried a
 pointer for the collector to follow: on a hundred million objects that is several gigabytes to mark on every cycle, and near `GOMEMLIMIT` those
 cycles are constant. The edges come out of an arena now and an entry names its own by index, which leaves the whole table noscan.
-`internal/fsckcmd/edgearena.go`, and `TestAnObjectEntryHoldsNoPointer` guards it. Going below git means holding one structure per object instead of two -- the fsck's table and the pack's
-layout are alive at the same moment and describe the same objects -- and that is a change to the boundary between `internal/odb` and
-`internal/fsckcmd`, not a smaller field.
+`internal/fsckcmd/edgearena.go`, and `TestAnObjectEntryHoldsNoPointer` guards it. Going below this means holding one structure per object instead of
+two -- the fsck's table and the pack's layout are alive at the same moment and describe the same objects -- and that is a change to the boundary
+between `internal/odb` and `internal/fsckcmd`, not a smaller field.
 
 The last row is what the whole memory bound is for. A delta chain is decoded by keeping every parent alive down to the leaf, so the cost was workers
 times chain depth times object size, and nothing in the repository's own size predicted it. `docs/pack-verification.md`.

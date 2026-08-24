@@ -19,7 +19,12 @@ type walker struct {
 	object func(gitobj.OID, gitobj.Type, int64, []byte)
 	// budget is the decoded base data every worker on this pack may still hold between them. see DefaultChainBudget.
 	budget atomic.Int64
+	// pages hands the pack's mapped pages back as the walk finishes with them.
+	pages *releaser
 }
+
+// spent counts one entry's bytes as read.
+func (w *walker) spent(i int32) { w.pages.spent(w.l.end(i) - w.l.ents[i].off) }
 
 // frame is one level of an in-progress delta chain.
 type frame struct {
@@ -223,6 +228,7 @@ func (w *walker) finishStreamed(i int32) {
 	if w.o.Progress != nil {
 		w.o.Progress()
 	}
+	w.spent(i)
 }
 
 // finish hashes one decoded object and hands it to the caller.
@@ -239,6 +245,7 @@ func (w *walker) finish(i int32, typ gitobj.Type, data []byte) {
 	if w.o.Progress != nil {
 		w.o.Progress()
 	}
+	w.spent(i)
 }
 
 // StreamHash hashes a pack entry without holding its payload, for a blob past

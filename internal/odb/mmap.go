@@ -25,6 +25,15 @@ func mapReadOnly(path string) (mapping, error) {
 
 func (m *mapping) bytes() []byte { return m.b }
 
+// release drops this process's copy of the mapped pages. A read after it faults
+// the page back from the page cache. see docs/memory.md
+func (m *mapping) release() {
+	if m.b == nil {
+		return
+	}
+	_ = m.b.Advise(mmap.AdvDontNeed)
+}
+
 func (m *mapping) close() {
 	if m.b == nil {
 		return
