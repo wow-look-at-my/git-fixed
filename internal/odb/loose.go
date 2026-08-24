@@ -125,7 +125,7 @@ func readLooseBytes(raw []byte, shown string, expected gitobj.OID, algo *gitobj.
 	}
 
 	if !plausibleSize(size, int64(len(raw))) {
-		// The header's size is bigger than this file could inflate to however it is read.
+		// The header's size is bigger than this file could inflate to however it is read. see inflatebound.go
 		res.Failed = true
 		res.Errors = append(res.Errors, fmt.Sprintf("unable to unpack contents of %s", shown))
 		return res

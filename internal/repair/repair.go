@@ -32,13 +32,9 @@ type Options struct {
 	Stderr io.Writer
 }
 
-// Verdict is what an fsck established about a repository, as the bitmask
-// fsckcmd.Run gives back. see docs/exit-status.md
+// Verdict is what an fsck established about a repository, as the bitmask fsckcmd.Run gives back.
 //
-// A scan reads what the fsck already read, so every bit that is clear is a pass
-// the scan does not have to make. On the repositories this tool is for that is
-// most of the run: the two passes below take longer together than the fsck that
-// found the damage in the first place.
+// Every bit that is clear is a pass the scan does not have to make. see docs/exit-status.md
 type Verdict struct {
 	Status int
 	// Verified are the packfiles that run read end to end without complaint, by path.

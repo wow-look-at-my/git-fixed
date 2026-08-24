@@ -174,10 +174,8 @@ func (s *Sources) fromWorktree(b BadObject) (gitobj.Type, []byte, bool) {
 
 // fromIndexTree rebuilds a missing tree from what the index says it held.
 //
-// A tree's bytes are decided entirely by its entries: mode, name, object name,
-// sorted git's way. So a tree can be rebuilt exactly, and the rebuild proves
-// itself by hashing to the name that went missing. A rebuild that does not
-// match is discarded, which is what happens when the index has moved on.
+// A tree's bytes are decided entirely by its entries, so the rebuild proves itself by hashing to the name
+// that went missing. A rebuild that does not match is discarded.
 func (s *Sources) fromIndexTree(b BadObject) (gitobj.Type, []byte, bool) {
 	if len(s.entries) == 0 {
 		return 0, nil, false

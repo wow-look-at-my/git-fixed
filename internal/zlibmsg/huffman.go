@@ -1,8 +1,7 @@
 package zlibmsg
 
-// code is one canonical Huffman alphabet, held the way zlib's own reference
-// decoder holds it: a count of the codes of each length, and the symbols in
-// order of length and then of symbol.
+// code is one canonical Huffman alphabet, held the way zlib's own reference decoder holds it: a count of
+// the codes of each length, then the symbols in order.
 type code struct {
 	counts [maxBits + 1]int
 	// symbols lists every symbol that has a code, shortest code first.

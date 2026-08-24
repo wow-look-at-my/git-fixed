@@ -21,7 +21,7 @@ const (
 
 // objEntry is one object the run knows about, whether or not it exists.
 type objEntry struct {
-	// edgeRef and edgeLen name what the object pass found this object points at.
+	// edgeRef and edgeLen name what the object pass found this object points at. see docs/architecture.md
 	edgeRef uint64
 
 	OID     gitobj.OID
@@ -85,7 +85,7 @@ func (t *objTable) Edges(e *objEntry) ([]edge, bool) {
 	return t.arena.at(edgeSpan{ref: e.edgeRef, n: e.edgeLen}), true
 }
 
-// Type returns the object's type, which may be an expectation recorded by whatever referenced it rather than.
+// Type returns the object's type, which may be what referenced it expects rather than what the database holds.
 func (e *objEntry) Type() gitobj.Type { return gitobj.Type(e.typ.Load()) }
 
 // SetType records a type, keeping the first one seen.
@@ -127,12 +127,8 @@ type objSlab = [objSlabSize]objEntry
 
 // objTable holds every object the run has heard of.
 //
-// It is not a Go map. An object name is itself a hash, spread uniformly by
-// construction, so a table that takes four of its bytes as the hash needs no
-// hash function at all: with a map, Lookup was a quarter of the whole run on a
-// million-object repository. Entries come from slabs so that a million objects
-// cost a few hundred allocations, and each one has an index an edge can hold
-// without a pointer.
+// It is not a Go map. An object name is itself a hash, so four of its bytes are the hash and no hash
+// function is needed: with a map, Lookup was a quarter of a million-object run. Entries come from slabs.
 //
 // see docs/architecture.md
 type objTable struct {

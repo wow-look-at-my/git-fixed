@@ -97,10 +97,10 @@ type scanner struct {
 
 	// hunt is how many damaged objects the walk is looking for, when somebody else has already found them all.
 	hunt int
-	// found counts the damaged objects the walk has reached, and enough is the end of the walk.
+	// found counts the damaged objects the walk has reached, and enough is the end of the walk. see walkWorker.
 	found atomic.Int64
 	stop  atomic.Bool
-	// errand is set on a walk that starts under the objects a pass has just put back.
+	// errand is set on a walk that starts under the objects a pass has just put back. see descend
 	errand bool
 
 	// trusted holds the packs that have been read end to end, object by object.
@@ -110,7 +110,7 @@ type scanner struct {
 	meters   Meters
 }
 
-// VerifiedPack is a packfile a scan read end to end, with what the file was at the moment it did.
+// VerifiedPack is a packfile a scan read end to end, with what the file was at the moment it did. see trustUnchanged
 type VerifiedPack struct {
 	Path    string
 	Size    int64
@@ -142,23 +142,10 @@ func (m Meters) start(title string, total int64) *progress.Meter {
 	return progress.Start(m.Stderr, title, total)
 }
 
-// scan reads the repository, skipping the passes the caller's own fsck has
-// already made.
+// scan reads the repository, skipping the passes the caller's own fsck has already made.
 //
-// The two it can skip are the whole cost of a scan: verifying every packfile,
-// and reading every object a reference leads to. Over a healthy repository of
-// 229,960 objects they took a scan from 0.7s to 3.2s while finding nothing, and
-// over a hundred million objects they are twenty minutes each.
-//
-// What may be skipped is decided bit by bit, because a verdict's bits answer
-// different questions. A repository whose references are broken, whose
-// commit-graph is wrong, or whose index will not parse has had every one of its
-// objects read and approved by the fsck that found those faults, and reading
-// them all again finds nothing.
-//
-// Everything else still runs, because fsck does not look at all of it. git
-// never verifies info/packs, which is a cache for dumb HTTP clients, so a
-// corrupt one leaves fsck happy and is still a file to put right.
+// The two it can skip are the whole cost of a scan. What may be skipped is decided bit by bit, and everything
+// else still runs: fsck never verifies info/packs, so a corrupt one leaves it happy. see docs/repair.md
 func scan(repo *gitrepo.Repo, db *odb.DB, meters Meters, v *Verdict, verified []VerifiedPack) (*Damage, error) {
 	s := &scanner{
 		repo:   repo,

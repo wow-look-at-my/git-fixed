@@ -86,7 +86,7 @@ func (r *run) handleRef(refname string, oid gitobj.OID, broken bool) {
 		e = r.objs.Get(oid)
 	}
 	if e == nil || e.Flags()&flagHasObj == 0 {
-		// git parses the object again here, so an object that failed to parse in the object pass reports its.
+		// git parses the object again here, so one that failed the object pass reports its complaint twice.
 		r.reparse(key, oid)
 		r.rep.Errf(key, "error: %s: invalid sha1 pointer %s", refname, oid)
 		r.fail(ErrorReachable)
@@ -160,7 +160,7 @@ func (r *run) checkIndexes() {
 			r.rep.Errf(sortKey{phase: phaseIndex}, "error: %s", e)
 		}
 		if err != nil {
-			// git dies here, which takes the reverse-index checks, the bitmap checks.
+			// git dies here, which takes the reverse-index checks, the bitmap checks. see docs/exit-status.md
 			r.rep.Errf(sortKey{phase: phaseIndex}, "error: %s", err)
 			r.fail(ErrorIndex)
 			continue

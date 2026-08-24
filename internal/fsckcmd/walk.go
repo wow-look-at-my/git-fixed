@@ -43,7 +43,7 @@ func treeLinksFrom(entries []fsck.TreeEntry, name string, named bool) []link {
 		e := &entries[i]
 		typ, follow := e.WalkKind()
 		if !follow {
-			// A submodule commit is not part of this repository.
+			// A submodule commit is not part of this repository. see fsck.TreeEntry.WalkKind.
 			continue
 		}
 		l := link{oid: e.OID, typ: typ}
@@ -69,7 +69,7 @@ func (r *run) treeEdges(entries []fsck.TreeEntry) (span edgeSpan, edges []edge, 
 		e := &entries[i]
 		typ, follow := e.WalkKind()
 		if !follow {
-			// A submodule commit is not part of this repository.
+			// A submodule commit is not part of this repository. see fsck.TreeEntry.WalkKind.
 			continue
 		}
 		target, idx, ok := r.objs.Lookup(e.OID, typ)

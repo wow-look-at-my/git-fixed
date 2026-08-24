@@ -258,7 +258,9 @@ func onlySpacesAndPeriods(name []byte, i int) bool {
 	return true
 }
 
-// isExt4DotGeneric reports whether an ext4 directory with the casefold feature would resolve name to the.
+// isExt4DotGeneric reports whether a casefold ext4 directory resolves name to the control name.
+//
+// ext4 folds past ASCII: the long s U+017F folds to "s", so ".gitmoduleſ" opens .gitmodules there.
 func isExt4DotGeneric(name []byte, n needle) bool {
 	if !utf8.Valid(name) {
 		return false

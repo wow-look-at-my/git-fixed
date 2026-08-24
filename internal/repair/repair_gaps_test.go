@@ -197,7 +197,7 @@ func TestRewritesAMalformedPackedRefs(t *testing.T) {
 	assert.Contains(t, r.Git("show-ref"), "refs/tags/v1", "a tag was lost")
 	assert.FileExists(t, filepath.Join(res.Quarantine, "packed-refs"))
 
-	// The repository is whole and git is happy, and the run still does not call itself Ok.
+	// The repository is whole and git is happy, and the run still does not call itself Ok. see is
 	assert.True(t, res.Clean, "git fsck disagrees")
 	assert.False(t, res.Ok(), "an unreadable line must be reported, not glossed over")
 	assert.Equal(t, []string{"this is not a reference line"}, res.PackedRefs.Dropped)

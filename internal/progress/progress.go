@@ -36,7 +36,7 @@ const delay = time.Second
 type Meter struct {
 	w     io.Writer
 	title string
-	// total is what the caller believed the count would reach.
+	// total is what the caller believed the count would reach. see raise.
 	total atomic.Int64
 
 	count atomic.Int64

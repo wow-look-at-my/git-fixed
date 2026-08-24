@@ -96,7 +96,7 @@ func (d *Dir) loadPacks(algo *gitobj.Algo) error {
 	}
 	var names []string
 	for _, e := range entries {
-		// Any .idx here is a pack index.
+		// Any .idx here is a pack index. see at
 		if strings.HasSuffix(e.Name(), ".idx") {
 			names = append(names, e.Name())
 		}
@@ -442,9 +442,9 @@ func (db *DB) HasPacked(oid gitobj.OID) bool {
 	return false
 }
 
-// FatalError is a condition git reports with "fatal:" and exit status 128. A
-// packed object that will not decode is the one that matters here: git dies
-// rather than carry on with a repository it cannot read.
+// FatalError is a condition git reports with "fatal:" and exit status 128.
+//
+// A packed object that will not decode is the one that matters here: git dies rather than carry on.
 type FatalError struct {
 	Msg string
 	// Inflate is what git's decompressor said on the way, which it prints as its own line before the caller dies.

@@ -106,7 +106,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	defer heapStop()
 
-	// The diagnosis comes first, and it is git's own.
+	// The diagnosis comes first, and it is git's own. see what
 	o := f.options(dir, rest, stdout, stderr)
 
 	// What the run cost, said once at the end, in the words the meters have been drawing all along.

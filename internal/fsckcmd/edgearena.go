@@ -38,7 +38,7 @@ func (a *edgeArena) alloc(n int) (edgeSpan, []edge) {
 	}
 	c, _ := a.chunks.Get().(*edgeChunk)
 	if c == nil || len(c.buf)-c.used < n {
-		// What is left of the old chunk is dropped, which is at most one object's worth of edges out of a slab that.
+		// What is left of the old chunk is dropped: at most one object's edges out of a slab holding thousands.
 		slab, buf := a.newSlab(edgeSlabSize)
 		c = &edgeChunk{slab: slab, buf: buf}
 	}

@@ -402,7 +402,7 @@ type walker struct {
 	o      *VerifyOpts
 	emit   func(gitobj.OID, string)
 	object func(gitobj.OID, gitobj.Type, int64, []byte)
-	// budget is the decoded base data every worker on this pack may still hold between them.
+	// budget is the decoded base data every worker on this pack may still hold between them. see DefaultChainBudget.
 	budget atomic.Int64
 }
 

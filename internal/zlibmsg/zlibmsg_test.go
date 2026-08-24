@@ -138,7 +138,7 @@ func TestMessages(t *testing.T) {
 	}, {
 		name: "bit length repeat",
 		raw: func() []byte {
-			// Symbols 16, 17 and 18 get one-bit codes, which leaves symbol 16 as code 0 -- and it repeats a length that.
+			// Symbols 16, 17 and 18 get one-bit codes, leaving 16 as code 0: it repeats a length nothing has set.
 			w := dynamicBlock(0, 0, 0)
 			w.bits(1, 3) // 16: repeat the last length
 			w.bits(2, 3) // 17: a run of zeros

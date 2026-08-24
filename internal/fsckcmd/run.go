@@ -24,7 +24,7 @@ import (
 	"github.com/wow-look-at-my/git-fixed/internal/odb"
 )
 
-// Exit status bits.
+// Exit status bits. see docs/exit-status.md
 const (
 	ErrorObject         = 001
 	ErrorReachable      = 002

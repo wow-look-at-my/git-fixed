@@ -13,9 +13,9 @@ import (
 	"github.com/wow-look-at-my/git-fixed/internal/odb"
 )
 
-// PackObject is one object to put in a hand-built pack. Base is the position of
-// an earlier object in the same pack that this one is stored as a delta
-// against, or -1 for an object stored whole.
+// PackObject is one object to put in a hand-built pack.
+//
+// Base is an earlier object in the same pack to delta against, or -1 for an object stored whole.
 type PackObject struct {
 	Type gitobj.Type
 	Data []byte

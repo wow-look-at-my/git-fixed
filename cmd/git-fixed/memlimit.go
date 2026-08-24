@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// capHeap makes a repository too large for the machine cost time instead of costing the run.
+// capHeap makes a repository too large for the machine cost time instead of costing the run. see docs/architecture.md
 func capHeap() {
 	// Both of these mean somebody has already chosen, and GOMEMLIMIT=off is
 	// how a person turns the whole thing off.

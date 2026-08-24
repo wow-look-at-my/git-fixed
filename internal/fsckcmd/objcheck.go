@@ -63,7 +63,7 @@ func (r *run) checkObject(key sortKey, e *objEntry, typ gitobj.Type, buf []byte)
 			return
 		}
 	} else {
-		// The errors are dropped: parsable() ran this same walk before this object got here and rejected it if the.
+		// The errors are dropped: parsable() ran this same walk already and rejected the object if it had anything to say.
 		links, _ := walkLinks(typ, e.OID, buf, r.repo.Algo, r.fsck.ObjectName(e.OID), r.o.NameObjects)
 		linkCount = len(links)
 		span, edges = r.objs.arena.alloc(len(links))

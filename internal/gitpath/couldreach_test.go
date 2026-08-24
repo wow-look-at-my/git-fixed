@@ -22,7 +22,7 @@ func reaches(name []byte, n needle) bool {
 		isExt4DotGeneric(name, n) || isZFSDotGeneric(name, n)
 }
 
-// everyNeedle is each control name, so a sweep asks about both 8.3 prefixes that begin differently as well as.
+// everyNeedle is each control name, so a sweep covers the 8.3 prefixes that begin differently as well as the rest.
 var everyNeedle = []needle{dotGit, dotGitmodules, dotGitignore, dotGitattrs, dotMailmap}
 
 // TestTheFilterRulesOutNothingTheChecksAccept sweeps both bytes the filter

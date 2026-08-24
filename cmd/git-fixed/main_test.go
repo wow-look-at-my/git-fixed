@@ -137,7 +137,7 @@ func TestDryRunPlansARepairWithoutMakingOne(t *testing.T) {
 	assert.Contains(t, got.Stdout, "would rebuild: .git/index")
 	assert.Contains(t, got.Stderr, ".git/index: index file smaller than expected",
 		"the diagnosis git prints must come out before the plan")
-	// git exits 128 here and stops.
+	// git exits 128 here and stops. see docs/exit-status.md
 	assert.Equal(t, 128, r.GitFsck().Code)
 	assert.Equal(t, fsckcmd.ErrorIndex, got.Code,
 		"the status must name the fault, not say the run gave up")

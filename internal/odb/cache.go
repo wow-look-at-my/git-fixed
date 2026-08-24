@@ -19,7 +19,7 @@ type deltaKey struct {
 	off  int64
 }
 
-// deltaCache remembers objects that deltas were built from.
+// deltaCache remembers objects that deltas were built from. see docs/pack-verification.md
 type deltaCache struct {
 	shards [deltaCacheShards]deltaShard
 }

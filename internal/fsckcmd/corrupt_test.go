@@ -158,7 +158,7 @@ func TestUnreadableIndex(t *testing.T) {
 	want := r.GitFsck()
 	got := ours(t, r.Dir)
 
-	// git gives up here: status 128, and the reverse-index checks, the bitmap checks.
+	// git gives up here: status 128, and the reverse-index checks, the bitmap checks. see docs/exit-status.md
 	assert.Equal(t, 128, want.Code, "git's own behaviour, which this deliberately does not copy")
 	assert.Equal(t, fsckcmd.ErrorIndex, got.Code, "the index is unusable, and that is what the status says")
 
@@ -321,7 +321,7 @@ func TestAnUnknownIndexExtension(t *testing.T) {
 		want := r.GitFsck()
 		got := ours(t, r.Dir)
 
-		// git dies, taking four later phases that never open the index with it.
+		// git dies, taking four later phases that never open the index with it. see docs/exit-status.md
 		assert.Equal(t, 128, want.Code, "git's own behaviour, which this deliberately does not copy")
 		assert.Equal(t, fsckcmd.ErrorIndex, got.Code)
 		assert.Contains(t, want.Stderr, "index uses zzzz extension, which we do not understand")
