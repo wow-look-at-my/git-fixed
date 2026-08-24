@@ -17,19 +17,15 @@ import (
 
 // Repo is an open repository.
 type Repo struct {
-	// GitDir is the repository's own directory, which is the common
-	// directory for the main worktree.
+	// GitDir is the repository's own directory, which is the common directory for the main worktree.
 	GitDir string
-	// CommonDir holds refs, objects, and configuration. A linked worktree
-	// has its own GitDir but shares this.
+	// CommonDir holds refs, objects, and configuration.
 	CommonDir string
 	// WorkTree is the checkout, empty for a bare repository.
 	WorkTree string
 	// ObjectsDir is where loose objects and packs live.
 	ObjectsDir string
-	// DisplayGitDir and DisplayObjectsDir name the same directories the way
-	// git prints them. git works from the top of the worktree, so it writes
-	// ".git/objects/aa/bb..." where this process holds an absolute path.
+	// DisplayGitDir and DisplayObjectsDir name the same directories the way git prints them.
 	DisplayGitDir     string
 	DisplayObjectsDir string
 	// Algo is the repository's object hash.
@@ -37,8 +33,7 @@ type Repo struct {
 	// Config is every setting in effect, later entries winning.
 	Config *Config
 
-	// PackedRefsFatal is the message git dies with when its reader refuses a
-	// line of packed-refs.
+	// PackedRefsFatal is the message git dies with when its reader refuses a line of packed-refs.
 	PackedRefsFatal string
 
 	// packed caches the packed reference table, read at most once.
@@ -295,15 +290,7 @@ func loadConfig(commonDir string) (*Config, error) {
 	return c, nil
 }
 
-// Shown names a file inside the repository the way git names it in a message:
-// relative to where git would have started, not as the absolute path this
-// process opened. git writes ".git/index"; this process holds "/home/u/p/.git/index".
-//
-// The path is measured from GitDir, which is what DisplayGitDir names. In a
-// linked worktree those are the worktree's own directory, while objects and
-// packed-refs live in the common one, so the relative path climbs out with ".."
-// and Join folds it back down. Measuring from CommonDir instead named a
-// worktree's index ".git/worktrees/w/worktrees/w/index".
+// Shown names a file inside the repository the way git names it in a message.
 func (r *Repo) Shown(path string) string {
 	rel, err := filepath.Rel(r.GitDir, path)
 	if err != nil {
@@ -311,8 +298,7 @@ func (r *Repo) Shown(path string) string {
 	}
 	shown := filepath.Join(r.DisplayGitDir, rel)
 	if strings.HasPrefix(shown, "..") {
-		// Outside the repository altogether: an alternate object store, or a
-		// worktree file. An absolute path is the only unambiguous name.
+		// Outside the repository altogether: an alternate object store, or a worktree file.
 		return path
 	}
 	return filepath.ToSlash(shown)

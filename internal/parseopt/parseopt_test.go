@@ -138,7 +138,6 @@ func TestPrintUsage(t *testing.T) {
 	assert.True(t, strings.HasPrefix(out, "usage: git fsck [<options>] [<object>...]\n"))
 	assert.Contains(t, out, "   or: git fsck --connectivity-only\n")
 	assert.Contains(t, out, "    -v, --[no-]verbose")
-	// A long name past the column width wraps onto its own line, as git's
-	// usage_with_options() does.
+	// A long name past the column width wraps onto its own line, as git's usage_with_options() does.
 	assert.Contains(t, out, "--[no-]connectivity-only\n"+strings.Repeat(" ", 26)+"check only connectivity")
 }

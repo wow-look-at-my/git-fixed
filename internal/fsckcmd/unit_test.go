@@ -38,8 +38,7 @@ func TestLinkTypeName(t *testing.T) {
 }
 
 func TestHashSlots(t *testing.T) {
-	// git prints the size of its own object hash, which starts at 32 and
-	// doubles once it is half full.
+	// git prints the size of its own object hash, which starts at 32 and doubles once it is half full.
 	tab := newObjTable(0)
 	assert.Equal(t, int64(0), tab.HashSlots())
 	for i := range 40 {
@@ -169,8 +168,7 @@ func TestSetMsgTypeErrors(t *testing.T) {
 }
 
 func TestSetMsgTypeCannotDemoteFatal(t *testing.T) {
-	// git refuses to make a fatal check anything but an error, because the
-	// parser cannot continue past one.
+	// git refuses to make a fatal check anything but an error, because the parser cannot continue past one.
 	require.Equal(t, fsck.SevFatal, fsck.MsgNulInHeader.DefaultSeverity())
 
 	var errBuf bytes.Buffer
@@ -185,21 +183,12 @@ func TestSetMsgTypeCannotDemoteFatal(t *testing.T) {
 }
 
 // TestAnObjectEntryStaysSmall guards the number the comment on objEntry states.
-//
-// There is one of these per object, so a field added here costs 37 MB on a
-// repository of 37 million objects. That size was written down and was wrong,
-// which is what a test is for.
 func TestAnObjectEntryStaysSmall(t *testing.T) {
 	assert.Equal(t, uintptr(56), unsafe.Sizeof(objEntry{}))
 	assert.Equal(t, uintptr(8), unsafe.Sizeof(edge(0)))
 }
 
 // TestAnObjectEntryHoldsNoPointer guards the other half of what an entry costs.
-//
-// A pointer here is not 8 bytes, it is 8 bytes the collector follows on every
-// cycle, times one entry per object. On a repository of a hundred million that
-// is several gigabytes of marking, over and over, exactly when the heap is
-// large enough to be collecting constantly.
 func TestAnObjectEntryHoldsNoPointer(t *testing.T) {
 	assert.False(t, holdsPointer(reflect.TypeOf(objEntry{})), "objEntry")
 	assert.False(t, holdsPointer(reflect.TypeOf(slot{})), "slot")

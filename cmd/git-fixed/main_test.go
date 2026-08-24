@@ -137,8 +137,7 @@ func TestDryRunPlansARepairWithoutMakingOne(t *testing.T) {
 	assert.Contains(t, got.Stdout, "would rebuild: .git/index")
 	assert.Contains(t, got.Stderr, ".git/index: index file smaller than expected",
 		"the diagnosis git prints must come out before the plan")
-	// git exits 128 here and stops. This says which file is unusable and
-	// checks the rest of the repository. see docs/exit-status.md
+	// git exits 128 here and stops.
 	assert.Equal(t, 128, r.GitFsck().Code)
 	assert.Equal(t, fsckcmd.ErrorIndex, got.Code,
 		"the status must name the fault, not say the run gave up")
@@ -267,13 +266,7 @@ func TestOptionsCarryGitsResolvedDefaults(t *testing.T) {
 	assert.Equal(t, []string{"HEAD"}, o2.Args)
 }
 
-// TestTheFsckVerdictIsJudgedBeforeItRuns pins the ordering the shortcut needs,
-// and the trap that made it dead code on every single run.
-//
-// fsck resolves some options as it goes and writes them back into the struct it
-// was given: with no object named, the index becomes a head. Asking afterwards
-// therefore asks about a command line nobody typed, the answer is always no,
-// and the repair reads the whole repository a second time for nothing.
+// TestTheFsckVerdictIsJudgedBeforeItRuns pins the ordering the shortcut needs.
 func TestTheFsckVerdictIsJudgedBeforeItRuns(t *testing.T) {
 	r := repo(t)
 	o := newFsckFlags().options(r.Dir, nil, io.Discard, io.Discard)
@@ -284,13 +277,7 @@ func TestTheFsckVerdictIsJudgedBeforeItRuns(t *testing.T) {
 		"fsck no longer rewrites the options it was given, so run() can stop working around it")
 }
 
-// TestDryRunStillWritesWhatLostFoundWrites pins the one thing a --dry-run does
-// put on disk, so that it stays a decision rather than becoming a surprise.
-//
-// --lost-found is git's own option and writing dangling objects is the whole of
-// what it does. A --dry-run promises to repair nothing, not to write nothing,
-// and refusing the pair would take git's one command for saving those objects
-// away from the mode that stands in for git fsck.
+// TestDryRunStillWritesWhatLostFoundWrites pins the one thing a --dry-run does put on disk.
 func TestDryRunStillWritesWhatLostFoundWrites(t *testing.T) {
 	r := repo(t)
 	r.Blob("loose and unreferenced\n")
@@ -313,8 +300,7 @@ func TestDryRunSaysWhatItCouldAndCouldNotRepair(t *testing.T) {
 		r := gittest.New(t)
 		_, tree, _ := r.SimpleHistory()
 		r.Git("read-tree", "HEAD")
-		// The tree's only copy is corrupt and the index still records what
-		// was in it, so a repair rebuilds the tree from there.
+		// The tree's only copy is corrupt and the index still records what was in it.
 		overwriteObject(t, r, tree)
 		before := fingerprint(t, r.GitDir())
 
@@ -328,8 +314,7 @@ func TestDryRunSaysWhatItCouldAndCouldNotRepair(t *testing.T) {
 	t.Run("unrecoverable", func(t *testing.T) {
 		r := gittest.New(t)
 		blob, _, _ := r.SimpleHistory()
-		// Nothing else in this repository holds the blob's content, and
-		// there is no worktree and no remote to ask.
+		// Nothing else in this repository holds the blob's content, and there is no worktree and no remote to ask.
 		overwriteObject(t, r, blob)
 
 		got := invoke(t, r, "--dry-run")
@@ -382,8 +367,7 @@ func TestOneBadLooseObjectDoesNotRereadEveryPack(t *testing.T) {
 	r := repo(t)
 	r.Git("repack", "-adq")
 
-	// A loose object whose file is there and whose content is not the object
-	// it is named after. git fsck reports it and sets ErrorObject.
+	// A loose object whose file is there and whose content is not the object it is named after.
 	blob := r.Blob("loose and broken\n")
 	r.Overwrite(blob, []byte("this is not a git object"))
 

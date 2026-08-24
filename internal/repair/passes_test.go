@@ -23,15 +23,6 @@ import (
 )
 
 // meterRuns counts the meters one run drew under a title.
-//
-// A meter rewrites its own line, so it returns the cursor with a carriage
-// return and writes a newline only when the phase ends. One meter is therefore
-// one newline-terminated chunk, however many times it redrew inside it, and
-// counting the title alone counts redraws.
-//
-// The meter is the evidence a person actually sees, and it is what the report of
-// this bug was made of: four "Verifying packs: 100% ... done." lines from one
-// run. A scan with nothing to verify starts no meter at all.
 func meterRuns(drawn, title string) int {
 	n := 0
 	for _, line := range strings.Split(drawn, "\n") {
@@ -111,8 +102,7 @@ func TestAChainOfMissingObjectsCostsOneWalk(t *testing.T) {
 	r := history(t)
 	before := record(t, r)
 
-	// Every name first. Destroying the tree at the top makes git unable to
-	// resolve the ones below it.
+	// Every name first.
 	var chain []string
 	for _, rev := range []string{"HEAD^{tree}", "HEAD:src", "HEAD:src/deep", "HEAD:src/deep/c.txt"} {
 		chain = append(chain, strings.TrimSpace(r.Git("rev-parse", rev)))

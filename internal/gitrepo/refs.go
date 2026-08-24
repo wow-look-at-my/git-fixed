@@ -12,8 +12,7 @@ import (
 	"github.com/wow-look-at-my/git-fixed/internal/gitobj"
 )
 
-// Ref is one reference. A broken reference keeps a zero OID, which is what git
-// hands its callbacks when it iterates references including the broken ones.
+// Ref is one reference.
 type Ref struct {
 	Name   string
 	OID    gitobj.OID
@@ -83,8 +82,7 @@ func (r *Repo) packedRefs() []Ref {
 		if i := bytes.IndexByte(data[off:], '\n'); i >= 0 {
 			line, off = data[off:off+i], off+i+1
 		} else {
-			// git reads the file whole, so a last line with no newline
-			// is one it refuses rather than one it ignores.
+			// git reads the file whole, so a last line with no newline is one it refuses rather than one it ignores.
 			line, off = data[off:], len(data)
 			r.noteBadPackedLine("unterminated", string(line))
 		}
@@ -101,8 +99,6 @@ func (r *Repo) packedRefs() []Ref {
 		}
 		if line[0] == '^' {
 			// A peeled line carries what the tag above it points at.
-			// Nothing here needs the value, but a line that does not
-			// hold one still stops git's reader.
 			if _, ok := r.Algo.ParseHexBytes(line[1:]); !ok || len(line) != r.Algo.HexSize+1 {
 				r.noteBadPackedLine("unexpected", string(line))
 			}
@@ -137,13 +133,10 @@ func (r *Repo) looseRefs(dir, prefix string, algo *gitobj.Algo, root string) []R
 		}
 		if !d.Type().IsRegular() && d.Type()&fs.ModeSymlink == 0 {
 			// Opening a device or a pipe here would block forever.
-			// The ref check reports the file type itself.
 			return nil
 		}
 		if base := filepath.Base(path); base[0] == '.' {
-			// git's directory walk never yields a dot file, so such a
-			// file is not a reference at all. The ref check still sees
-			// it and complains about the name.
+			// git's directory walk never yields a dot file, so such a file is not a reference at all.
 			return nil
 		}
 		rel, err := filepath.Rel(dir, path)
@@ -153,9 +146,7 @@ func (r *Repo) looseRefs(dir, prefix string, algo *gitobj.Algo, root string) []R
 		name := prefix + "/" + filepath.ToSlash(rel)
 		ref := r.readRefFile(path, name, algo, root, 0)
 		if !fsck.CheckRefnameFormat(name, 0) {
-			// A name no reference may carry makes the reference itself
-			// broken, whatever the file holds. git hands such a name to
-			// its callers with the null object name.
+			// A name no reference may carry makes the reference itself broken, whatever the file holds.
 			ref.Broken = true
 			ref.OID = algo.Null()
 		}
@@ -182,10 +173,7 @@ func (r *Repo) readRefFile(path, name string, algo *gitobj.Algo, root string, de
 		}
 		next := r.readRefFile(filepath.Join(root, filepath.FromSlash(ref.Symref)), name, algo, root, depth+1)
 		if next.Broken {
-			// The target has no loose file, so the packed table is where it
-			// is. Every clone hits this: refs/remotes/origin/HEAD is a loose
-			// symref and the branch it names is packed, so stopping at the
-			// loose files reports a working clone as broken.
+			// The target has no loose file, so the packed table is where it is.
 			if oid, ok := r.packedMap()[ref.Symref]; ok {
 				ref.OID = oid
 				ref.Broken = false
@@ -200,9 +188,7 @@ func (r *Repo) readRefFile(path, name string, algo *gitobj.Algo, root string, de
 	if !ok {
 		return ref
 	}
-	// git accepts anything after the name as long as a space separates it:
-	// FETCH_HEAD carries a whole description there. Only a name that runs
-	// straight into other characters is broken.
+	// git accepts anything after the name as long as a space separates it.
 	if rest := line[algo.HexSize:]; len(rest) > 0 && !isSpace(rest[0]) {
 		return ref
 	}
@@ -234,8 +220,7 @@ func (r *Repo) Head(worktreeDir string) (target string, oid gitobj.OID, ok bool)
 		if oid, ok := r.Resolve(store, target, 0); ok {
 			return target, oid, true
 		}
-		// The branch does not exist yet, which is not an error on its
-		// own: git calls it an unborn branch.
+		// The branch does not exist yet, which is not an error on its own: git calls it an unborn branch.
 		return target, r.Algo.Null(), true
 	}
 	oid, valid := r.Algo.ParseHexBytes([]byte(line))

@@ -8,21 +8,7 @@ import (
 	"strings"
 )
 
-// capHeap makes a repository too large for the machine cost time instead of
-// costing the run.
-//
-// Without a ceiling the collector grows the heap until the kernel kills the
-// process, which on a large repository is the whole diagnosis lost at the point
-// it was nearly finished. With one, the collector runs more often as the heap
-// approaches it. The limit is soft: an allocation that needs more still gets
-// it, no check is skipped, and no finding is dropped. Go holds the collector to
-// half the CPU, so the worst case is a slow run rather than a stalled one.
-//
-// go-toolchain injects a startup guard that does this from the container's
-// cgroup ceiling. That guard covers a container and finds no limit anywhere
-// else, which is where these repositories are usually opened.
-//
-// see docs/architecture.md
+// capHeap makes a repository too large for the machine cost time instead of costing the run.
 func capHeap() {
 	// Both of these mean somebody has already chosen, and GOMEMLIMIT=off is
 	// how a person turns the whole thing off.
@@ -54,8 +40,7 @@ func heapLimit(meminfo string) (int64, bool) {
 		if !ok || key != "MemTotal" {
 			continue
 		}
-		// "MemTotal:       65759416 kB". The unit is always kB, so a
-		// line that says anything else is one this does not understand.
+		// "MemTotal: 65759416 kB".
 		fields := strings.Fields(value)
 		if len(fields) != 2 || fields[1] != "kB" {
 			return 0, false

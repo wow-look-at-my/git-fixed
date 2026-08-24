@@ -22,24 +22,16 @@ import (
 	"time"
 )
 
-// refresh is how stale a mark may be before a caller's read opens the file
-// again. The resident mark is the kernel's and is exact whenever it is read, so
-// this bounds two things only: how often a drawing meter reads, and how finely
-// the two sampled marks are sampled.
+// refresh is how stale a mark may be before a caller's read opens the file again.
 const refresh = 250 * time.Millisecond
 
 // Marks are what a run has cost at its worst moment. Each one is its own mark,
 // reached at its own moment, so they do not describe one instant and the
 // smaller ones are not a part of the larger.
 type Marks struct {
-	// RSS is the largest resident set the process has held: VmHWM, which the
-	// kernel maintains. It counts the packfile pages the page cache has
-	// mapped in, which is why it is the number top shows and why it is
-	// larger than anything the run allocated.
+	// RSS is the largest resident set the process has held: VmHWM, which the kernel maintains.
 	RSS uint64
-	// Anon is the largest anonymous resident set seen: the heap, the object
-	// table and the buffers, and none of the mapped files. This is what the
-	// run itself holds and what the machine cannot take back.
+	// Anon is the largest anonymous resident set seen: the heap, the object table and the buffers.
 	Anon uint64
 	// Swap is the largest swap use seen.
 	Swap uint64
@@ -48,8 +40,7 @@ type Marks struct {
 // Peak returns the process's marks, and false on a system that publishes none.
 func Peak() (Marks, bool) { return std.peak() }
 
-// std is the marks of this process, which has one memory footprint however
-// many meters are drawing it.
+// std is the marks of this process, which has one memory footprint however many meters are drawing it.
 var std = &watcher{path: "/proc/self/status", now: time.Now}
 
 type watcher struct {
@@ -58,8 +49,7 @@ type watcher struct {
 
 	mu   sync.Mutex
 	last Marks
-	// have says whether any read has succeeded, and read whether any has
-	// happened at all.
+	// have says whether any read has succeeded, and read whether any has happened at all.
 	have bool
 	read bool
 	at   time.Time
@@ -135,8 +125,7 @@ func parseStatus(status string) (Marks, bool) {
 		}
 		*into = kb * 1024
 	}
-	// Without the resident mark there is nothing worth printing, whatever
-	// else the file held.
+	// Without the resident mark there is nothing worth printing, whatever else the file held.
 	return m, haveRSS
 }
 
@@ -153,10 +142,7 @@ func kilobytes(value string) (uint64, bool) {
 	return kb, true
 }
 
-// Short renders the marks for a progress line, where the width belongs to the
-// terminal and every other field is already competing for it. It carries the
-// resident mark, and swap once there is any, which is the moment a run stops
-// being slow and starts being stuck.
+// Short renders the marks for a progress line.
 func (m Marks) Short() string {
 	if m.Swap == 0 {
 		return Bytes(m.RSS)
@@ -164,9 +150,7 @@ func (m Marks) Short() string {
 	return Bytes(m.RSS) + " +" + Bytes(m.Swap) + " swap"
 }
 
-// String renders them for the line a run ends with, where the anonymous mark
-// earns its room: it separates what the run holds from what the page cache
-// lent it for the packfiles, and those differ by orders of magnitude.
+// String renders them for the line a run ends with, where the anonymous mark earns its room.
 func (m Marks) String() string {
 	swap := "nothing swapped"
 	if m.Swap > 0 {

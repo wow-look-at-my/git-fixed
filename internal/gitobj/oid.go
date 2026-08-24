@@ -59,9 +59,7 @@ func AlgoByName(name string) *Algo {
 	return nil
 }
 
-// OID is a git object name. It carries its own raw length so that a value
-// formats itself without a reference to the repository's algorithm, and it
-// stays comparable so it can be a map key.
+// OID is a git object name.
 type OID struct {
 	H [MaxRawSize]byte
 	N uint8
@@ -123,9 +121,7 @@ func (a *Algo) Parse(s string) (OID, bool) {
 	return o, true
 }
 
-// ParsePrefix decodes an object name at the front of s and returns what follows
-// it. It is git's parse_oid_hex(), which several file formats rely on: a line
-// carries a name and then something else.
+// ParsePrefix decodes an object name at the front of s and returns what follows it.
 func (a *Algo) ParsePrefix(s string) (OID, string, bool) {
 	o, ok := a.ParseHexBytes([]byte(s))
 	if !ok {

@@ -1,10 +1,6 @@
 package repair
 
-// The recovery ladder. Given an object name, find the bytes that hash to it.
-//
-// Every source ends at the same check, in odb.WriteLoose: content that does not
-// hash to the name being recovered is not that object and is refused. That is
-// what makes a recovery provably the original and not an approximation.
+// The recovery ladder.
 
 import (
 	"errors"
@@ -39,14 +35,11 @@ type Sources struct {
 	byOID map[string][]string
 	// entries is the index, for rebuilding a tree.
 	entries []gitrepo.IndexEntry
-	// remote is the scratch checkout a remote's objects arrive in, opened at
-	// most once and only when a local source has already failed.
+	// remote is the scratch checkout a remote's objects arrive in.
 	remote *remoteSource
-	// policy says what the remote may be asked for, and whether a fetch of
-	// every ref is allowed at all.
+	// policy says what the remote may be asked for, and whether a fetch of every ref is allowed at all.
 	policy RemotePolicy
-	// remoteErr says why the remote could not be consulted, so a run can tell
-	// the difference between "gone" and "unreachable".
+	// remoteErr says why the remote could not be consulted.
 	remoteErr error
 }
 
@@ -117,8 +110,7 @@ func (s *Sources) Find(b BadObject) (Found, error) {
 			continue
 		}
 		if odb.Hash(s.repo.Algo, typ, content).Compare(b.OID) != 0 {
-			// The source produced something that is not this object. Try the
-			// next one rather than writing a different object under this name.
+			// The source produced something that is not this object.
 			continue
 		}
 		return Found{Type: typ, Content: content, Source: a.name}, nil
@@ -144,13 +136,11 @@ func (s *Sources) Write(b BadObject, f Found, objectsDir string) (Recovered, err
 // common case, and the packed copy is already the object.
 func (s *Sources) fromDuplicate(b BadObject) (gitobj.Type, []byte, bool) {
 	if !b.Corrupt {
-		// Nothing on disk claims to be this object, so there is no duplicate
-		// to prefer. The database already said it cannot produce it.
+		// Nothing on disk claims to be this object, so there is no duplicate to prefer.
 		return 0, nil, false
 	}
 	for _, path := range b.Files {
-		// Read the loose copies directly rather than through the database,
-		// which caches its verdict about a name it has already failed on.
+		// Read the loose copies directly rather than through the database.
 		res := odb.ReadLoose(path, path, b.OID, s.repo.Algo, 0)
 		if res != nil && !res.Failed && res.Contents != nil {
 			return res.Type, res.Contents, true
@@ -192,8 +182,7 @@ func (s *Sources) fromIndexTree(b BadObject) (gitobj.Type, []byte, bool) {
 	if len(s.entries) == 0 {
 		return 0, nil, false
 	}
-	// The wanted tree can be at any depth, and the index does not say which
-	// directory it is. Build every directory's tree and look for the name.
+	// The wanted tree can be at any depth, and the index does not say which directory it is.
 	trees := buildTrees(s.entries, s.repo.Algo)
 	if content, ok := trees[b.OID.String()]; ok {
 		return gitobj.TypeTree, content, true
@@ -202,10 +191,6 @@ func (s *Sources) fromIndexTree(b BadObject) (gitobj.Type, []byte, bool) {
 }
 
 // fromRemote fetches the object from a configured remote.
-//
-// A remote that cannot be reached is recorded rather than passed over. A source
-// that fails quietly turns "your remote is unreachable" into "your objects are
-// gone", which is the wrong thing to tell someone about their repository.
 func (s *Sources) fromRemote(b BadObject) (gitobj.Type, []byte, bool) {
 	if s.remoteErr != nil {
 		return 0, nil, false
@@ -221,9 +206,7 @@ func (s *Sources) fromRemote(b BadObject) (gitobj.Type, []byte, bool) {
 	return s.remote.get(b.OID)
 }
 
-// RemoteError reports why the remote could not be consulted, nil when it was
-// not needed or it worked. errNoRemote is not an error to show: a repository
-// with no remote is an ordinary repository.
+// RemoteError reports why the remote could not be consulted, nil when it was not needed or it worked.
 func (s *Sources) RemoteError() error {
 	if errors.Is(s.remoteErr, errNoRemote) {
 		return nil
@@ -297,8 +280,7 @@ func serializeTree(node *treeNode, algo *gitobj.Algo, out map[string][]byte) git
 	return oid
 }
 
-// treeSortName is the key git sorts tree entries by: a directory sorts as
-// though its name ended in a slash, which is why "foo.txt" comes before "foo/".
+// treeSortName is the key git sorts tree entries by: a directory sorts as though its name ended in a slash.
 func treeSortName(e fsck.TreeEntry) string {
 	if e.Mode&0o170000 == 0o040000 {
 		return string(e.Name) + "/"

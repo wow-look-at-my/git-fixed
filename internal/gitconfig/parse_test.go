@@ -95,8 +95,7 @@ func TestForEach(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"a.k=1", "a.j"}, seen)
 
-	// A callback error stops the walk, and a parse error still surfaces
-	// after the entries that did parse.
+	// A callback error stops the walk, and a parse error still surfaces after the entries that did parse.
 	stop := errors.New("stop")
 	err = gitconfig.ForEach([]byte("[a]\nk = 1\n"), func(string, *string) error { return stop })
 	assert.ErrorIs(t, err, stop)
@@ -124,8 +123,7 @@ func TestSplitKey(t *testing.T) {
 	assert.Empty(t, name)
 	assert.False(t, hasSub)
 
-	// A subsection may itself contain dots; only the last one splits off
-	// the name.
+	// A subsection may itself contain dots; only the last one splits off the name.
 	_, sub, name, hasSub = gitconfig.SplitKey("submodule.a.b.c.url")
 	assert.Equal(t, "a.b.c", sub)
 	assert.Equal(t, "url", name)

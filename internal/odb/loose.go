@@ -15,8 +15,7 @@ import (
 	"github.com/wow-look-at-my/git-fixed/internal/zlibmsg"
 )
 
-// maxHeaderLen is git's MAX_HEADER_LEN: the first inflate of a loose object
-// must produce the whole "<type> <size>\0" header within this many bytes.
+// maxHeaderLen is git's MAX_HEADER_LEN: the first inflate of a loose object must produce the whole "<type>.
 const maxHeaderLen = 32
 
 // LooseResult is what reading one loose object produced. It mirrors git's
@@ -27,8 +26,7 @@ type LooseResult struct {
 	Size     int64
 	Contents []byte
 	RealOID  gitobj.OID // hash of what the file actually holds
-	// Errors holds the lines git prints from inside read_loose_object,
-	// in order, before its caller adds its own.
+	// Errors holds the lines git prints from inside read_loose_object, in order, before its caller adds its own.
 	Errors []string
 	// HashMismatch is set when the file decoded but hashes to another name.
 	HashMismatch bool
@@ -36,9 +34,7 @@ type LooseResult struct {
 	Failed bool
 }
 
-// inflateFailed records the complaint git's decompressor prints before its
-// caller adds one. maxOut is how much output the failed read had room for:
-// zlib stops once it has filled that, so it never reaches a fault beyond it.
+// inflateFailed records the complaint git's decompressor prints before its caller adds one.
 func (res *LooseResult) inflateFailed(raw []byte, maxOut int64) {
 	if msg := zlibmsg.Diagnose(raw, maxOut); msg != "" {
 		res.Errors = append(res.Errors, msg)
@@ -82,8 +78,7 @@ func readLooseBytes(raw []byte, shown string, expected gitobj.OID, algo *gitobj.
 	zr, err := zlib.NewReader(br)
 	if err != nil {
 		res.Failed = true
-		// git's decompressor prints its own complaint before its caller
-		// adds one.
+		// git's decompressor prints its own complaint before its caller adds one.
 		res.inflateFailed(raw, maxHeaderLen)
 		res.Errors = append(res.Errors, fmt.Sprintf("unable to unpack header of %s", shown))
 		return res
@@ -94,11 +89,7 @@ func readLooseBytes(raw []byte, shown string, expected gitobj.OID, algo *gitobj.
 	n, err := readUpTo(zr, hdr[:])
 	nul := bytes.IndexByte(hdr[:n], 0)
 	if err != nil && !errors.Is(err, io.EOF) {
-		// Go's decompressor decodes ahead of what it was asked for, so
-		// it reports a fault that zlib has not reached yet. git reads
-		// the header into this many bytes and stops there, and gives up
-		// here only for a fault inside those. Anything further down
-		// belongs to the read of the contents.
+		// Go's decompressor decodes ahead of what it was asked for.
 		if msg := zlibmsg.Diagnose(raw, maxHeaderLen); msg != "" {
 			res.Failed = true
 			res.Errors = append(res.Errors, msg,
@@ -121,8 +112,7 @@ func readLooseBytes(raw []byte, shown string, expected gitobj.OID, algo *gitobj.
 	res.Type = gitobj.TypeFromName(typeName)
 	res.Size = size
 	if res.Type == gitobj.TypeBad {
-		// git's parse_loose_header() stops at a type name it does not
-		// know, and quotes the header it was reading.
+		// git's parse_loose_header() stops at a type name it does not know, and quotes the header it was reading.
 		res.Failed = true
 		res.Errors = append(res.Errors,
 			fmt.Sprintf("unable to parse type from header '%s' of %s", hdr[:nul], shown))
@@ -135,10 +125,7 @@ func readLooseBytes(raw []byte, shown string, expected gitobj.OID, algo *gitobj.
 	}
 
 	if !plausibleSize(size, int64(len(raw))) {
-		// The header's size is bigger than this file could inflate to
-		// however it is read, so it is damage rather than a size. Taking
-		// it at its word here asks for that many bytes. see
-		// inflatebound.go
+		// The header's size is bigger than this file could inflate to however it is read.
 		res.Failed = true
 		res.Errors = append(res.Errors, fmt.Sprintf("unable to unpack contents of %s", shown))
 		return res
@@ -150,8 +137,7 @@ func readLooseBytes(raw []byte, shown string, expected gitobj.OID, algo *gitobj.
 	switch {
 	case readErr != nil:
 		res.Failed = true
-		// The header is behind us, so this read runs to the end of the
-		// stream and reaches whatever zlib objects to anywhere in it.
+		// The header is behind us, so this read runs to the end of the stream and reaches whatever zlib objects to.
 		res.inflateFailed(raw, zlibmsg.Whole)
 		res.Errors = append(res.Errors,
 			fmt.Sprintf("corrupt loose object '%s'", expected),
@@ -226,11 +212,6 @@ func (res *LooseResult) streamCheck(zr io.Reader, raw []byte, br *bytes.Reader, 
 }
 
 // hasher is one lent-out digest and the room to build a header in.
-//
-// This runs once per object, which is a hundred million times on a large
-// repository. A digest of its own, a formatted header, and a slice for the
-// answer are three allocations each, and the header cost more to format than
-// it did to hash.
 type hasher struct {
 	algo *gitobj.Algo
 	h    hash.Hash
@@ -246,8 +227,7 @@ var hashers sync.Pool
 func HashLiteral(algo *gitobj.Algo, typeName string, content []byte) gitobj.OID {
 	hs, _ := hashers.Get().(*hasher)
 	if hs == nil || hs.algo != algo {
-		// A pool shared by a run over two repositories can hand back the
-		// other one's digest, which would answer in the wrong algorithm.
+		// A pool shared by a run over two repositories can hand back the other one's digest.
 		hs = &hasher{algo: algo, h: algo.New()}
 	} else {
 		hs.h.Reset()
@@ -334,9 +314,7 @@ func fillFrom(r io.Reader, buf []byte) error {
 		total += n
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				// The stream ended before the header's size. git
-				// keeps the zero-filled tail and lets the hash
-				// check reject the object.
+				// The stream ended before the header's size.
 				return nil
 			}
 			return err
@@ -348,8 +326,7 @@ func fillFrom(r io.Reader, buf []byte) error {
 	return nil
 }
 
-// atStreamEnd reports whether the reader has nothing left, which is what tells
-// a correct object from one whose payload runs past its declared size.
+// atStreamEnd reports whether the reader has nothing left.
 func atStreamEnd(r io.Reader) bool {
 	var b [1]byte
 	n, err := r.Read(b[:])

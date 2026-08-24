@@ -1,12 +1,6 @@
 package repair
 
 // Repairing a reference whose own file is broken.
-//
-// This covers only the fault where the ref file will not parse but the value it
-// meant to hold is recoverable and its object is fine. A ref that correctly
-// names a missing object is not repaired here: that is a missing object, and
-// winding the ref back to where it still resolves would throw away the commits
-// in between. docs/repair.md says why that is never done unasked.
 
 import (
 	"fmt"

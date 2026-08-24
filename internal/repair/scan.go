@@ -32,11 +32,9 @@ type Need struct {
 // BadObject is one object the repository cannot produce.
 type BadObject struct {
 	OID gitobj.OID
-	// Type is what the object must be, from the link that named it, or
-	// TypeNone when only its name is known.
+	// Type is what the object must be, from the link that named it, or TypeNone when only its name is known.
 	Type gitobj.Type
 	// Corrupt is set when a file for this object exists but will not decode.
-	// A corrupt object has a file to quarantine; a missing one does not.
 	Corrupt bool
 	// Files are the paths holding the unusable copies, absolute.
 	Files []string
@@ -49,8 +47,7 @@ type BadRef struct {
 	Name string
 	// Path is the loose ref file, empty for a packed ref.
 	Path string
-	// Malformed is set when the ref file itself will not parse. The object it
-	// meant to name may be perfectly fine.
+	// Malformed is set when the ref file itself will not parse.
 	Malformed bool
 	// Missing is the object the ref names, when that object is the problem.
 	Missing gitobj.OID
@@ -58,8 +55,7 @@ type BadRef struct {
 
 // Damage is everything one scan found.
 type Damage struct {
-	// Derived are the cache files that will not parse. Every one is
-	// rebuildable, so every one is safe to displace.
+	// Derived are the cache files that will not parse.
 	Derived []string
 	// Objects are the objects that are corrupt or gone.
 	Objects []BadObject
@@ -67,12 +63,9 @@ type Damage struct {
 	Refs []BadRef
 	// Packs are the packfiles that will not verify.
 	Packs []BadPack
-	// Verified are the packs this scan read end to end or took on trust, each
-	// with the file it read. It is what the next scan of the same run is
-	// handed, so a repair pass does not re-read the packs it never touched.
+	// Verified are the packs this scan read end to end or took on trust, each with the file it read.
 	Verified []VerifiedPack
-	// Index is .git/index when it will not parse, with the reason. The index
-	// is not a derived file: it holds staged work that exists nowhere else.
+	// Index is .git/index when it will not parse, with the reason.
 	Index *BadIndex
 	// PackedRefs is packed-refs when it will not parse, with the reason.
 	PackedRefs *BadPackedRefs
@@ -95,72 +88,48 @@ type scanner struct {
 
 	bad  *concurrentmap.Map[gitobj.OID, *BadObject]
 	seen *concurrentmap.Map[gitobj.OID, bool]
-	// queue is a bag rather than a stack: the walk does not care what order
-	// it reaches objects in, and a bag shards where a single head contends.
+	// queue is a bag rather than a stack: the walk does not care what order it reaches objects in.
 	queue *concurrentbag.Bag[queued]
-	// anyBad is raised the moment an object first fails to read. Until then
-	// every route offered to knownBad is about an object that is fine, and one
-	// atomic load is the whole cost of saying so. concurrentmap.IsEmpty takes a
-	// read lock on every shard to answer the same question.
+	// anyBad is raised the moment an object first fails to read.
 	anyBad atomic.Bool
-	// pending counts what is queued plus what a worker is still reading, so
-	// an empty bag is not mistaken for a finished walk.
+	// pending counts what is queued plus what a worker is still reading.
 	pending atomic.Int64
 
-	// hunt is how many damaged objects the walk is looking for, when somebody
-	// else has already found them all. Zero means the walk must read
-	// everything, because nobody knows what is out there.
+	// hunt is how many damaged objects the walk is looking for, when somebody else has already found them all.
 	hunt int
-	// found counts the damaged objects the walk has reached, and enough is
-	// the end of the walk. see walkWorker.
+	// found counts the damaged objects the walk has reached, and enough is the end of the walk.
 	found atomic.Int64
 	stop  atomic.Bool
-	// errand is set on a walk that starts under the objects a pass has just
-	// put back, rather than at the references. see descend
+	// errand is set on a walk that starts under the objects a pass has just put back.
 	errand bool
 
-	// trusted holds the packs that have been read end to end, object by
-	// object, with every one of them decoding and hashing to its own name --
-	// by this scan's own pack pass, or by the fsck the caller ran before it.
-	//
-	// It is what lets the walk stop inflating blobs. nil means nothing has
-	// been read and nothing may be taken on trust.
+	// trusted holds the packs that have been read end to end, object by object.
 	trusted map[string]bool
-	// verified is what this scan can hand the next scan of the same run: the
-	// packs it read or took on trust, each with the file it read.
+	// verified is what this scan can hand the next scan of the same run: the packs it read or took on trust.
 	verified []VerifiedPack
 	meters   Meters
 }
 
-// VerifiedPack is a packfile a scan read end to end, with what the file was at
-// the moment it did. A later scan of the same run compares the two and reads
-// the pack again only when they differ. see trustUnchanged
+// VerifiedPack is a packfile a scan read end to end, with what the file was at the moment it did.
 type VerifiedPack struct {
 	Path    string
 	Size    int64
 	ModTime time.Time
 }
 
-// Scan reads the repository and reports what is damaged. meters draws the two
-// passes that take the time, or is the zero value when nobody asked.
+// Scan reads the repository and reports what is damaged.
 func Scan(repo *gitrepo.Repo, db *odb.DB, meters Meters) (*Damage, error) {
 	return scan(repo, db, meters, nil, nil)
 }
 
-// rescan reads the repository again after a repair pass changed it. It takes on
-// trust only the packs an earlier scan of the same run read end to end and that
-// the pass left alone, which it checks rather than assumes.
+// rescan reads the repository again after a repair pass changed it.
 func rescan(repo *gitrepo.Repo, db *odb.DB, meters Meters, verified []VerifiedPack) (*Damage, error) {
 	return scan(repo, db, meters, nil, verified)
 }
 
-// Meters is where a scan draws its progress. A scan of a broken repository
-// reads every pack and then every object a reference leads to, which is a
-// second pass over everything the fsck before it already read, and until this
-// existed it printed nothing for the whole of it.
+// Meters is where a scan draws its progress.
 type Meters struct {
-	// Stderr is where the meters are drawn. A nil writer, or Show left
-	// false, means no meter is started at all.
+	// Stderr is where the meters are drawn.
 	Stderr io.Writer
 	Show   bool
 }
@@ -201,24 +170,16 @@ func scan(repo *gitrepo.Repo, db *odb.DB, meters Meters, v *Verdict, verified []
 	}
 	d := &Damage{}
 	s.scanDerived(d)
-	// Every pack the caller's fsck read end to end is a pack this does not
-	// read again, whatever else that fsck was unhappy about. One corrupt
-	// loose object used to condemn every pack in the repository to a second
-	// full read.
+	// Every pack the caller's fsck read end to end is a pack this does not read again.
 	s.trustNamed(v.verifiedPacks())
 	s.trustUnchanged(verified)
 	s.scanPacks(d)
 	d.Verified = s.verified
 	s.scanIndexes(d)
-	// scanRefs first: reading the references is what makes git's own reader
-	// pass over packed-refs, and its verdict on that file is what the check
-	// below reports.
+	// scanRefs first: reading the references is what makes git's own reader pass over packed-refs.
 	s.scanRefs(d)
 	s.scanPackedRefs(d)
-	// When the fsck named every damaged object, the walk is not out looking
-	// for damage: it is out looking for the route to damage somebody else
-	// found. It stops at the last one rather than reading the other hundred
-	// million objects to say nothing about them.
+	// When the fsck named every damaged object, the walk is not out looking for damage.
 	s.hunt, _ = v.damageNamed()
 	if !v.refsReach() {
 		s.walk()
@@ -252,9 +213,7 @@ func (s *scanner) checkRef(d *Damage, worktreeDir string, ref Ref) {
 	name := ref.Name
 	switch {
 	case ref.Symref != "":
-		// A symref that points nowhere is a broken ref, but only when its
-		// target does not exist. A branch that has never been created is a
-		// normal state for HEAD to be in.
+		// A symref that points nowhere is a broken ref, but only when its target does not exist.
 		return
 	case ref.Broken || !ref.OID.Valid():
 		d.Refs = append(d.Refs, BadRef{
@@ -267,8 +226,7 @@ func (s *scanner) checkRef(d *Damage, worktreeDir string, ref Ref) {
 	}
 }
 
-// Ref is the reference shape the scan reads, aliased so callers of this package
-// do not have to import gitrepo for it.
+// Ref is the reference shape the scan reads.
 type Ref = gitrepo.Ref
 
 // refPath finds the loose file for a reference, empty when it is packed.
@@ -293,17 +251,7 @@ func (s *scanner) trustNamed(paths []string) {
 	}
 }
 
-// trustUnchanged records the packs an earlier scan of this same run read end to
-// end, and that are still the file that scan read.
-//
-// A repair pass in between wrote loose objects and moved whole packs to
-// quarantine. Neither changes a pack that is still where it was, so reading it
-// again asks a question that has an answer -- and over a hundred million
-// objects the answer costs twenty minutes, once per pass.
-//
-// The stat is what makes that a check rather than an assumption. A pack that
-// has grown, shrunk or been written since is not trusted, and a pack that has
-// gone is not there to trust.
+// trustUnchanged records the packs an earlier scan of this same run read end to end.
 func (s *scanner) trustUnchanged(packs []VerifiedPack) {
 	for _, p := range packs {
 		if fi, err := os.Stat(p.Path); err == nil && fi.Size() == p.Size && fi.ModTime().Equal(p.ModTime) {
@@ -325,8 +273,7 @@ func (s *scanner) trust(path string) {
 	s.trusted[path] = true
 	fi, err := os.Stat(path)
 	if err != nil {
-		// Trusted for this scan, because somebody read it, but there is
-		// nothing to hand the next one.
+		// Trusted for this scan, because somebody read it, but there is nothing to hand the next one.
 		return
 	}
 	s.verified = append(s.verified, VerifiedPack{Path: path, Size: fi.Size(), ModTime: fi.ModTime()})

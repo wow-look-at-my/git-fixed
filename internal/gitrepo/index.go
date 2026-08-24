@@ -23,10 +23,7 @@ type IndexEntry struct {
 	OID   gitobj.OID
 	Name  string
 	Stage int
-	// Stat is the 40 bytes git records before the object name: the two
-	// timestamps, the device, the inode, the mode, the uid, the gid and the
-	// size. A rewritten index keeps them, so git does not have to read every
-	// file in the worktree again to find out that nothing changed.
+	// Stat is the 40 bytes git records before the object name: the two timestamps, the device, the inode.
 	Stat [40]byte
 }
 
@@ -51,17 +48,11 @@ type Index struct {
 	Entries     []IndexEntry
 	CacheTree   *CacheTree
 	ResolveUndo []ResolveUndo
-	// Ignored names the extensions that were skipped. git prints one line
-	// per extension it does not know, and carries on.
+	// Ignored names the extensions that were skipped.
 	Ignored []string
 }
 
-// knownExtensions are the index extensions git reads. It skips one it does not
-// know rather than refusing the index, so this has to know the same names to
-// stay quiet about the same ones. read-cache.c lines 69 to 76.
-//
-// Only TREE and REUC are parsed here. The rest hold no object name, so an fsck
-// has nothing to look at in them, and consuming them is the whole job.
+// knownExtensions are the index extensions git reads.
 var knownExtensions = set.Of("TREE", "REUC", "link", "UNTR", "FSMN", "EOIE", "IEOT", "sdir")
 
 // FatalError is a condition git reports with "fatal:" and exit status 128.
@@ -137,10 +128,7 @@ func (r *Repo) ReadIndex(path string) (*Index, []string, error) {
 			// git reads it and this does not need to. Consuming it is
 			// enough, and it says nothing about it either.
 		case sig[0] >= 'A' && sig[0] <= 'Z':
-			// git's rule: a name that starts with a capital letter is
-			// an OPTIONAL extension, so an unknown one is skipped with
-			// a note. Reading this backwards refused every index with
-			// an untracked cache in it.
+			// git's rule: a name that starts with a capital letter is an OPTIONAL extension.
 			idx.Ignored = append(idx.Ignored, sig)
 		default:
 			return nil, errs, &FatalError{
@@ -186,8 +174,7 @@ func (r *Repo) readIndexEntry(data []byte, pos int, version uint32, prevName str
 			name = data[off : off+end]
 		}
 		e.Name = string(name)
-		// Entries are padded so the next one starts on an 8-byte
-		// boundary, counting from the start of this entry.
+		// Entries are padded so the next one starts on an 8-byte boundary, counting from the start of this entry.
 		entryLen := fixed + len(name)
 		if flags&0x4000 != 0 {
 			entryLen += 2

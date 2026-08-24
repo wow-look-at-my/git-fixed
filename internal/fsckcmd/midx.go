@@ -29,10 +29,7 @@ func (r *run) verifyMultiPackIndex(dir *odb.Dir) bool {
 		ok = false
 		r.rep.Errf(key, format, args...)
 	}
-	// git reads the index three times over: once itself, and once for each
-	// of the two passes of the "multi-pack-index verify" it runs. All three
-	// name the file the way git prints a path, and the caller's summary
-	// follows them.
+	// git reads the index three times over: once itself.
 	tooSmall := func() bool {
 		for range 3 {
 			r.rep.Errf(key, "error: multi-pack-index file %s is too small", shown)

@@ -18,15 +18,11 @@ type Bool struct {
 	Short byte
 	Long  string
 	Help  string
-	// Value receives true or false. A --no- prefix, or an explicit
-	// --option=false, sets false.
+	// Value receives true or false.
 	Value *int
 }
 
-// Str is one option that takes a value. git accepts four spellings for one,
-// and so does this: "-C dir", "-Cdir", "--long value" and "--long=value".
-//
-// A Str has no --no- form, because there is no value to unset it to.
+// Str is one option that takes a value.
 type Str struct {
 	Short byte
 	Long  string
@@ -40,8 +36,7 @@ type Str struct {
 type Set struct {
 	Usage []string
 	Opts  []*Bool
-	// Strs are the options that take a value. They print after the boolean
-	// ones, which is why a command lists its most general option here.
+	// Strs are the options that take a value.
 	Strs []*Str
 }
 
@@ -80,9 +75,7 @@ func (s *Set) Parse(args []string) ([]string, error) {
 			}
 			i += used
 		default:
-			// git's parse_options stops at the first non-option
-			// unless KEEP_UNKNOWN is set; fsck does not set it, so
-			// everything from here on is an argument.
+			// git's parse_options stops at the first non-option unless KEEP_UNKNOWN is set; fsck does not set it.
 			return append(rest, args[i:]...), nil
 		}
 	}

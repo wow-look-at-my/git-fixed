@@ -34,8 +34,7 @@ type commitGraph struct {
 	genData    []byte
 	// base is every layer below this one in a chain, oldest first.
 	base []*commitGraph
-	// lexBase is how many commits the layers below hold, which is where
-	// this layer's own positions start.
+	// lexBase is how many commits the layers below hold, which is where this layer's own positions start.
 	lexBase uint32
 }
 
@@ -54,10 +53,7 @@ func (r *run) verifyCommitGraphs(dir *odb.Dir) bool {
 	for _, path := range files {
 		g, msg := loadCommitGraph(path, r.repo.Algo)
 		if msg != "" {
-			// git loads the graph once itself and once inside the
-			// "commit-graph verify" it runs, so a file it cannot
-			// parse is reported twice. No path appears in the
-			// message, so both lines read the same.
+			// git loads the graph once itself and once inside the "commit-graph verify" it runs.
 			r.rep.Errf(key, "%s", msg)
 			r.rep.Errf(key, "%s", msg)
 			return false
@@ -189,8 +185,7 @@ func (r *run) verifyOneCommitGraph(key sortKey, g *commitGraph) bool {
 		fanoutPos++
 	}
 	if !ok {
-		// git stops here when the tables themselves disagree, because
-		// every check below reads through them.
+		// git stops here when the tables themselves disagree, because every check below reads through them.
 		return false
 	}
 
@@ -283,8 +278,7 @@ func (g *commitGraph) commitAt(i uint32) (tree gitobj.OID, parents []graphParent
 	if g.genData != nil && int(i)*4+4 <= len(g.genData) {
 		offset := uint64(binary.BigEndian.Uint32(g.genData[int(i)*4:]))
 		if offset&cgDateOverflow != 0 {
-			// An offset this large is stored in the overflow chunk,
-			// which this reader does not need for verification.
+			// An offset this large is stored in the overflow chunk, which this reader does not need for verification.
 			return tree, nil, generation, date, false
 		}
 		generation = date + offset

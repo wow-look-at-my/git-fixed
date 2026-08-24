@@ -23,8 +23,7 @@ func (r *run) checkRefs() {
 	if r.o.Verbose {
 		r.rep.Verbosef("Checking ref database")
 	}
-	// git measures this phase in one step, because it hands the whole of it
-	// to "git refs verify" and cannot see inside.
+	// git measures this phase in one step, because it hands the whole of it to "git refs verify" and cannot see.
 	m := r.meterOn("Checking ref database", 1)
 	defer func() {
 		m.Advance(1)
@@ -83,8 +82,7 @@ func (r *run) checkRefsDir(root, prefix string) {
 	if err != nil {
 		return
 	}
-	// The walk order follows the directory, so sort to keep the report
-	// reproducible.
+	// The walk order follows the directory, so sort to keep the report reproducible.
 	sort.Strings(paths)
 	for _, path := range paths {
 		name := filepath.Base(path)
@@ -167,8 +165,7 @@ func (r *run) checkRefContent(refname, path string, mode os.FileMode) {
 		if rel, err := filepath.Rel(gitdir, target); err == nil && !strings.HasPrefix(rel, "..") {
 			referent = rel
 		}
-		// A symlink carries no trailing byte to complain about, so the
-		// newline checks are skipped for it.
+		// A symlink carries no trailing byte to complain about, so the newline checks are skipped for it.
 		r.checkSymrefTarget(refname, filepath.ToSlash(referent))
 		return
 	}
@@ -288,9 +285,7 @@ func (r *run) checkPackedRefsContent(data []byte) bool {
 	line := 1
 	off := 0
 	sorted := false
-	// git looks at the first line before it knows whether the file has a
-	// header, so a first line with no newline is reported here and again by
-	// the loop below.
+	// git looks at the first line before it knows whether the file has a header.
 	first, next := r.packedLine(data, off, line)
 	if len(data) > 0 && data[0] == '#' {
 		sorted = r.checkPackedRefsHeader(first)

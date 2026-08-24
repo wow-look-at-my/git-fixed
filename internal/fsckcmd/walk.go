@@ -31,8 +31,7 @@ func walkLinks(typ gitobj.Type, oid gitobj.OID, buf []byte, algo *gitobj.Algo, n
 }
 
 func treeLinks(buf []byte, algo *gitobj.Algo, name string, named bool) ([]link, []string) {
-	// git's tree walk stops at the entry it cannot decode. The object check
-	// reports the malformed tree separately, so the error is dropped here.
+	// git's tree walk stops at the entry it cannot decode.
 	entries, _ := fsck.ParseTree(buf, algo)
 	return treeLinksFrom(entries, name, named), nil
 }
@@ -44,9 +43,7 @@ func treeLinksFrom(entries []fsck.TreeEntry, name string, named bool) []link {
 		e := &entries[i]
 		typ, follow := e.WalkKind()
 		if !follow {
-			// A submodule commit is not part of this repository, and an
-			// entry with an impossible mode is one of those by the time
-			// the walk sees it. see fsck.TreeEntry.WalkKind.
+			// A submodule commit is not part of this repository.
 			continue
 		}
 		l := link{oid: e.OID, typ: typ}
@@ -72,9 +69,7 @@ func (r *run) treeEdges(entries []fsck.TreeEntry) (span edgeSpan, edges []edge, 
 		e := &entries[i]
 		typ, follow := e.WalkKind()
 		if !follow {
-			// A submodule commit is not part of this repository, and an
-			// entry with an impossible mode is one of those by the time
-			// the walk sees it. see fsck.TreeEntry.WalkKind.
+			// A submodule commit is not part of this repository.
 			continue
 		}
 		target, idx, ok := r.objs.Lookup(e.OID, typ)
@@ -106,8 +101,7 @@ func commitLinks(oid gitobj.OID, buf []byte, algo *gitobj.Algo, name string, nam
 	out = append(out, l)
 	buf = buf[6+hexsz:]
 
-	// A parent's name follows from the commit's own: the first parent gets
-	// "^" or continues a "~<n>" run, and later parents get "^<n>".
+	// A parent's name follows from the commit's own: the first parent gets "^" or continues a "~<n>" run.
 	generation, prefixLen := 0, 0
 	if named && name != "" {
 		n := len(name)

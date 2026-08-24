@@ -41,8 +41,7 @@ func TestParse(t *testing.T) {
 }
 
 func TestParseHexBytes(t *testing.T) {
-	// Upper-case input decodes, and trailing bytes are ignored: the
-	// packed-refs reader relies on both.
+	// Upper-case input decodes, and trailing bytes are ignored: the packed-refs reader relies on both.
 	oid, ok := gitobj.SHA1.ParseHexBytes([]byte("0123456789ABCDEF0123456789abcdef01234567 refs/heads/x"))
 	require.True(t, ok)
 	assert.Equal(t, "0123456789abcdef0123456789abcdef01234567", oid.String())

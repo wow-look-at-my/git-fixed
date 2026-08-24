@@ -1,11 +1,6 @@
 package gittest
 
 // Packs written by hand, for a test about the shape of a delta tree.
-//
-// git decides that shape for itself, from its own window and depth heuristics,
-// and a test cannot ask it for a particular one. Writing the pack here fixes
-// which object is a delta on which, which is the whole subject of a test about
-// how the walk holds a chain.
 
 import (
 	"bytes"
@@ -25,8 +20,7 @@ type PackObject struct {
 	Type gitobj.Type
 	Data []byte
 	Base int
-	// ByName stores the delta against its base's name rather than its
-	// offset, which is git's other delta encoding.
+	// ByName stores the delta against its base's name rather than its offset, which is git's other delta encoding.
 	ByName bool
 }
 

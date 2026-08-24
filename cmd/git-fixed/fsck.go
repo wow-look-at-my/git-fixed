@@ -99,14 +99,7 @@ func (f *fsckFlags) options(dir string, args []string, stdout, stderr io.Writer)
 	return o
 }
 
-// sameVerdict reports whether this run asks fsck the question the repair's own
-// verification asks.
-//
-// Only then does its exit status mean "the repository is whole", and only then
-// may the repair reuse it instead of reading everything again. --strict fails
-// repositories git is happy with, --connectivity-only and --no-full pass ones
-// it is not, a named object narrows the check to that object, and the rest
-// below move the roots the walk starts from. Each answers something else.
+// sameVerdict reports whether this run asks fsck the question the repair's own verification asks.
 func sameVerdict(o *fsckcmd.Options) bool {
 	d := fsckcmd.DefaultOptions()
 	return len(o.Args) == 0 &&
@@ -119,13 +112,7 @@ func sameVerdict(o *fsckcmd.Options) bool {
 		o.IncludeReflogs == d.IncludeReflogs
 }
 
-// isTerminal reports whether progress would be going to a terminal, which is
-// how git decides to show it when nobody said either way.
-//
-// It asks about the stream progress is actually written to, not about the
-// process's own stderr. Those are the same thing for a real run and different
-// for a test, which passes a buffer and must not have a progress meter written
-// into the output it is checking.
+// isTerminal reports whether progress would be going to a terminal.
 func isTerminal(w io.Writer) bool {
 	f, ok := w.(*os.File)
 	if !ok {

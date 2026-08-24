@@ -24,11 +24,7 @@ import (
 	"github.com/wow-look-at-my/git-fixed/internal/odb"
 )
 
-// Exit status bits. The first eight are the ones builtin/fsck.c returns.
-//
-// ErrorIndex is this implementation's own, and it exists because git has no
-// bit for an unreadable index: git dies with status 128 instead, which says
-// "I gave up" and says nothing about the repository. see docs/exit-status.md
+// Exit status bits.
 const (
 	ErrorObject         = 001
 	ErrorReachable      = 002
@@ -59,40 +55,13 @@ type Options struct {
 	ShowProgress     bool
 	Args             []string
 
-	// PackVerified, when set, is called with the path of every packfile this
-	// run read end to end with every object in it decoding and hashing to the
-	// name its index gives it.
-	//
-	// It is for a caller that is about to make the same pass. That pass is
-	// the longest part of a repair -- twenty minutes over a hundred million
-	// objects -- and without this the only thing it could go on was the exit
-	// status, where one corrupt loose object condemns every pack to being
-	// read again.
-	//
-	// It is called from the goroutine that checked the pack.
+	// PackVerified, when set, is called with the path of every packfile this run read end to end with every.
 	PackVerified func(path string)
 
-	// ObjectsDamaged, when set, is called once with every object this run
-	// could not produce and something reachable wants: a loose file that will
-	// not decode, one that does not hash to its own name, and an object a
-	// link names that is not there at all.
-	//
-	// whole is false when the run found a fault of that kind it could not put
-	// an object name to, and the list is then not the whole of it.
-	//
-	// It answers the question the status word cannot. ErrorObject is also what
-	// a commit with no author sets, and a repository is not damaged because
-	// one of its commits is badly written; ErrorReachable is also what a
-	// reflog entry naming a pruned object sets. Acting on the bits alone read
-	// every object a reference reaches a second time -- forty-eight minutes
-	// over a hundred million of them -- to find out which.
-	//
-	// It is called after the connectivity walk, from the goroutine that called
-	// Run, and not at all by a run that stops early.
+	// ObjectsDamaged, when set, is called once with every object this run could not produce and something.
 	ObjectsDamaged func(oids []gitobj.OID, whole bool)
 
-	// Stopped, when set, is called with the message this run died on, for a
-	// caller that must not mistake an early exit for a finished check.
+	// Stopped, when set, is called with the message this run died on.
 	Stopped func(msg string)
 
 	// Workers is how many goroutines decode and check objects at once.
@@ -130,8 +99,7 @@ type run struct {
 
 	fatalMu  sync.Mutex
 	fatalMsg string
-	// fatalPre is the line git prints just before it dies, which is its
-	// decompressor speaking for itself.
+	// fatalPre is the line git prints just before it dies, which is its decompressor speaking for itself.
 	fatalPre string
 
 	pendingMu sync.Mutex
@@ -139,14 +107,11 @@ type run struct {
 
 	damagedMu sync.Mutex
 	damaged   []damaged
-	// partial says a fault of that kind went unnamed, so the list above does
-	// not account for everything wrong with this repository's objects.
+	// partial says a fault of that kind went unnamed.
 	partial atomic.Bool
 }
 
-// damaged is one object this run could not produce. rooted says the pass that
-// found it already knows something wants it; otherwise the connectivity walk
-// decides, and an object nothing reaches is nobody's problem.
+// damaged is one object this run could not produce.
 type damaged struct {
 	oid    gitobj.OID
 	rooted bool
@@ -173,24 +138,10 @@ func (r *run) namedDamaged(oid gitobj.OID) bool {
 	return slices.ContainsFunc(r.damaged, func(d damaged) bool { return d.oid == oid })
 }
 
-// notePartialDamage says this run found an object fault it cannot name. A
-// reference that points at an object which is there and will not parse is one:
-// something is wrong and no single object name says what.
+// notePartialDamage says this run found an object fault it cannot name.
 func (r *run) notePartialDamage() { r.partial.Store(true) }
 
-// reportDamaged hands the caller what could not be produced, once the
-// connectivity walk has decided what reaches what.
-//
-// An object nothing reaches is left off. A corrupt file in the object
-// directory that no reference leads to is a fault worth reporting -- the pass
-// that found it has already done that -- but it is not something a walk from
-// the references would ever meet, so it does not belong on a list that says
-// what such a walk will find.
-//
-// Two passes find the same missing object, the link that named it and the
-// report on the object itself, so the list is deduplicated. Whoever reads it
-// counts against it, and a name twice over would be a route that never
-// arrives.
+// reportDamaged hands the caller what could not be produced.
 func (r *run) reportDamaged() {
 	if r.o.ObjectsDamaged == nil {
 		return
@@ -208,10 +159,7 @@ func (r *run) reportDamaged() {
 
 func (r *run) fail(bits uint32) { r.errors.Or(bits) }
 
-// packedObjects is how many objects the pack indexes account for, which is what
-// the object table is sized from. The loose ones are not counted: finding them
-// means reading 256 directories, and a repository whose objects are mostly
-// loose is a repository small enough for the table to grow into.
+// packedObjects is how many objects the pack indexes account for.
 func packedObjects(db *odb.DB) int64 {
 	n := int64(0)
 	for _, p := range db.Packs() {
@@ -426,9 +374,6 @@ func (r *run) fsckError(o *fsck.Options, ctx any, oid gitobj.OID, objType gitobj
 }
 
 // ensureType fills in an object's type when nothing has said what it is yet.
-// Only --connectivity-only leaves types unknown, because it never reads the
-// objects; git resolves them the same way, when a reference or a walk first
-// needs to know.
 func (r *run) ensureType(e *objEntry) gitobj.Type {
 	if t := e.Type(); t != gitobj.TypeNone {
 		return t

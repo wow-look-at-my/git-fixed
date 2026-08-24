@@ -17,10 +17,7 @@ type Result struct {
 	Code   int
 }
 
-// Lines returns every output line from both streams, sorted. A parallel run
-// finishes objects in a different order from git's single-threaded walk, and
-// git's own order depends on readdir and on an internal hash table, so the set
-// of lines is the part that has to agree.
+// Lines returns every output line from both streams, sorted.
 func (r Result) Lines() []string {
 	var out []string
 	for _, s := range []string{r.Stdout, r.Stderr} {
@@ -54,10 +51,7 @@ func (r *Repo) GitFsck(args ...string) Result {
 	return Result{Stdout: out.String(), Stderr: errBuf.String(), Code: code}
 }
 
-// MinGit is the oldest git these tests can compare against. Every expected
-// line and every exit status here comes from one release's source, and git
-// rewords a message from one release to the next, so an older git measures this
-// implementation against a different specification.
+// MinGit is the oldest git these tests can compare against.
 var MinGit = [3]int{2, 55, 0}
 
 // RequireGit fails the test when the system git is missing or too old, because

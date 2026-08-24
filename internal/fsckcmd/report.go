@@ -54,8 +54,7 @@ type reporter struct {
 	seq    int64
 	stdout io.Writer
 	stderr io.Writer
-	// stream sends verbose lines straight out instead of holding them, so a
-	// run over a large repository does not keep one line per object.
+	// stream sends verbose lines straight out instead of holding them.
 	stream bool
 }
 
@@ -87,8 +86,7 @@ func (r *reporter) Outf(key sortKey, format string, args ...any) {
 	r.add(key, true, fmt.Sprintf(format, args...))
 }
 
-// Verbosef writes a progress-style line immediately. Verbose output is one line
-// per object, so holding it would cost memory in proportion to the repository.
+// Verbosef writes a progress-style line immediately.
 func (r *reporter) Verbosef(format string, args ...any) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

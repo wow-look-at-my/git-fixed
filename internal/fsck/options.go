@@ -15,8 +15,7 @@ import (
 // Severity is git's enum fsck_msg_type, in the same order.
 type Severity int
 
-// The severities. Ignore drops the message, Info and Fatal are internal levels
-// that report() folds into Warn and Error before anyone sees them.
+// The severities.
 const (
 	SevIgnore Severity = iota
 	SevInfo
@@ -55,8 +54,7 @@ func ParseSeverity(s string) (Severity, bool) {
 	return 0, false
 }
 
-// ErrorFunc receives one finished message. It returns 1 when the message counts
-// as an error and 0 when it does not, which is what git's callbacks return.
+// ErrorFunc receives one finished message.
 type ErrorFunc func(o *Options, ctx any, oid gitobj.OID, objType gitobj.Type, sev Severity, id MsgID, message string) int
 
 // Options carries the severity table, the skip list, and the deferred work that
@@ -66,20 +64,17 @@ type Options struct {
 	Strict bool
 	Algo   *gitobj.Algo
 
-	// MaxTreeEntryLen is git's max_tree_entry_len, which fsck.largePathname
-	// can raise or lower.
+	// MaxTreeEntryLen is git's max_tree_entry_len, which fsck.largePathname can raise or lower.
 	MaxTreeEntryLen int
 
-	// Error is called for every message that survives the severity table
-	// and the skip list.
+	// Error is called for every message that survives the severity table and the skip list.
 	Error ErrorFunc
 
 	mu       sync.Mutex
 	msgType  []Severity
 	skiplist set.Set[gitobj.OID]
 
-	// A .gitmodules or .gitattributes blob named by a tree is checked once
-	// its content is read, which can be long after the tree that named it.
+	// A .gitmodules or .gitattributes blob named by a tree is checked once its content is read.
 	gitmodulesFound    set.Set[gitobj.OID]
 	gitmodulesDone     set.Set[gitobj.OID]
 	gitattributesFound set.Set[gitobj.OID]

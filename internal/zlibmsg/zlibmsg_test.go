@@ -96,8 +96,7 @@ func TestMessages(t *testing.T) {
 		want string
 	}{{
 		name: "header check",
-		// The two header bytes together are a checksum, and these do
-		// not add up.
+		// The two header bytes together are a checksum, and these do not add up.
 		raw:  []byte{0x78, 0x00},
 		want: "inflate: data stream error (incorrect header check)",
 	}, {
@@ -121,8 +120,7 @@ func TestMessages(t *testing.T) {
 		want: "inflate: data stream error (invalid block type)",
 	}, {
 		name: "stored block lengths",
-		// A stored block writes its length twice, the second time
-		// inverted, and these two do not agree.
+		// A stored block writes its length twice, the second time inverted, and these two do not agree.
 		raw:  []byte{0x78, 0x01, 0x01, 0x05, 0x00, 0x00, 0x00},
 		want: "inflate: data stream error (invalid stored block lengths)",
 	}, {
@@ -140,9 +138,7 @@ func TestMessages(t *testing.T) {
 	}, {
 		name: "bit length repeat",
 		raw: func() []byte {
-			// Symbols 16, 17 and 18 get one-bit codes, which
-			// leaves symbol 16 as code 0 -- and it repeats a
-			// length that nothing has written yet.
+			// Symbols 16, 17 and 18 get one-bit codes, which leaves symbol 16 as code 0 -- and it repeats a length that.
 			w := dynamicBlock(0, 0, 0)
 			w.bits(1, 3) // 16: repeat the last length
 			w.bits(2, 3) // 17: a run of zeros
@@ -155,8 +151,7 @@ func TestMessages(t *testing.T) {
 	}, {
 		name: "missing end-of-block",
 		raw: func() []byte {
-			// An alphabet with no codes at all leaves every
-			// length zero, so nothing codes the end of the block.
+			// An alphabet with no codes at all leaves every length zero, so nothing codes the end of the block.
 			w := dynamicBlock(0, 0, 0)
 			for range 4 {
 				w.bits(0, 3)
@@ -175,8 +170,7 @@ func TestMessages(t *testing.T) {
 	}, {
 		name: "literal/length code",
 		raw: func() []byte {
-			// Symbol 286 has a code in the built-in alphabet and
-			// names no length.
+			// Symbol 286 has a code in the built-in alphabet and names no length.
 			w := fixedBlock()
 			w.code(0xc6, 8)
 			return w.bytes()
@@ -195,8 +189,7 @@ func TestMessages(t *testing.T) {
 	}, {
 		name: "distance too far back",
 		raw: func() []byte {
-			// One byte has been written, and the match reaches
-			// two bytes back.
+			// One byte has been written, and the match reaches two bytes back.
 			w := fixedBlock()
 			w.literal('A')
 			w.code(1, 7) // symbol 257: a match of three
@@ -215,18 +208,14 @@ func TestMessages(t *testing.T) {
 	}
 }
 
-// lengthAlphabet writes the eighteen three-bit numbers that give code-length
-// symbols 0, 1, 17 and 18 a two-bit code each. That is enough to write any list
-// of lengths made of zeros, ones, and runs of zeros. DEFLATE writes these in
-// its own order, which puts symbol 1 last of the eighteen.
+// lengthAlphabet writes the eighteen three-bit numbers that give code-length symbols 0, 1.
 func (w *writer) lengthAlphabet() {
 	for _, v := range [18]uint32{0, 2, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2} {
 		w.bits(v, 3)
 	}
 }
 
-// The four codes lengthAlphabet defines, in the canonical order: symbol 0 is
-// the lowest.
+// The four codes lengthAlphabet defines, in the canonical order: symbol 0 is the lowest.
 func (w *writer) zeroLength()      { w.code(0, 2) }
 func (w *writer) oneLength()       { w.code(1, 2) }
 func (w *writer) zeroRun(n uint32) { w.code(3, 2); w.bits(n-11, 7) }
@@ -297,8 +286,7 @@ func TestGoodStream(t *testing.T) {
 func TestOutputLimit(t *testing.T) {
 	raw := brokenChecksum(t)
 	assert.Equal(t, "inflate: data stream error (incorrect data check)", Diagnose(raw, Whole))
-	// "the quick brown fox" is 19 bytes, so a caller with room for four
-	// never reaches the checksum.
+	// "the quick brown fox" is 19 bytes, so a caller with room for four never reaches the checksum.
 	assert.Empty(t, Diagnose(raw, 4))
 	assert.Equal(t, "inflate: data stream error (incorrect data check)", Diagnose(raw, 19))
 }

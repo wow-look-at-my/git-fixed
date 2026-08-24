@@ -48,8 +48,7 @@ func TestCorruptLooseObjects(t *testing.T) {
 	for name, payload := range payloads {
 		for off := range 40 {
 			for _, value := range []byte{0x00, 0x55, 0xff} {
-				// The marker gives every variant its own object
-				// name, so one repository holds all of them.
+				// The marker gives every variant its own object name, so one repository holds all of them.
 				marked := append([]byte(fmt.Sprintf("%s/%d/%d\n", name, off, value)), payload...)
 				oid, raw := looseObject(t, marked)
 				if off >= len(raw) || raw[off] == value {
@@ -64,8 +63,7 @@ func TestCorruptLooseObjects(t *testing.T) {
 	require.NotZero(t, written)
 	t.Logf("%d corrupted loose objects", written)
 
-	// A whole-slice comparison of thousands of lines is unreadable, so
-	// report only the lines one side has and the other does not.
+	// A whole-slice comparison of thousands of lines is unreadable.
 	want := r.GitFsck()
 	got := ours(t, r.Dir)
 	assert.Equal(t, want.Code, got.Code, "exit status differs from git fsck")
@@ -160,20 +158,15 @@ func TestUnreadableIndex(t *testing.T) {
 	want := r.GitFsck()
 	got := ours(t, r.Dir)
 
-	// git gives up here: status 128, and the reverse-index checks, the bitmap
-	// checks, the connectivity walk and the graph checks never run -- none of
-	// which reads the index. see docs/exit-status.md
+	// git gives up here: status 128, and the reverse-index checks, the bitmap checks.
 	assert.Equal(t, 128, want.Code, "git's own behaviour, which this deliberately does not copy")
 	assert.Equal(t, fsckcmd.ErrorIndex, got.Code, "the index is unusable, and that is what the status says")
 
-	// The message is still git's, and it still names the index the way git
-	// names it rather than the absolute path this process opened.
+	// The message is still git's, and it still names the index the way git names it rather than the absolute path.
 	assert.Contains(t, got.Stderr, ".git/index: index file smaller than expected")
 	assert.NotContains(t, got.Stderr, r.Dir)
 
-	// And the phases git skipped were run. A repository whose only fault is
-	// its index has nothing else to say, so the proof is that the run reached
-	// the end rather than stopping at the index.
+	// And the phases git skipped were run.
 	assert.NotContains(t, got.Stderr, "fatal:")
 }
 
@@ -198,8 +191,6 @@ func TestADeltaWhoseBaseIsNotInThePack(t *testing.T) {
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
 	// The base offset is a varint that follows the entry's type and size.
-	// Winding it back further than the pack is long leaves the delta with
-	// no base at all, and the index still describes the pack as it was.
 	at := afterObjHeader(data, offsets[1])
 	require.Zero(t, data[at]&0x80, "this fixture's base offset must be one byte")
 	require.Greater(t, int64(0x7f), offsets[1], "0x7f must wind back past the start")
@@ -239,8 +230,7 @@ func TestARefDeltaWhoseBaseIsNotInThePack(t *testing.T) {
 
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
-	// One byte of the base's name is enough: the pack still holds the base,
-	// and the delta now asks for an object nothing has.
+	// One byte of the base's name is enough: the pack still holds the base.
 	at := afterObjHeader(data, offsets[1])
 	data[at] ^= 0xff
 	gittest.WriteOver(t, path, data)
@@ -331,9 +321,7 @@ func TestAnUnknownIndexExtension(t *testing.T) {
 		want := r.GitFsck()
 		got := ours(t, r.Dir)
 
-		// git dies, taking four later phases that never open the index with
-		// it. This reports the same complaint and checks the rest.
-		// see docs/exit-status.md
+		// git dies, taking four later phases that never open the index with it.
 		assert.Equal(t, 128, want.Code, "git's own behaviour, which this deliberately does not copy")
 		assert.Equal(t, fsckcmd.ErrorIndex, got.Code)
 		assert.Contains(t, want.Stderr, "index uses zzzz extension, which we do not understand")

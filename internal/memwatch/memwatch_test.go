@@ -1,9 +1,6 @@
 package memwatch
 
-// The marks a run is judged by. Each test here is about a wrong number being
-// worse than no number: a figure printed on a progress line is read as a
-// measurement, and a run that is killed for memory is diagnosed from the last
-// one drawn.
+// The marks a run is judged by.
 
 import (
 	"os"

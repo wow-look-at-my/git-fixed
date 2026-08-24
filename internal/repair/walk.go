@@ -25,20 +25,11 @@ type queued struct {
 	oid gitobj.OID
 	typ gitobj.Type
 	ref string
-	// path is the route from that reference, kept as a link back to the
-	// containing tree rather than as a whole string. see pathNode.
+	// path is the route from that reference, kept as a link back to the containing tree rather than as a whole.
 	path *pathNode
 }
 
-// pathNode is one step of the route to an object, sharing everything above it
-// with its siblings.
-//
-// A joined string per entry looks harmless and is not: a directory of a
-// thousand entries copies its own path a thousand times, and every copy stays
-// in the queue until its object is read. A node is one pointer and one name,
-// and the whole route above it is one pointer away.
-//
-// It is only ever rendered for an object that turns out to be bad.
+// pathNode is one step of the route to an object, sharing everything above it with its siblings.
 type pathNode struct {
 	parent *pathNode
 	name   string
@@ -66,23 +57,7 @@ func (p *pathNode) String() string {
 // need renders what a report says about one queued object.
 func (q queued) need() Need { return Need{Ref: q.ref, Path: q.path.String()} }
 
-// descend follows the objects a pass has just put back, and reports what is
-// under them that the repository still cannot produce.
-//
-// A missing tree hides everything below it, so one pass repairs one layer and
-// the layer under it only becomes visible once that pass is done. Finding that
-// layer by scanning the repository again walks every object every reference
-// reaches -- five minutes over a hundred million of them, once per layer of a
-// chain nobody chose the length of -- to arrive under an object this run is
-// holding.
-//
-// It reads nothing the next full scan would not have had to read. The previous
-// walk stopped at the object that was missing, so nothing below it has been
-// looked at yet, and everything else reachable it already approved.
-//
-// An object that reads as damaged again is reported again, and must be: a
-// corrupt entry in a pack shadows the loose copy just written, and the caller
-// is what notices that it has recovered this one before.
+// descend follows the objects a pass has just put back.
 func descend(repo *gitrepo.Repo, db *odb.DB, meters Meters, from []BadObject, verified []VerifiedPack) (*Damage, error) {
 	s := &scanner{
 		repo:   repo,
@@ -121,23 +96,12 @@ func (s *scanner) want(oid gitobj.OID, typ gitobj.Type, ref string, path *pathNo
 		}
 		return
 	}
-	// Counted before it is queued. The other order lets a worker find an
-	// empty bag between the two and call the walk finished.
+	// Counted before it is queued.
 	s.pending.Add(1)
 	s.queue.Add(queued{oid: oid, typ: typ, ref: ref, path: path})
 }
 
-// wantEntry is want for a tree entry, which is where nearly every call comes
-// from.
-//
-// It takes the containing tree's node and the entry's own bytes instead of a
-// finished pathNode, because an object that has been queued already needs
-// neither. History shares its trees: the same subtree hangs off every commit
-// that did not change it, and the same blob hangs off thousands of trees, so
-// most calls here are about an object the walk has met before. Each of those
-// was costing a node, a string copy of the name, and a walk up the whole route
-// to build a string that was dropped on the next line. Rendering a route only
-// for an object that turns out to be bad is the whole reason pathNode exists.
+// wantEntry is want for a tree entry, which is where nearly every call comes from.
 func (s *scanner) wantEntry(oid gitobj.OID, typ gitobj.Type, ref string, parent *pathNode, name []byte) {
 	if !oid.Valid() {
 		return
@@ -158,17 +122,6 @@ func entryPath(parent *pathNode, name []byte) string {
 }
 
 // knownBad reports whether this object has already been found unreadable.
-//
-// It is one atomic load, then a read where Compute would take the shard's write
-// lock. Nearly every
-// call is about an object that is perfectly fine, and taking a write lock to
-// discover that -- once per repeated tree entry, on every worker -- serializes
-// the walk behind a map that has nothing to say.
-//
-// An object that becomes bad after this asks is missed, and was missed before:
-// the walk reads an object after every route to it has been offered, so a
-// route seen early is not held anywhere to be attached later. The object itself
-// is still reported, with the routes that came after it was read.
 func (s *scanner) knownBad(oid gitobj.OID) bool {
 	return s.anyBad.Load() && s.bad.Contains(oid)
 }
@@ -177,8 +130,7 @@ func (s *scanner) knownBad(oid gitobj.OID) bool {
 func (s *scanner) recordNeed(oid gitobj.OID, need Need) {
 	s.bad.Compute(oid, func(old *BadObject, loaded bool) (*BadObject, bool) {
 		if !loaded {
-			// Nothing to add to, and nothing to create: this object read
-			// back perfectly well.
+			// Nothing to add to, and nothing to create: this object read back perfectly well.
 			return nil, true
 		}
 		old.Needs = appendNeed(old.Needs, need)
@@ -196,21 +148,10 @@ func (s *scanner) recordNeed(oid gitobj.OID, need Need) {
 // every route, which is the price of not reading a hundred million objects to
 // list the rest of them.
 func (s *scanner) walk() {
-	// There is no total to count against: the queue grows as the walk finds
-	// what each object points at, so the number of objects it will reach is
-	// not known until it has reached them. git's own connectivity meter
-	// counts the same way, and for the same reason.
-	// The walk reads each object it reaches once, so the objects the
-	// repository holds, plus the ones somebody has already said it does not,
-	// is what it will read. Until this had a total it showed a rising number
-	// that said nothing about how far along it was. It is still an estimate:
-	// a walk with no verdict behind it meets a missing object without warning,
-	// and the meter raises its own total when that happens.
+	// There is no total to count against: the queue grows as the walk finds what each object points at.
 	title, total := "Checking what the references reach", s.objectCount()+int64(s.hunt)
 	if s.errand {
-		// An errand starts under one object rather than at the references,
-		// so there is no total: what it will reach is whatever was hidden
-		// under that object, which is the thing nobody knows yet.
+		// An errand starts under one object rather than at the references, so there is no total.
 		title, total = "Checking what came back", 0
 	}
 	m := s.meters.start(title, total)
@@ -227,18 +168,7 @@ func (s *scanner) walk() {
 	wg.Wait()
 }
 
-// provenBlob reports whether this object is a blob that has already been read
-// and hashed.
-//
-// A blob points at nothing, so the walk asks it one question: can the
-// repository produce it. A pack that has been read end to end has answered that
-// for every object in it, by decoding each one and requiring it to hash to the
-// name the index gives it. Inflating a blob again to hear the same answer is
-// the longest part of this pass, and most of a repository's bytes are blobs.
-//
-// The type comes from the object's own header rather than from the tree entry
-// that named it. A tree that calls a tree a blob is a fault of its own, and it
-// must not be able to talk the walk out of a whole subtree.
+// provenBlob reports whether this object is a blob that has already been read and hashed.
 func (s *scanner) provenBlob(oid gitobj.OID) bool {
 	if len(s.trusted) == 0 {
 		return false
@@ -256,9 +186,7 @@ func (s *scanner) provenBlob(oid gitobj.OID) bool {
 func (s *scanner) walkWorker(m *progress.Meter) {
 	for {
 		if s.stop.Load() {
-			// Every object the fsck could not produce has a route to it
-			// now, and the fsck says there is nothing else to find. What
-			// is left in the bag is objects that are known to be fine.
+			// Every object the fsck could not produce has a route to it now.
 			return
 		}
 		q, ok := s.queue.TryTake()
@@ -266,15 +194,13 @@ func (s *scanner) walkWorker(m *progress.Meter) {
 			if s.pending.Load() == 0 {
 				return
 			}
-			// Somebody else is still reading. Stand aside rather than
-			// spin on the bag's heads.
+			// Somebody else is still reading.
 			runtime.Gosched()
 			continue
 		}
 		m.Step()
 		if s.provenBlob(q.oid) {
-			// Nothing to read and nothing to follow. This is most of the
-			// repository's bytes.
+			// Nothing to read and nothing to follow.
 			s.pending.Add(-1)
 			continue
 		}
@@ -290,8 +216,7 @@ func (s *scanner) walkWorker(m *progress.Meter) {
 				s.walkTag(q, data)
 			}
 		}
-		// Last, so that everything this object queued is counted before
-		// this one stops counting.
+		// Last, so that everything this object queued is counted before this one stops counting.
 		s.pending.Add(-1)
 	}
 }
@@ -299,9 +224,7 @@ func (s *scanner) walkWorker(m *progress.Meter) {
 // note records that an object could not be read.
 func (s *scanner) note(q queued, err error) {
 	need := q.need()
-	// copiesOf stats the object directories, so it runs outside the shard
-	// lock. A second worker reaching the same object builds the same answer
-	// and one of the two is dropped.
+	// copiesOf stats the object directories, so it runs outside the shard lock.
 	files, corrupt := s.copiesOf(q.oid)
 	first := false
 	s.bad.Compute(q.oid, func(old *BadObject, loaded bool) (*BadObject, bool) {
@@ -315,8 +238,7 @@ func (s *scanner) note(q queued, err error) {
 	if first && s.hunt > 0 && s.found.Add(1) >= int64(s.hunt) {
 		s.stop.Store(true)
 	}
-	// Raised after the object is in the map, so a reader that sees the flag
-	// finds the object behind it.
+	// Raised after the object is in the map, so a reader that sees the flag finds the object behind it.
 	s.anyBad.Store(true)
 	_ = err
 }
@@ -332,8 +254,7 @@ func (s *scanner) copiesOf(oid gitobj.OID) (files []string, corrupt bool) {
 			files = append(files, path)
 		}
 	}
-	// A packed copy is not a file of its own, and a pack is never displaced
-	// for one bad entry: the other objects in it are fine.
+	// A packed copy is not a file of its own, and a pack is never displaced for one bad entry.
 	return files, len(files) > 0
 }
 

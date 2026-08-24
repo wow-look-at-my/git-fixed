@@ -1,8 +1,6 @@
 package progress
 
-// The meter's three promises: it only ever goes forwards, it never passes a
-// hundred percent, and every line says how long the phase has run and what the
-// run is costing.
+// The meter's three promises: it only ever goes forwards, it never passes a hundred percent.
 
 import (
 	"bytes"
@@ -19,8 +17,7 @@ import (
 // drawn is the count out of every line a meter wrote.
 var drawn = regexp.MustCompile(`\((\d+)/\d+\)`)
 
-// safeBuffer collects what several workers draw. The meter serialises its own
-// writes, but the test reads the buffer while nothing else holds that lock.
+// safeBuffer collects what several workers draw.
 type safeBuffer struct {
 	mu  sync.Mutex
 	buf bytes.Buffer

@@ -30,20 +30,15 @@ type BadPackedRefs struct {
 type RepairedPackedRefs struct {
 	// Kept is how many references were carried over unchanged.
 	Kept int
-	// Restored are references whose line was unreadable and whose value came
-	// back from a reflog.
+	// Restored are references whose line was unreadable and whose value came back from a reflog.
 	Restored []RepairedRef
 	// Dropped is how many lines could not be read as a reference at all.
-	// Every one of these is a reference that may be gone, so a run with any
-	// of them says so and does not call itself clean.
 	Dropped []string
 	// Why is what was wrong with the old file.
 	Why string
 }
 
-// packedRefsHeader is the trait line git writes. Claiming "sorted" is a
-// promise this rewrite keeps, and "fully-peeled" says every tag below carries
-// its peel line.
+// packedRefsHeader is the trait line git writes.
 const packedRefsHeader = "# pack-refs with: peeled fully-peeled sorted \n"
 
 // scanPackedRefs records a packed-refs file git will not read.
@@ -128,9 +123,7 @@ func readPackedLines(algo *gitobj.Algo, data []byte) (map[string]gitobj.OID, []s
 			}
 			continue
 		case strings.HasPrefix(line, "^"):
-			// A peel line records what the tag above points at. The rewrite
-			// recomputes every peel, so nothing is lost by not reading it,
-			// but a malformed one is still a line git refused.
+			// A peel line records what the tag above points at.
 			if _, ok := algo.Parse(strings.TrimSpace(line[1:])); !ok {
 				dropped = append(dropped, line)
 			}
@@ -147,12 +140,7 @@ func readPackedLines(algo *gitobj.Algo, data []byte) (map[string]gitobj.OID, []s
 	return refs, dropped
 }
 
-// namesInDroppedLines guesses which references a set of unreadable lines was
-// about, so the reflog can be asked for them.
-//
-// A line that is mangled in its hash still usually carries its name intact,
-// which is enough. A line mangled beyond this leaves nothing to ask about, and
-// stays in the report as a loss.
+// namesInDroppedLines guesses which references a set of unreadable lines was about.
 func namesInDroppedLines(lines []string) []string {
 	var out []string
 	for _, line := range lines {
@@ -198,8 +186,7 @@ func renderPackedRefs(repo *gitrepo.Repo, db *odb.DB, refs map[string]gitobj.OID
 	for name := range refs {
 		names = append(names, name)
 	}
-	// "sorted" in the header is a claim git's reader relies on to binary
-	// search, so this order is part of the file being valid.
+	// "sorted" in the header is a claim git's reader relies on to binary search.
 	sort.Strings(names)
 
 	var buf bytes.Buffer

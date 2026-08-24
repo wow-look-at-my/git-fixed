@@ -44,9 +44,7 @@ func WriteLoose(objectsDir string, algo *gitobj.Algo, t gitobj.Type, content []b
 		return gitobj.OID{}, err
 	}
 
-	// Write beside the target and rename, so a reader never sees a partial
-	// object. This is what git does, and it is what makes an interrupted
-	// repair safe to re-run.
+	// Write beside the target and rename, so a reader never sees a partial object.
 	tmp, err := os.CreateTemp(dir, "tmp_obj_*")
 	if err != nil {
 		return gitobj.OID{}, err

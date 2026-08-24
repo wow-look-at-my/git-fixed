@@ -8,8 +8,7 @@ import (
 
 // Worktree is one checkout attached to a repository.
 type Worktree struct {
-	// Dir is where this worktree's own HEAD, index, and logs live. For the
-	// main worktree it is the repository directory.
+	// Dir is where this worktree's own HEAD, index, and logs live.
 	Dir string
 	// Path is the checkout, empty for a bare repository.
 	Path string
