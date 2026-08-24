@@ -443,8 +443,6 @@ func (db *DB) HasPacked(oid gitobj.OID) bool {
 }
 
 // FatalError is a condition git reports with "fatal:" and exit status 128.
-//
-// A packed object that will not decode is the one that matters here: git dies rather than carry on.
 type FatalError struct {
 	Msg string
 	// Inflate is what git's decompressor said on the way, which it prints as its own line before the caller dies.
