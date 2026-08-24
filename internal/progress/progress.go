@@ -73,6 +73,8 @@ func start(w io.Writer, title string, total int64, delayed bool) *Meter {
 	m.total.Store(total)
 	m.pct.Store(-1)
 	m.quiet.Store(delayed)
+	// Raised here and not in run: a phase that ends before that goroutine is scheduled drew nothing at all.
+	m.due.Store(!delayed)
 	m.wg.Add(1)
 	go m.run(delayed)
 	return m

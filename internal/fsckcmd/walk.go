@@ -78,7 +78,7 @@ func (r *run) treeEdges(entries []fsck.TreeEntry) (span edgeSpan, edges []edge, 
 		} else {
 			target.SetFlag(flagUsed)
 		}
-		edges = append(edges, makeEdge(idx, ok, typ, false))
+		edges = append(edges, makeEdge(idx, ok, typ))
 	}
 	return span, edges, broken
 }

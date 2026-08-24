@@ -23,6 +23,22 @@ nowhere else, which is what git's `get_delta_base()` does -- "the base entry _mu
 nothing can produce, and it is reported rather than walked. Children are stored as one flat `childList` with a `childStart` index, so the forest costs
 two int32 slices rather than a slice header per node.
 
+## What a layout costs, and what it derives instead of holding
+
+A pack's layout is alive at the same moment as the caller's object table and describes the same objects, so a field here is a field per object in the
+repository. On a hundred million of them the layout was 64 bytes an object, of which `packEntry` was 48. It is 24 now, and nothing was given up:
+
+- **An entry ends where the next one starts.** The entries are in offset order, so `packLayout.end` reads the next entry's offset, and the last one
+  ends at the trailer.
+- **The payload starts at `off+hdr`.** An entry header is under fifty bytes, so its length is a byte rather than a second absolute offset.
+- **A type is a byte** and a root is a bit in the entry, which is what a list of roots was: a pack of no deltas at all made that list every entry in
+  it. The workers claim entries and walk the ones the bit marks.
+- **An unreadable header is rare**, so what stopped it lives in a map keyed by position rather than an index on every entry.
+
+Three arrays went with it. The offsets are sorted in place rather than through a second array of pairs. The map from index order to offset order is a
+binary search over offsets already sorted. The parent links are spent on the child lists and dropped: `parentOf` reads a base back off the pack for
+the one path that walks up a chain, which is `rebuild` below, and that path runs on a handful of entries rather than all of them.
+
 Each worker then takes one root and walks its subtree depth-first, keeping one buffer per level of the chain on a stack. A child is built by applying
 its delta to the parent's buffer, which is already in memory. Every object in the pack is inflated exactly once, whatever its depth.
 
@@ -42,8 +58,8 @@ stacked. Two properties keep it a bound rather than a deadlock:
 - **Depth zero is always allowed.** A root, and the first level under it, are taken whatever the counter says. Every worker can therefore always make
   progress, and a single object larger than the whole budget still decodes.
 - **A child that cannot be afforded is not waited for.** It goes on a `deferred` list and the walk carries on. Afterwards each deferred entry is
-  rebuilt by `rebuild`, which walks up `packLayout.parents` to the root and applies the chain downwards, holding two objects at a time rather than
-  the chain. That costs the deferred entry its own chain of inflations, and it is why the budget cannot lose a finding: an entry that will not
+  rebuilt by `rebuild`, which walks up to the root through `packLayout.parentOf` and applies the chain downwards, holding two objects at a time
+  rather than the chain. That costs the deferred entry its own chain of inflations, and it is why the budget cannot lose a finding: an entry that will not
   decode is refused the same way on both paths.
 
 Descending into a node's LAST child hands the parent's buffer over instead of stacking a second one on top of it. A chain that never branches --
@@ -55,8 +71,8 @@ and the same complaints out of each.
 
 ## Where the work is spread
 
-Roots are handed out with one atomic counter, so a worker that draws a shallow root comes back for another. CRC checking is a flat scan over the
-mapping, independent of the forest, so it runs as its own parallel pass in batches of 512 entries.
+Entries are handed out with one atomic counter and a worker walks the ones marked as roots, so a worker that draws a shallow root comes back for
+another. CRC checking is a flat scan over the mapping, independent of the forest, so it runs as its own parallel pass in batches of 512 entries.
 
 `VerifyOpts.Object` is called from every worker at once, with no lock. That callback is the entire per-object fsck check -- decoding the tree,
 checking every entry name, resolving links into the object table -- so it is most of the run's work. Serializing it leaves one core doing everything

@@ -73,15 +73,20 @@ Breaking one of these costs about half the run. Each is a mistake that was made 
 - **A packed read goes through the delta base cache.** Without it an object at chain depth ten costs ten inflations. `internal/odb/cache.go`.
 - **A tree is decoded once**, into a pooled slice, with entry names as `[]byte` views into the decode buffer. Copying them to strings was the single
   largest allocation source measured.
-- **Nothing with one instance per object holds a pointer.** `packEntry`, `objEntry` (56 bytes, its edges named by index into an arena), the edges
-  themselves and the object table's slots are all pointer-free, so tens of millions of them cost the collector nothing per cycle.
-  `TestAnObjectEntryHoldsNoPointer`, `internal/fsckcmd/edgearena.go`.
+- **Nothing with one instance per object holds a pointer.** `packEntry` (24 bytes), `objEntry` (48, its edges named by index into an arena), the
+  edges themselves (4) and the object table's slots are all pointer-free, so tens of millions of them cost the collector nothing per cycle.
+  `TestAnObjectEntryHoldsNoPointer`, `TestAPackEntryStaysSmall`, `internal/fsckcmd/edgearena.go`.
+- **A field on one of those is a field per object, so everything derivable is derived.** An entry ends where the next starts, a name is the hash
+  without the length its algorithm holds, a resolved edge's type is its target's. `docs/architecture.md`, `docs/pack-verification.md`.
+- **A pass hands the pack's pages back as it reads them.** Every byte of a pack is read, so a run that does not is resident for the whole of every
+  pack -- which on these repositories is the machine. `releaseEvery`, `odb.Pack.Release`, `docs/memory.md`.
 - **The object table is not a map, and it is sized before the first write.** Object names are already uniform, so four of their bytes are the hash;
   the size comes from the pack indexes, because growing a shard rehashes it. `docs/architecture.md` has the seven that were measured and fixed.
 - **The delta walk holds one buffer per chain level, so it is bounded.** Without the budget the cost is workers times depth times object size, which
   reached 3 GB on a pack of 72 large blobs. `odb.DefaultChainBudget`, `docs/pack-verification.md`.
-- **The heap is capped at three quarters of the machine.** A repository larger than the machine costs time, not the run: the limit is soft, so no
-  check is skipped to stay under it. `GOMEMLIMIT` and go-toolchain's cgroup guard both win. `cmd/git-fixed/memlimit.go`, `docs/architecture.md`.
+- **The heap is capped at three quarters of the machine, and the collector's target is halved.** A repository larger than the machine costs time,
+  not the run: the limit is soft, so no check is skipped to stay under it. `GOGC=50` because a table that holds no pointer is cheap to collect and
+  expensive to double. `GOMEMLIMIT`, `GOGC` and go-toolchain's cgroup guard all win. `cmd/git-fixed/memlimit.go`, `docs/architecture.md`.
 - `scripts/bench.sh <repo>` measures against the system git and refuses to print a time unless the output matched.
 
 ## Deliberate divergences
@@ -110,4 +115,4 @@ have SUCCEEDED sees a difference. `internal/odb.materializeRoot`.
 - `docs/allocation-bounds.md` -- the sizes a header may claim, and what happens to one no file could hold
 - `docs/progress.md` -- the meters, their thresholds, the clock, and which phases draw one
 - `docs/exit-status.md` -- the status bits, where git dies and this does not, and where 128 stays
-- `docs/memory.md` -- the resident, anonymous and swap marks, where they are printed, and why resident is mostly packfile
+- `docs/memory.md` -- the resident, anonymous and swap marks, where they are printed, and handing a pack's pages back as it is read

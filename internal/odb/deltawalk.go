@@ -19,7 +19,12 @@ type walker struct {
 	object func(gitobj.OID, gitobj.Type, int64, []byte)
 	// budget is the decoded base data every worker on this pack may still hold between them. see DefaultChainBudget.
 	budget atomic.Int64
+	// pages hands the pack's mapped pages back as the walk finishes with them.
+	pages *releaser
 }
+
+// spent counts one entry's bytes as read.
+func (w *walker) spent(i int32) { w.pages.spent(w.l.end(i) - w.l.ents[i].off) }
 
 // frame is one level of an in-progress delta chain.
 type frame struct {
@@ -58,10 +63,10 @@ func (w *walker) give(depth int, n int64) {
 func (w *walker) walkChain(root int32, in *Inflater) {
 	l, p := w.l, w.p
 	e := &l.ents[root]
-	if e.typ == gitobj.TypeBad {
+	if e.objType() == gitobj.TypeBad {
 		return
 	}
-	if e.typ == gitobj.TypeBlob && w.o.BigFileThreshold > 0 && e.size >= w.o.BigFileThreshold &&
+	if e.objType() == gitobj.TypeBlob && w.o.BigFileThreshold > 0 && e.size >= w.o.BigFileThreshold &&
 		len(l.children(root)) == 0 {
 		w.finishStreamed(root)
 		return
@@ -69,7 +74,7 @@ func (w *walker) walkChain(root int32, in *Inflater) {
 	typ, data, err := w.materializeRoot(e, in)
 	if err != nil {
 		oid := p.OIDAt(e.idx)
-		cannotUnpack(w.emit, p, l, oid, *e)
+		cannotUnpack(w.emit, p, l, oid, root)
 		failSubtree(w.emit, p, l, root)
 		return
 	}
@@ -84,7 +89,7 @@ func (w *walker) walkChain(root int32, in *Inflater) {
 		deferred = deferred[:len(deferred)-1]
 		data, err := w.rebuild(d, in)
 		if err != nil {
-			cannotUnpack(w.emit, p, l, p.OIDAt(l.ents[d].idx), l.ents[d])
+			cannotUnpack(w.emit, p, l, p.OIDAt(l.ents[d].idx), d)
 			failSubtree(w.emit, p, l, d)
 			continue
 		}
@@ -116,16 +121,16 @@ func (w *walker) spread(base int32, typ gitobj.Type, data []byte, in *Inflater, 
 		top.next++
 		last := top.next >= end
 		ce := &l.ents[child]
-		if ce.typ == gitobj.TypeBad {
+		if ce.objType() == gitobj.TypeBad {
 			continue
 		}
-		delta, err := in.Inflate(p, ce.dataOff, ce.size)
+		delta, err := in.Inflate(p, ce.dataOff(), ce.size)
 		var out []byte
 		if err == nil {
 			out, err = applyDelta(top.data, delta)
 		}
 		if err != nil {
-			cannotUnpack(w.emit, p, l, p.OIDAt(ce.idx), *ce)
+			cannotUnpack(w.emit, p, l, p.OIDAt(ce.idx), child)
 			failSubtree(w.emit, p, l, child)
 			continue
 		}
@@ -161,10 +166,11 @@ func (w *walker) rebuild(i int32, in *Inflater) ([]byte, error) {
 	var path []int32
 	for j := i; ; {
 		path = append(path, j)
-		if l.parents[j] < 0 {
+		up := l.parentOf(w.p, j)
+		if up < 0 {
 			break
 		}
-		j = l.parents[j]
+		j = up
 	}
 	_, data, err := w.materializeRoot(&l.ents[path[len(path)-1]], in)
 	if err != nil {
@@ -172,7 +178,7 @@ func (w *walker) rebuild(i int32, in *Inflater) ([]byte, error) {
 	}
 	for k := len(path) - 2; k >= 0; k-- {
 		e := &l.ents[path[k]]
-		delta, err := in.Inflate(w.p, e.dataOff, e.size)
+		delta, err := in.Inflate(w.p, e.dataOff(), e.size)
 		if err != nil {
 			return nil, err
 		}
@@ -187,16 +193,16 @@ func (w *walker) rebuild(i int32, in *Inflater) ([]byte, error) {
 // outside this pack.
 func (w *walker) materializeRoot(e *packEntry, in *Inflater) (gitobj.Type, []byte, error) {
 	p := w.p
-	switch e.typ {
+	switch e.objType() {
 	case gitobj.TypeRefDelta, gitobj.TypeOfsDelta:
 		// buildLayout marks an unresolved delta bad, and walkChain drops a bad entry before it reaches here.
-		return gitobj.TypeBad, nil, badDeltaBase(e.dataOff, p.Path)
+		return gitobj.TypeBad, nil, badDeltaBase(e.dataOff(), p.Path)
 	}
-	data, err := in.Inflate(p, e.dataOff, e.size)
+	data, err := in.Inflate(p, e.dataOff(), e.size)
 	if err != nil {
 		return gitobj.TypeBad, nil, err
 	}
-	return e.typ, data, nil
+	return e.objType(), data, nil
 }
 
 // finishStreamed hashes a blob past core.bigFileThreshold without holding it,
@@ -207,9 +213,9 @@ func (w *walker) materializeRoot(e *packEntry, in *Inflater) (gitobj.Type, []byt
 func (w *walker) finishStreamed(i int32) {
 	e := &w.l.ents[i]
 	oid := w.p.OIDAt(e.idx)
-	got, err := w.p.StreamHash(e.dataOff, e.size, e.typ)
+	got, err := w.p.StreamHash(e.dataOff(), e.size, e.objType())
 	if err != nil {
-		cannotUnpack(w.emit, w.p, w.l, oid, *e)
+		cannotUnpack(w.emit, w.p, w.l, oid, i)
 		return
 	}
 	if got != oid {
@@ -217,11 +223,12 @@ func (w *walker) finishStreamed(i int32) {
 		return
 	}
 	if w.object != nil {
-		w.object(oid, e.typ, e.size, nil)
+		w.object(oid, e.objType(), e.size, nil)
 	}
 	if w.o.Progress != nil {
 		w.o.Progress()
 	}
+	w.spent(i)
 }
 
 // finish hashes one decoded object and hands it to the caller.
@@ -238,6 +245,7 @@ func (w *walker) finish(i int32, typ gitobj.Type, data []byte) {
 	if w.o.Progress != nil {
 		w.o.Progress()
 	}
+	w.spent(i)
 }
 
 // StreamHash hashes a pack entry without holding its payload, for a blob past

@@ -78,6 +78,9 @@ func OpenPack(idxFile, idxPath string, algo *gitobj.Algo) (*Pack, error) {
 	return p, nil
 }
 
+// Release hands back the pack's mapped pages. The index keeps its own.
+func (p *Pack) Release() { p.dataMap.release() }
+
 // Close releases both mappings.
 func (p *Pack) Close() {
 	p.idxMap.close()

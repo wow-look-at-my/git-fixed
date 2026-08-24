@@ -8,8 +8,12 @@ import (
 	"strings"
 )
 
+// gcTarget is the garbage the heap may carry, against what is live. see docs/architecture.md
+const gcTarget = 50
+
 // capHeap makes a repository too large for the machine cost time instead of costing the run. see docs/architecture.md
 func capHeap() {
+	setGCTarget()
 	// Both of these mean somebody has already chosen, and GOMEMLIMIT=off is
 	// how a person turns the whole thing off.
 	if _, ok := os.LookupEnv("GOMEMLIMIT"); ok {
@@ -27,6 +31,15 @@ func capHeap() {
 	if limit, ok := heapLimit(string(data)); ok {
 		debug.SetMemoryLimit(limit)
 	}
+}
+
+// setGCTarget lowers the heap's growth target, unless somebody has named one.
+// see docs/architecture.md
+func setGCTarget() {
+	if _, ok := os.LookupEnv("GOGC"); ok {
+		return
+	}
+	debug.SetGCPercent(gcTarget)
 }
 
 // heapLimit is three quarters of what the machine has.

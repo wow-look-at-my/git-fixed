@@ -67,7 +67,7 @@ func TestObjTableTellsNamesApartByMoreThanItsHash(t *testing.T) {
 		oid.H[19] = byte(i >> 8)
 		e, idx, ok := tab.Lookup(oid, gitobj.TypeBlob)
 		require.True(t, ok)
-		require.Equal(t, oid, e.OID)
+		require.Equal(t, oid.H, e.hash)
 		require.Same(t, e, tab.At(idx))
 		want[oid] = e
 	}
@@ -182,10 +182,55 @@ func TestSetMsgTypeCannotDemoteFatal(t *testing.T) {
 	assert.Empty(t, errBuf.String())
 }
 
+// TestTheTypeAndTheFlagsShareAWord keeps the two halves of meta apart. They are
+// one word so that the entry is 48 bytes, and a flag that reached the type byte
+// would rename an object's type.
+func TestTheTypeAndTheFlagsShareAWord(t *testing.T) {
+	var e objEntry
+	assert.Equal(t, gitobj.TypeNone, e.Type())
+	assert.Zero(t, e.Flags())
+
+	for _, f := range []uint32{flagReachable, flagSeen, flagHasObj, flagUsed, flagWalked} {
+		assert.False(t, e.SetFlag(f), "the flag was not set before")
+		assert.True(t, e.SetFlag(f), "and is set now")
+	}
+	assert.Equal(t, gitobj.TypeNone, e.Type(), "no flag reaches the type")
+
+	e.SetType(gitobj.TypeTree)
+	assert.Equal(t, gitobj.TypeTree, e.Type())
+	e.SetType(gitobj.TypeBlob)
+	assert.Equal(t, gitobj.TypeTree, e.Type(), "the first type seen is the one kept")
+
+	e.ClearFlags(flagReachable | flagSeen)
+	assert.Equal(t, uint32(flagHasObj|flagUsed|flagWalked), e.Flags())
+	assert.Equal(t, gitobj.TypeTree, e.Type(), "clearing a flag leaves the type alone")
+
+	var bad objEntry
+	bad.SetType(gitobj.TypeBad)
+	assert.Equal(t, gitobj.TypeBad, bad.Type(), "git's negative types survive the byte")
+}
+
+// TestAnUnresolvedEdgeKeepsTheTypeItImplied guards what the walk prints about a
+// link that leads nowhere: the edge is all it has left of the reference.
+func TestAnUnresolvedEdgeKeepsTheTypeItImplied(t *testing.T) {
+	resolved := makeEdge(1234, true, gitobj.TypeTree)
+	require.True(t, resolved.ok())
+	assert.Equal(t, uint32(1234), resolved.index())
+
+	for _, typ := range []gitobj.Type{gitobj.TypeCommit, gitobj.TypeTree, gitobj.TypeBlob, gitobj.TypeTag} {
+		e := makeEdge(1234, false, typ)
+		require.False(t, e.ok(), "an unresolved edge names no target")
+		assert.Equal(t, typ, e.typ())
+	}
+	// git's negative types have no spelling, and neither did the wider edge that came before this one.
+	assert.Equal(t, "unknown", linkTypeName(makeEdge(0, false, gitobj.TypeAny).typ()))
+	assert.Equal(t, "unknown", linkTypeName(makeEdge(0, false, gitobj.TypeBad).typ()))
+}
+
 // TestAnObjectEntryStaysSmall guards the number the comment on objEntry states.
 func TestAnObjectEntryStaysSmall(t *testing.T) {
-	assert.Equal(t, uintptr(56), unsafe.Sizeof(objEntry{}))
-	assert.Equal(t, uintptr(8), unsafe.Sizeof(edge(0)))
+	assert.Equal(t, uintptr(48), unsafe.Sizeof(objEntry{}))
+	assert.Equal(t, uintptr(4), unsafe.Sizeof(edge(0)))
 }
 
 // TestAnObjectEntryHoldsNoPointer guards the other half of what an entry costs.

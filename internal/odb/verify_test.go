@@ -68,6 +68,12 @@ type verified struct {
 // walkPack verifies a pack at one budget and records everything it said.
 func walkPack(t *testing.T, path string, workers int, budget int64) verified {
 	t.Helper()
+	return walkPackWith(t, path, odb.VerifyOpts{Workers: workers, ChainBudget: budget})
+}
+
+// walkPackWith is walkPack with the rest of the options in the caller's hands.
+func walkPackWith(t *testing.T, path string, o odb.VerifyOpts) verified {
+	t.Helper()
 	p, err := odb.OpenPack(strings.TrimSuffix(path, ".pack")+".idx",
 		strings.TrimSuffix(path, ".pack")+".idx", gitobj.SHA1)
 	require.NoError(t, err)
@@ -75,8 +81,9 @@ func walkPack(t *testing.T, path string, workers int, budget int64) verified {
 
 	got := verified{objects: map[gitobj.OID]string{}}
 	got.ok = p.Verify(odb.VerifyOpts{
-		Workers:     workers,
-		ChainBudget: budget,
+		Workers:      o.Workers,
+		ChainBudget:  o.ChainBudget,
+		ReleaseEvery: o.ReleaseEvery,
 		Emit: func(oid gitobj.OID, text string) {
 			got.errors = append(got.errors, text)
 		},
@@ -116,6 +123,31 @@ func TestAChainBudgetChangesNothingButMemory(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestHandingPagesBackChangesNothingButMemory is the other bound on what a pack
+// costs. The walk drops its mapped pages as it reads past them, and every one it
+// still needs comes back from the page cache, so a sweep after every byte has to
+// produce what a sweep after none of them does.
+func TestHandingPagesBackChangesNothingButMemory(t *testing.T) {
+	gittest.RequireGit(t)
+	r := gittest.New(t)
+	objs := branchingPack()
+	path, _ := r.WritePack("test", objs)
+
+	want := walkPack(t, path, 1, 0)
+	require.True(t, want.ok, "the pack must verify: %v", want.errors)
+	require.Len(t, want.objects, len(objs))
+
+	for _, every := range []int64{1, 64, 1 << 20} {
+		for _, workers := range []int{1, 4} {
+			got := walkPackWith(t, path, odb.VerifyOpts{Workers: workers, ReleaseEvery: every})
+			assert.True(t, got.ok, "sweeping every %d bytes: %v", every, got.errors)
+			assert.Equal(t, want.objects, got.objects,
+				"sweeping every %d bytes with %d workers decoded different objects", every, workers)
+			assert.Empty(t, got.errors, "sweeping every %d bytes invented a complaint", every)
+		}
 	}
 }
 

@@ -18,19 +18,38 @@ catches a smaller number, or that fails outright, leaves the mark where the wors
 
 Each mark is reached at its own moment. They do not describe one instant, and the smaller ones are not a share of the larger one.
 
-## Why the resident mark is so much larger than the run
+## The packfile pages, and giving them back
 
 A pack is read through a mapping of the whole file (`odb.mapReadOnly`), and every page of it the scan touches is faulted in from the page cache and
-counted against this process from that moment. The mapping is read-only and the pages are clean, and neither of those exempts a page from RSS.
+counted against this process from that moment. The mapping is read-only and the pages are clean, and neither of those exempts a page from RSS. Every
+byte of a pack is read -- the CRC pass scans the mapping end to end, and the object walk reads every entry -- so a run that did nothing about it
+ended holding the whole of every pack. On a hundred-gigabyte pack that is a hundred gigabytes of resident memory for bytes the run has finished with,
+next to a heap a fraction of the size.
 
-So the resident mark is mostly the packfiles, and on a repository of 100 million objects it is tens of gigabytes larger than anything the run
-allocated. That number is the one `top` shows and the one the kernel decides an out-of-memory kill by, so it is the mark the meter carries. It is
-also the one that misleads, which is why the closing line carries the anonymous mark beside it: that second figure is the object table, the edges
-and the buffers -- what the run itself holds, and what the machine cannot take back under pressure.
+So the passes that read a pack hand its pages back as they go. `Pack.Release` is `madvise(MADV_DONTNEED)` over the pack's mapping: the file stays
+mapped, the kernel keeps its page cache, and a later read of any of it faults the page back rather than reading the disk again. One `releaser` counts
+what all three passes read and sweeps every `releaseEvery` (256 MiB), because a single pack can be larger than the machine and a sweep at the end of
+one comes after the moment that decides whether the run survives. The pack is swept once more when it has been read end to end. What this costs is a
+minor fault on a page that is read twice; what it saves is the difference between a resident set the size of the repository and one the size of the
+run.
 
-The two answer different questions. A resident mark near the size of the machine with a small anonymous mark is a run whose packfile pages the
-kernel can reclaim as it needs them. An anonymous mark near the heap ceiling in `cmd/git-fixed/memlimit.go` is a run whose collector is running
-back-to-back, taking half the CPU to stay under a limit it cannot reach.
+Measured on a 215,981-object repository whose packfile is 1.13 GB, which `scripts/make-bench-repo.sh <dir> 2500 20000 25 16384` builds: peak
+resident falls from 1.17 GiB to 317 MiB, and the fsck says exactly what it said before. What is left is the sweep window, the pack's index, and the
+run's own heap.
+
+The pack's index keeps its pages. `OIDAt` and `Find` read it for every object in every phase, so it is memory the run is using rather than memory it
+has finished with -- about 28 bytes an object, which is 2.8 GiB on a hundred million.
+
+The resident mark is what `top` shows and what the kernel decides an out-of-memory kill by, so it is the mark the meter carries. The closing line
+carries the anonymous mark beside it: that second figure is the object table, the edges and the buffers -- what the run itself holds, and what the
+machine cannot take back under pressure.
+
+The two answer different questions. A resident mark well above the anonymous one is a run holding pages of a mapping, which the kernel can reclaim as
+it needs them and which the sweep above hands back on its own. An anonymous mark near the heap ceiling in `cmd/git-fixed/memlimit.go` is a run whose
+collector is running back-to-back, taking half the CPU to stay under a limit it cannot reach.
+
+The resident mark never goes down, because `VmHWM` never does: it records the worst moment the run reached, and pages handed back afterwards do not
+lower it. A run whose resident mark is far above its anonymous one reached that mark before a sweep, not while it was holding it.
 
 ## Where they are printed
 
