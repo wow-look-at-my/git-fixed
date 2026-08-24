@@ -16,7 +16,6 @@ jobs:
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
-      # see .github/workflows/ci.md
       - name: Install the git the differential tests compare against
         run: |
           sudo apt-get update
