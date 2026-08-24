@@ -36,17 +36,7 @@ func startProfile() (func(), error) {
 	}, nil
 }
 
-// startHeapProfile arranges for a heap profile when GIT_FIXED_MEMPROFILE names
-// a file, and returns the function that writes it.
-//
-// The file is written at the end of the run, so its inuse_space says almost
-// nothing: the object table, the edges and the pack layouts are all unreachable
-// by then, and a profile of the 985,792-object repository shows 1.5 MB live.
-// What it does carry is alloc_space, which is every allocation the run made and
-// the answer to where the memory went.
-//
-// The peak is a different question and the profile cannot answer it, so
-// peakHeap watches it separately and prints it.
+// startHeapProfile arranges for a heap profile when GIT_FIXED_MEMPROFILE names a file.
 func startHeapProfile(stderr io.Writer) (func(), error) {
 	path := os.Getenv("GIT_FIXED_MEMPROFILE")
 	if path == "" {

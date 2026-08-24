@@ -85,8 +85,7 @@ func TestIsOtherControlNames(t *testing.T) {
 }
 
 func TestNTFSOnlyChecks(t *testing.T) {
-	// The tree check applies these to each backslash-separated segment, so
-	// they must answer for the NTFS spelling alone.
+	// The tree check applies these to each backslash-separated segment.
 	assert.True(t, gitpath.IsNTFSDotGit([]byte(".git")))
 	assert.True(t, gitpath.IsNTFSDotGit([]byte("git~1")))
 	assert.True(t, gitpath.IsNTFSDotGit([]byte(".git:")))

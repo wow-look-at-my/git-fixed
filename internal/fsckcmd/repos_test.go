@@ -199,9 +199,7 @@ func TestLooseObjectCannotAskForMoreThanItsFileHolds(t *testing.T) {
 		"a file that will not read is a broken object, not a reason to stop")
 	assert.Contains(t, lines, oid.String(), "the report must name the file it could not read")
 	assert.Contains(t, lines, "unable to unpack contents of")
-	// The rest of the repository is still checked, rather than the run
-	// ending wherever the allocator gave up. Nothing sound is complained
-	// about, and the sound objects are still reachable.
+	// The rest of the repository is still checked, rather than the run ending wherever the allocator gave up.
 	for _, sound := range []gitobj.OID{blob, tree, commit} {
 		assert.NotContains(t, lines, sound.String())
 	}

@@ -50,9 +50,7 @@ func TestProgressNamesEveryPhaseGitNames(t *testing.T) {
 	stderr, code := withProgress(t, r.Dir)
 	assert.Equal(t, 0, code, "the repository is sound: %s", stderr)
 
-	// git shows a meter on these three straight away. The other two it
-	// delays, and a repository this small beats the delay, so they are the
-	// ones that must NOT appear.
+	// git shows a meter on these three straight away.
 	for _, want := range []string{
 		"Checking ref database: 100% (1/1) ",
 		"Checking object directories: 100% (256/256) ",

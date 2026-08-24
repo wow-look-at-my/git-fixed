@@ -1,11 +1,6 @@
 package repair_test
 
 // What the recovery ladder asks a remote for.
-//
-// The answer used to be "everything": every branch and every tag, into a
-// scratch repository, to recover one object. On a monorepo that is a clone --
-// tens of gigabytes over the network, onto whatever disk the temporary
-// directory sits on -- and a --dry-run did it too.
 
 import (
 	"bytes"

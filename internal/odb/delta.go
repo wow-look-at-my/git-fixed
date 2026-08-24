@@ -2,8 +2,7 @@ package odb
 
 import "errors"
 
-// errBadDelta marks a delta that does not decode against its base. git reports
-// the same condition as "cannot unpack".
+// errBadDelta marks a delta that does not decode against its base.
 var errBadDelta = errors.New("corrupt delta")
 
 // deltaHeader reads one varint from the front of a delta stream.
@@ -25,11 +24,6 @@ func deltaVarint(d []byte) (uint64, []byte, bool) {
 }
 
 // maxDeltaOutput is the most bytes a delta stream of n bytes can produce.
-//
-// The cheapest op in the format is one byte: a copy command with no offset and
-// no size bytes, which means "the first 0x10000 bytes of the base". Nothing in
-// the stream can do better than that, so a valid delta never asks for more than
-// this and a corrupt one never gets more than this reserved for it.
 func maxDeltaOutput(n int) uint64 { return uint64(n) * 0x10000 }
 
 // applyDelta reconstructs an object from its base and a git delta stream.
@@ -42,12 +36,7 @@ func applyDelta(base, delta []byte) ([]byte, error) {
 	if !ok {
 		return nil, errBadDelta
 	}
-	// dstSize is what the delta stream says the result will be, and on a
-	// broken repository that is whatever bytes landed there. The result is
-	// grown into instead of reserved outright: every op below is bounded by
-	// the base and by the delta, and the last thing this does is check that
-	// what they produced is the size the stream promised. A bogus size then
-	// costs that comparison rather than an allocation of a terabyte.
+	// dstSize is what the delta stream says the result will be.
 	out := make([]byte, 0, min(dstSize, maxDeltaOutput(len(delta))))
 	for len(delta) > 0 {
 		cmd := delta[0]

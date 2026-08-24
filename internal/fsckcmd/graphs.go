@@ -52,8 +52,7 @@ func (r *run) checkPackRevIndexes() {
 	}
 }
 
-// revIndexSize is git's revindex_size(): a header, one index position per
-// object, and the pack checksum next to the file's own.
+// revIndexSize is git's revindex_size(): a header, one index position per object.
 func revIndexSize(num uint32, rawsz int) int { return 12 + int(num)*4 + 2*rawsz }
 
 // loadRevIndex is git's load_revindex_from_disk(). It returns the tail of the
@@ -90,8 +89,7 @@ func verifyRevIndex(data []byte, p *odb.Pack, algo *gitobj.Algo) []string {
 	if !bytes.Equal(h.Sum(nil), data[len(data)-rawsz:]) {
 		msgs = append(msgs, "invalid checksum")
 	}
-	// The in-memory reverse index is the pack's objects in offset order,
-	// each carrying the position it holds in the index.
+	// The in-memory reverse index is the pack's objects in offset order.
 	order := make([]uint32, p.Num)
 	for i := range order {
 		order[i] = uint32(i)

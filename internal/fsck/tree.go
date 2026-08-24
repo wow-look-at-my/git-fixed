@@ -17,11 +17,6 @@ const (
 )
 
 // TreeEntry is one line of a tree object, with the mode exactly as stored.
-//
-// Name and Raw point into the buffer the entry was decoded from, so neither
-// outlives it. A tree can hold thousands of entries and a repository millions
-// of trees, and copying every name is the most expensive thing a tree check
-// could do.
 type TreeEntry struct {
 	Mode uint32
 	Name []byte
@@ -42,16 +37,7 @@ func (e TreeEntry) IsSymlink() bool { return e.Mode&0o170000 == modeSymlink }
 // IsRegular reports whether the entry names a regular file.
 func (e TreeEntry) IsRegular() bool { return e.Mode&0o170000 == modeRegular }
 
-// WalkKind is the object a link walk follows this entry to, and whether it
-// follows it at all.
-//
-// git canonicalises a tree entry's mode while it decodes it, in canon_mode():
-// a regular file stays a regular file, a symbolic link stays a link, a
-// directory stays a directory, and ANYTHING ELSE becomes a gitlink. Only fsck's
-// own object check asks for the mode as written, through TREE_DESC_RAW_MODES,
-// and that is where the badFilemode and zeroPaddedFilemode warnings come from.
-// The link walk sees the canonical mode, so an entry whose mode names no kind
-// of object is a submodule to it and it walks past in silence.
+// WalkKind is the object a link walk follows this entry to, and whether it follows it at all.
 func (e TreeEntry) WalkKind() (gitobj.Type, bool) {
 	switch {
 	case e.IsRegular(), e.IsSymlink():
@@ -62,12 +48,10 @@ func (e TreeEntry) WalkKind() (gitobj.Type, bool) {
 	return gitobj.TypeNone, false
 }
 
-// errBadTree is git's decode_tree_entry() failure, which fsck turns into one
-// "cannot be parsed as a tree".
+// errBadTree is git's decode_tree_entry() failure, which fsck turns into one "cannot be parsed as a tree".
 var errBadTree = errors.New("cannot be parsed as a tree")
 
-// ParseTree decodes a whole tree object. It stops at the first malformed entry
-// and returns what it read up to that point, which is what git reports on.
+// ParseTree decodes a whole tree object.
 func ParseTree(buf []byte, algo *gitobj.Algo) ([]TreeEntry, error) {
 	return ParseTreeInto(nil, buf, algo)
 }
@@ -303,8 +287,7 @@ func verifyOrdered(mode1 uint32, name1 []byte, mode2 uint32, name2 []byte, candi
 		c2 = name2[l]
 	}
 	if c1 == 0 && c2 == 0 {
-		// git-write-tree once wrote a tree with the same name twice,
-		// one blob and one tree. Refuse it.
+		// git-write-tree once wrote a tree with the same name twice, one blob and one tree.
 		return treeHasDups
 	}
 	if c1 == 0 && mode1&0o170000 == modeDir {

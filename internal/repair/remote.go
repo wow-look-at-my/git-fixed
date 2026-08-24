@@ -1,13 +1,6 @@
 package repair
 
 // Recovering an object from a remote.
-//
-// Fetching into the damaged repository does not work, and the reason is worth
-// knowing: fetch negotiation is driven by what the repository says it has, and
-// a repository holding a corrupt object says it has that object -- the file is
-// on disk under the right name. The remote is told not to send it, the fetch
-// succeeds, and nothing is fixed. So the objects arrive in a scratch
-// repository, which has nothing and therefore asks for everything.
 
 import (
 	"errors"
@@ -31,30 +24,19 @@ type remoteSource struct {
 	algo *gitobj.Algo
 }
 
-// errNoRemote says the repository has nothing to fetch from, which is an
-// ordinary state and not a failure.
+// errNoRemote says the repository has nothing to fetch from, which is an ordinary state and not a failure.
 var errNoRemote = errors.New("no remote is configured")
 
-// errWouldClone says the remote will not serve the wanted objects by name, so
-// the only way to reach them is to fetch every ref it has.
-//
-// That is a copy of the whole repository, which on a monorepo is tens of
-// gigabytes over the network and onto a disk nobody offered. A run that changes
-// nothing does not get to do it: a plan says the objects need a fetch, and the
-// repair is where the fetch happens.
+// errWouldClone says the remote will not serve the wanted objects by name.
 var errWouldClone = errors.New("this remote does not serve objects by name, so reaching it means fetching every branch and tag")
 
 // RemotePolicy says how the recovery ladder may use a remote.
 type RemotePolicy struct {
-	// Want is every object the run is looking for. The remote is asked for
-	// exactly these, by name, in one request: a few kilobytes, where fetching
-	// every ref is the whole repository.
+	// Want is every object the run is looking for.
 	Want []gitobj.OID
-	// EveryRef allows the fallback for a server that refuses to serve an
-	// object by name. It costs a full clone, so a dry run does not get one.
+	// EveryRef allows the fallback for a server that refuses to serve an object by name.
 	EveryRef bool
-	// Progress is where git's own fetch progress goes. Without it a transfer
-	// of tens of gigabytes is minutes of silence.
+	// Progress is where git's own fetch progress goes.
 	Progress io.Writer
 }
 
@@ -102,8 +84,7 @@ func openRemote(repo *gitrepo.Repo, policy RemotePolicy) (*remoteSource, error) 
 	return &remoteSource{dir: dir, db: db, algo: repo.Algo}, nil
 }
 
-// wantBatch is how many object names go into one fetch. A command line has a
-// length limit and each name is 40 or 64 characters.
+// wantBatch is how many object names go into one fetch.
 const wantBatch = 128
 
 // fetchWanted asks for the objects by name, and falls back to every ref only
@@ -186,10 +167,7 @@ func firstRemoteURL(repo *gitrepo.Repo) string {
 	return best
 }
 
-// leaked are the variables that would point a scratch repository back at the
-// damaged one. They are REMOVED, never set empty: git rejects an empty
-// GIT_WORK_TREE outright with "not allowed without specifying GIT_DIR", which
-// takes the whole remote path out without saying so.
+// leaked are the variables that would point a scratch repository back at the damaged one.
 var leaked = []string{
 	"GIT_DIR",
 	"GIT_WORK_TREE",

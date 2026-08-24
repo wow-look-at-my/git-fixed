@@ -21,8 +21,7 @@ import (
 type BadIndex struct {
 	// Path is the index file, absolute.
 	Path string
-	// WorktreeDir is where this index's own HEAD lives, which is the
-	// repository directory for the main worktree.
+	// WorktreeDir is where this index's own HEAD lives, which is the repository directory for the main worktree.
 	WorktreeDir string
 	// Why is what git says about it.
 	Why string
@@ -36,17 +35,13 @@ type RepairedIndex struct {
 	Salvaged int
 	// FromHead is how many more came from the commit HEAD names.
 	FromHead int
-	// Claimed is how many entries the damaged file said it held. It is
-	// larger than Salvaged when the file was cut short.
+	// Claimed is how many entries the damaged file said it held.
 	Claimed int
 	// Why is what was wrong with the old file.
 	Why string
 }
 
-// StagedWorkLost reports whether the rebuild could not account for every entry
-// the old index claimed. The content behind those entries is still in the
-// object database -- git add wrote it there before the index recorded it -- so
-// this is a paths-and-modes loss, not a content loss, and the report says so.
+// StagedWorkLost reports whether the rebuild could not account for every entry the old index claimed.
 func (r RepairedIndex) StagedWorkLost() int { return max(r.Claimed-r.Salvaged, 0) }
 
 // scanIndexes finds every worktree's index that will not parse.
@@ -54,8 +49,7 @@ func (s *scanner) scanIndexes(d *Damage) {
 	for _, wt := range s.repo.Worktrees() {
 		path := filepath.Join(wt.Dir, "index")
 		if _, err := os.Stat(path); err != nil {
-			// No index at all is a normal state for a bare repository, and
-			// git makes one on demand anywhere else.
+			// No index at all is a normal state for a bare repository, and git makes one on demand anywhere else.
 			continue
 		}
 		_, _, err := s.repo.ReadIndex(path)
@@ -92,10 +86,7 @@ func repairIndex(repo *gitrepo.Repo, db *odb.DB, q *Quarantine, bad *BadIndex) (
 		have.Add(e.Name)
 	}
 
-	// HEAD's tree covers the tracked paths the salvage did not reach. An
-	// entry it supplies has no stat data, so git re-reads that file once and
-	// then records it again. That costs a read; getting the path back is
-	// worth more than the read.
+	// HEAD's tree covers the tracked paths the salvage did not reach.
 	head := headEntries(repo, db, bad.WorktreeDir)
 	for _, e := range head {
 		if !have.Add(e.Name) {
@@ -148,9 +139,7 @@ func headEntries(repo *gitrepo.Repo, db *odb.DB, worktreeDir string) []gitrepo.I
 // walkTreeEntries flattens a tree into index entries.
 func walkTreeEntries(db *odb.DB, repo *gitrepo.Repo, tree gitobj.OID, prefix string, out *[]gitrepo.IndexEntry, depth int) {
 	if depth > 100 {
-		// A tree cannot legitimately nest this deep, and a cycle here would
-		// not terminate. Stopping loses paths, so the count in the report is
-		// what tells the owner it happened.
+		// A tree cannot legitimately nest this deep, and a cycle here would not terminate.
 		return
 	}
 	typ, data, err := db.Read(tree)

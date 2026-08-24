@@ -1,16 +1,6 @@
 package fsckcmd
 
 // Where the recorded edges live.
-//
-// There is one run of edges per object, which is tens of millions of them. They
-// were once a slice each: every one rounded up to a size class, every one its
-// own object for the collector, and a pointer in the entry that named it. On a
-// repository of 988,000 objects the live heap was 179 bytes per object, and
-// only about 40 of those were edges anyone had written to.
-//
-// They come out of slabs now, and an entry names its own by index. That takes
-// the pointer out of objEntry, which is what stops a hundred million entries
-// from being seven gigabytes the collector walks on every cycle.
 
 import (
 	"sync"
@@ -21,11 +11,6 @@ import (
 const edgeSlabSize = 8192
 
 // edgeArena hands out room for edges and keeps every slab it made.
-//
-// Slabs are appended and never moved, so a reader that took the slab list
-// before a later slab arrived still finds everything it can name: an entry's
-// span is written before the flag that says the span is there, and the slab it
-// names was registered before that.
 type edgeArena struct {
 	slabs  atomic.Pointer[[][]edge]
 	mu     sync.Mutex
@@ -53,8 +38,7 @@ func (a *edgeArena) alloc(n int) (edgeSpan, []edge) {
 	}
 	c, _ := a.chunks.Get().(*edgeChunk)
 	if c == nil || len(c.buf)-c.used < n {
-		// What is left of the old chunk is dropped, which is at most one
-		// object's worth of edges out of a slab that holds thousands.
+		// What is left of the old chunk is dropped: at most one object's edges out of a slab holding thousands.
 		slab, buf := a.newSlab(edgeSlabSize)
 		c = &edgeChunk{slab: slab, buf: buf}
 	}

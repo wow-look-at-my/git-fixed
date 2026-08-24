@@ -111,9 +111,7 @@ func TestReadLooseBytesHashMismatch(t *testing.T) {
 }
 
 func TestReadLooseBytesShortPayloadIsAHashMismatch(t *testing.T) {
-	// The stream ends cleanly but before the size the header promised. git
-	// keeps the zero-filled tail and lets the hash check reject it, rather
-	// than calling the file corrupt.
+	// The stream ends cleanly but before the size the header promised.
 	oid := Hash(gitobj.SHA1, gitobj.TypeBlob, []byte("hello\n"))
 	res := ReadLooseBytes(deflate(t, []byte("blob 99\x00hello\n")), "shown", oid, gitobj.SHA1, 1<<20)
 	assert.True(t, res.HashMismatch)
@@ -140,8 +138,7 @@ func TestReadLooseBytesFailures(t *testing.T) {
 }
 
 func TestReadLooseBytesUnknownType(t *testing.T) {
-	// git reads a type name it does not know without failing, so the caller
-	// can report it itself.
+	// git reads a type name it does not know without failing, so the caller can report it itself.
 	raw := looseObject(t, "widget", "x")
 	oid := HashLiteral(gitobj.SHA1, "widget", []byte("x"))
 	res := ReadLooseBytes(raw, "shown", oid, gitobj.SHA1, 1<<20)
@@ -151,8 +148,7 @@ func TestReadLooseBytesUnknownType(t *testing.T) {
 }
 
 func TestReadLooseBytesBigFile(t *testing.T) {
-	// Past the threshold the contents are checked as a stream and not kept,
-	// which is how git avoids holding a huge blob in memory.
+	// Past the threshold the contents are checked as a stream and not kept.
 	content := strings.Repeat("a", 4096)
 	oid := Hash(gitobj.SHA1, gitobj.TypeBlob, []byte(content))
 	res := ReadLooseBytes(looseObject(t, "blob", content), "shown", oid, gitobj.SHA1, 100)

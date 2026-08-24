@@ -99,8 +99,7 @@ func TestCommitGraphMissingCommit(t *testing.T) {
 	r := gittest.New(t)
 	history(t, r, 4)
 	r.Git("commit-graph", "write", "--reachable")
-	// Dropping the objects the graph indexes is the failure the graph check
-	// exists to catch.
+	// Dropping the objects the graph indexes is the failure the graph check exists to catch.
 	head := r.Git("rev-parse", "HEAD")
 	r.Git("update-ref", "-d", "refs/heads/master")
 	r.Git("update-ref", "-d", "refs/heads/main")

@@ -1,12 +1,6 @@
 package repair_test
 
-// The three faults that used to be reported and not repaired: a packfile that
-// will not verify, an index that will not parse, and a packed-refs file git's
-// own reader refuses.
-//
-// Each test follows the same shape as the ones next door: record the whole
-// repository, damage it, repair it, then require that the real git is happy AND
-// that every commit, tree, blob and ref came back byte for byte.
+// The three faults that used to be reported and not repaired: a packfile that will not verify.
 
 import (
 	"os"
@@ -21,9 +15,6 @@ import (
 )
 
 // overwrite replaces a file's content whatever mode it carries.
-//
-// git writes a packfile read-only, so a plain WriteFile over one fails for
-// every user except root. Damaging a pack is exactly what these tests do.
 func overwrite(t *testing.T, path string, data []byte) {
 	t.Helper()
 	require.NoError(t, os.Chmod(path, 0o644))
@@ -63,8 +54,7 @@ func TestRepairsACorruptPackfile(t *testing.T) {
 
 	data, err := os.ReadFile(pack)
 	require.NoError(t, err)
-	// Past the twelve-byte header and before the trailing checksum, so the
-	// damage lands on an object rather than on the frame around them.
+	// Past the twelve-byte header and before the trailing checksum.
 	at := len(data) / 2
 	data[at] ^= 0xff
 	overwrite(t, pack, data)
@@ -78,8 +68,7 @@ func TestRepairsACorruptPackfile(t *testing.T) {
 	requireGitClean(t, r)
 	requireSame(t, before, r)
 
-	// The pack and its index went to quarantine together. An index left
-	// behind describes a pack that is no longer there.
+	// The pack and its index went to quarantine together.
 	assert.NoFileExists(t, pack)
 	assert.NoFileExists(t, strings.TrimSuffix(pack, ".pack")+".idx")
 }
@@ -208,11 +197,7 @@ func TestRewritesAMalformedPackedRefs(t *testing.T) {
 	assert.Contains(t, r.Git("show-ref"), "refs/tags/v1", "a tag was lost")
 	assert.FileExists(t, filepath.Join(res.Quarantine, "packed-refs"))
 
-	// The repository is whole and git is happy, and the run still does not
-	// call itself Ok. One line named nothing this repository knows, and a
-	// line like that MIGHT have been a branch. Saying so is the whole point:
-	// a rewrite that quietly drops a line the owner cannot see is how a
-	// branch disappears without anybody noticing.
+	// The repository is whole and git is happy, and the run still does not call itself Ok. see is
 	assert.True(t, res.Clean, "git fsck disagrees")
 	assert.False(t, res.Ok(), "an unreadable line must be reported, not glossed over")
 	assert.Equal(t, []string{"this is not a reference line"}, res.PackedRefs.Dropped)
@@ -262,8 +247,7 @@ func TestAnIndexRebuiltFromHeadKeepsEveryMode(t *testing.T) {
 	require.Contains(t, wanted, "100755", "the test wrote no executable file")
 	require.Contains(t, wanted, "120000", "the test wrote no symlink")
 
-	// Header only: the entry count still says how many there were, and not one
-	// of them can be read, so HEAD supplies every path.
+	// Header only: the entry count still says how many there were, and not one of them can be read.
 	path := filepath.Join(r.GitDir(), "index")
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
@@ -300,9 +284,7 @@ func TestRepairsASHA256Repository(t *testing.T) {
 	before := record(t, r)
 	staged := r.Git("ls-files", "--stage")
 
-	// packed-refs and the index, but not the pack: damaging an object here
-	// would have no source to come back from, and this test is about the
-	// three container formats rather than about the recovery ladder.
+	// packed-refs and the index, but not the pack.
 	refs := filepath.Join(r.GitDir(), "packed-refs")
 	data, err := os.ReadFile(refs)
 	require.NoError(t, err)
@@ -381,8 +363,7 @@ func TestExtractionReplacesACorruptLooseCopy(t *testing.T) {
 	idx := strings.TrimSuffix(packFile(t, r), ".pack") + ".idx"
 	data, err := os.ReadFile(idx)
 	require.NoError(t, err)
-	// The last twenty bytes are the index's own checksum. Breaking it fails
-	// the pack without touching a single entry.
+	// The last twenty bytes are the index's own checksum.
 	data[len(data)-1] ^= 0xff
 	overwrite(t, idx, data)
 

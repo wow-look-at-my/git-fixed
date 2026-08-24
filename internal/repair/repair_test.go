@@ -1,11 +1,6 @@
 package repair_test
 
-// Every test here follows one shape: record the whole repository, damage it,
-// repair it, then require that the real git fsck is happy AND that every
-// commit, tree, blob and ref is byte-identical to the recording.
-//
-// The second half is the one that matters. A repair that deletes the broken
-// parts passes fsck, so a test that only checks fsck would call that a success.
+// Every test here follows one shape: record the whole repository, damage it, repair it.
 
 import (
 	"os"
@@ -28,8 +23,7 @@ type snapshot struct {
 	trees map[string]string
 	// refs is every reference and what it points at.
 	refs string
-	// blobs is the content of every blob, keyed by name, so a test can prove
-	// the bytes came back and not just the names.
+	// blobs is the content of every blob, keyed by name.
 	blobs map[string]string
 }
 
@@ -136,8 +130,7 @@ func TestRecoversHeadFromWorktreeAndIndex(t *testing.T) {
 	head := strings.TrimSpace(r.Git("rev-parse", "HEAD"))
 	tree := r.Git("ls-tree", "-r", "HEAD")
 
-	// Delete every loose blob and tree the tip needs, which is what a bad gc
-	// leaves behind.
+	// Delete every loose blob and tree the tip needs, which is what a bad gc leaves behind.
 	deleted := 0
 	for _, line := range strings.Split(r.Git("rev-list", "--objects", "HEAD"), "\n") {
 		name, _, _ := strings.Cut(strings.TrimSpace(line), " ")
@@ -195,8 +188,7 @@ func TestReportsWhatNoSourceHas(t *testing.T) {
 	r := history(t)
 	before := record(t, r)
 
-	// The older commit's tree has no local source: the index describes only
-	// the tip, and the worktree holds only the current content.
+	// The older commit's tree has no local source: the index describes only the tip.
 	old := strings.TrimSpace(r.Git("rev-parse", "HEAD~1^{tree}"))
 	require.NoError(t, os.Remove(r.ObjectPath(mustOID(t, r, old))))
 
@@ -258,8 +250,7 @@ func TestRecoversEachObjectOnce(t *testing.T) {
 	gittest.RequireGit(t)
 	r := history(t)
 
-	// A commit has no local source, so this exercises the path where the
-	// replacement can only come from somewhere else.
+	// A commit has no local source, so this exercises the path where the replacement can only come from somewhere.
 	blob := strings.TrimSpace(r.Git("rev-parse", "HEAD:a.txt"))
 	path := r.ObjectPath(mustOID(t, r, blob))
 	gittest.WriteOver(t, path, []byte("garbage"))
@@ -287,10 +278,7 @@ func TestDanglingIsNotDamage(t *testing.T) {
 	gittest.RequireGit(t)
 	r := history(t)
 
-	// An amended commit leaves its predecessor dangling, which is the most
-	// common way a repository ends up with one. The reflog still names it, so
-	// fsck only calls it dangling when the reflogs are not treated as roots --
-	// which is exactly the state that makes people reach for a prune.
+	// An amended commit leaves its predecessor dangling.
 	r.Write("a.txt", "amended\n")
 	r.Git("add", "-A")
 	r.Git("commit", "--amend", "-m", "two, amended")
@@ -322,9 +310,7 @@ func TestRebuildsADerivedFile(t *testing.T) {
 		t.Skipf("this git wrote no commit-graph: %v", err)
 	}
 
-	// Record before the damage. Every git command run against a repository
-	// with a corrupt graph prints a complaint of its own, which would end up
-	// in the recording.
+	// Record before the damage.
 	before := record(t, r)
 	gittest.WriteOver(t, graph, []byte("XXXX not a commit graph"))
 
@@ -389,16 +375,12 @@ func TestDamageThisToolDoesNotRepairIsStillReported(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, packs, "the test needs a pack to damage")
 
-	// Truncate the pack. Its objects are still named by the index, so this is
-	// damage, and it is not damage this tool knows how to undo.
+	// Truncate the pack.
 	data, err := os.ReadFile(packs[0])
 	require.NoError(t, err)
 	gittest.WriteOver(t, packs[0], data[:len(data)/2])
 
-	// This also pins termination. A corrupt pack entry shadows the good loose
-	// copy the repair writes, because the database answers from the pack, so
-	// the object reads as damaged however many times it is put back. The run
-	// must notice it is not getting anywhere instead of looping.
+	// This also pins termination.
 	res := fix(t, r)
 
 	assert.False(t, res.Ok(), "a repository git still refuses must not be reported as repaired")

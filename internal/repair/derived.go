@@ -89,8 +89,7 @@ func checkDerived(path string) (broken, ok bool) {
 	case strings.HasSuffix(base, ".bitmap"):
 		magic = derivedMagic[".bitmap"]
 	case base == "packs":
-		// objects/info/packs is a text list of pack names. It is broken when
-		// it names a pack that is not there.
+		// objects/info/packs is a text list of pack names.
 		return packsListStale(path, data), true
 	default:
 		// A commit-graph chain part is named by its hash, and the chain file

@@ -27,9 +27,7 @@ type Pack struct {
 	Algo    *gitobj.Algo
 	Num     uint32
 	IdxVer  int
-	// OpenErr is set when the index or the pack could not be mapped. The
-	// pack still appears in the list so the run reports it instead of
-	// checking one fewer pack in silence.
+	// OpenErr is set when the index or the pack could not be mapped.
 	OpenErr error
 
 	idxMap   mapping
@@ -190,8 +188,7 @@ func (p *Pack) Find(oid gitobj.OID) (uint32, bool) {
 	return 0, false
 }
 
-// TrailerOffset is the offset of the pack's own checksum, which is also the end
-// of the last object.
+// TrailerOffset is the offset of the pack's own checksum, which is also the end of the last object.
 func (p *Pack) TrailerOffset() int64 { return p.dataSize - int64(p.Algo.RawSize) }
 
 // Data exposes the mapped packfile.
@@ -244,9 +241,7 @@ func (p *Pack) ReadHeader(off int64) (ObjHeader, error) {
 	h.Size = size
 	switch h.Type {
 	case gitobj.TypeOfsDelta:
-		// git reports the position the base reference starts at, not the
-		// entry's, and it reports the same line whichever way the number
-		// is wrong. get_delta_base() leaves curpos here on every failure.
+		// git reports the position the base reference starts at, not the entry's.
 		basePos := pos
 		if c, err = p.byteAt(pos); err != nil {
 			return h, err
@@ -305,9 +300,7 @@ func (in *Inflater) Inflate(p *Pack, dataOff, size int64) ([]byte, error) {
 		return nil, fmt.Errorf("read past the end of %s", p.Path)
 	}
 	if !plausibleSize(size, int64(len(p.data))-dataOff) {
-		// size is the entry header's word for it, and this pack does not
-		// hold enough bytes to inflate to that however it is read.
-		// see inflatebound.go
+		// size is the entry header's word for it, and this pack does not hold enough bytes to inflate to that however.
 		return nil, fmt.Errorf("object at %d in %s claims a size no stream there could hold", dataOff, p.Path)
 	}
 	in.br.Reset(p.data[dataOff:])
@@ -335,12 +328,7 @@ func (in *Inflater) Inflate(p *Pack, dataOff, size int64) ([]byte, error) {
 	return out, nil
 }
 
-// InflateStream returns a reader over the entry's payload, for an object too
-// large to hold in memory.
-// InflateMessage is the complaint git's decompressor prints when an entry will
-// not decode, before its caller adds one of its own. git gives the read one
-// byte more than the index promised, so that a payload longer than that is
-// noticed rather than cut short.
+// InflateStream returns a reader over the entry's payload, for an object too large to hold in memory.
 func (p *Pack) InflateMessage(dataOff, size int64) string {
 	if dataOff < 0 || dataOff > int64(len(p.data)) {
 		return ""

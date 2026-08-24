@@ -1,10 +1,6 @@
 package gitpath
 
-// The two-byte filter in front of every check here is an assertion about all
-// four filesystems at once: that none of them can put a period, a tilde, or an
-// 8.3 short name's first two letters at the front of a name that does not have
-// them. It is only worth having if it never rules out a name the checks
-// themselves would accept, and nothing about the checks says so out loud.
+// The two-byte filter in front of every check here is an assertion about all four filesystems at once.
 
 import (
 	"testing"
@@ -26,8 +22,7 @@ func reaches(name []byte, n needle) bool {
 		isExt4DotGeneric(name, n) || isZFSDotGeneric(name, n)
 }
 
-// everyNeedle is each control name, so a sweep asks about both 8.3 prefixes
-// that begin differently as well as ".git" itself.
+// everyNeedle is each control name, so a sweep covers the 8.3 prefixes that begin differently as well as the rest.
 var everyNeedle = []needle{dotGit, dotGitmodules, dotGitignore, dotGitattrs, dotMailmap}
 
 // TestTheFilterRulesOutNothingTheChecksAccept sweeps both bytes the filter

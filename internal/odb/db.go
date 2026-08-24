@@ -31,8 +31,7 @@ type DB struct {
 
 	inflaters sync.Pool
 
-	// bad lists packed objects that would not decode, the way a packed_git
-	// keeps its own bad-object list.
+	// bad lists packed objects that would not decode, the way a packed_git keeps its own bad-object list.
 	badMu sync.Mutex
 	bad   set.Set[gitobj.OID]
 
@@ -97,10 +96,7 @@ func (d *Dir) loadPacks(algo *gitobj.Algo) error {
 	}
 	var names []string
 	for _, e := range entries {
-		// Any .idx here is a pack index. git's prepare_pack() asks for
-		// nothing but the suffix, and a pack whose name this skipped was
-		// a pack the run could not see at all: its objects read as
-		// missing and its damage read as a clean repository.
+		// Any .idx here is a pack index. see at
 		if strings.HasSuffix(e.Name(), ".idx") {
 			names = append(names, e.Name())
 		}
@@ -225,8 +221,7 @@ type Location struct {
 // Find locates an object. git looks in packs before loose files, and so do we.
 func (db *DB) Find(oid gitobj.OID) (Location, bool) {
 	if !oid.Valid() {
-		// A ref file with garbage in it yields no object name at all,
-		// and nothing on disk can be named by one.
+		// A ref file with garbage in it yields no object name at all, and nothing on disk can be named by one.
 		return Location{}, false
 	}
 	for _, p := range db.packs {
@@ -278,9 +273,7 @@ func (db *DB) Read(oid gitobj.OID) (gitobj.Type, []byte, error) {
 	off := loc.Pack.OffsetAt(loc.PackIdx)
 	typ, data, err := db.readPacked(loc.Pack, off, in, 0)
 	if err != nil {
-		// A read by object name dies on a packed object that will not
-		// decode. The pack check is the one reader that does not: it
-		// reports the entry and carries on to the next one.
+		// A read by object name dies on a packed object that will not decode.
 		db.markBad(oid)
 		return gitobj.TypeNone, nil, corruptPacked(loc.Pack, oid, off)
 	}
@@ -295,12 +288,10 @@ func (db *DB) markBad(oid gitobj.OID) bool {
 	return !db.bad.Add(oid)
 }
 
-// MarkBadPacked puts an object on the bad list without reading it, for a caller
-// that found the problem some other way, such as a full pack check.
+// MarkBadPacked puts an object on the bad list without reading it.
 func (db *DB) MarkBadPacked(oid gitobj.OID) { db.markBad(oid) }
 
-// maxDeltaChain bounds delta recursion. git's own limit for writing is 50; a
-// pack that exceeds this by a wide margin is corrupt or hostile.
+// maxDeltaChain bounds delta recursion.
 const maxDeltaChain = 4096
 
 // readBase reads the object a delta was built from, through the cache. Only a
@@ -425,8 +416,7 @@ func (db *DB) TypeInPack(oid gitobj.OID) (gitobj.Type, *Pack, bool) {
 		case gitobj.TypeRefDelta:
 			i, ok := p.Find(h.BaseOID)
 			if !ok {
-				// The base is in another pack, or nowhere. Either way
-				// this is not the cheap case.
+				// The base is in another pack, or nowhere.
 				return gitobj.TypeNone, nil, false
 			}
 			off = p.OffsetAt(i)
@@ -452,14 +442,10 @@ func (db *DB) HasPacked(oid gitobj.OID) bool {
 	return false
 }
 
-// FatalError is a condition git reports with "fatal:" and exit status 128. A
-// packed object that will not decode is the one that matters here: git dies
-// rather than carry on with a repository it cannot read.
+// FatalError is a condition git reports with "fatal:" and exit status 128.
 type FatalError struct {
 	Msg string
-	// Inflate is what git's decompressor said on the way, which it prints
-	// as its own line before the caller dies. It is empty when the read
-	// failed for a reason zlib had no opinion about.
+	// Inflate is what git's decompressor said on the way, which it prints as its own line before the caller dies.
 	Inflate string
 }
 

@@ -1,14 +1,12 @@
 package zlibmsg
 
-// code is one canonical Huffman alphabet, held the way zlib's own reference
-// decoder holds it: a count of the codes of each length, and the symbols in
-// order of length and then of symbol.
+// code is one canonical Huffman alphabet, held the way zlib's own reference decoder holds it: a count of
+// the codes of each length, then the symbols in order.
 type code struct {
 	counts [maxBits + 1]int
 	// symbols lists every symbol that has a code, shortest code first.
 	symbols []int
-	// empty marks an alphabet that codes nothing. zlib builds one without
-	// complaint and refuses the first code read from it.
+	// empty marks an alphabet that codes nothing.
 	empty bool
 }
 
@@ -45,8 +43,7 @@ func build(lengths []int, codeLengths bool) (*code, bool) {
 		c.empty = true
 		return c, true
 	}
-	// Kraft's rule: each length halves what is left of the code space, and
-	// a set that claims more of it than exists cannot be decoded.
+	// Kraft's rule: each length halves what is left of the code space.
 	left := 1
 	for l := 1; l <= maxBits; l++ {
 		left <<= 1
@@ -55,9 +52,7 @@ func build(lengths []int, codeLengths bool) (*code, bool) {
 			return nil, false
 		}
 	}
-	// A set that leaves code space over is incomplete. zlib allows that
-	// for a length or distance alphabet of one single-bit code, and for
-	// nothing else.
+	// A set that leaves code space over is incomplete.
 	if left > 0 && (codeLengths || longest != 1) {
 		return nil, false
 	}
@@ -115,8 +110,7 @@ func fixedLengths() tables {
 			lengths[sym] = 8
 		}
 	}
-	// The fixed distance alphabet holds 32 codes, not 30: the last two name
-	// no distance, and reading one of them is what makes the block invalid.
+	// The fixed distance alphabet holds 32 codes, not 30: the last two name no distance.
 	distances := make([]int, 32)
 	for sym := range distances {
 		distances[sym] = 5
@@ -129,8 +123,7 @@ func fixedLengths() tables {
 	return tables{lengths: l, distances: d}
 }
 
-// codeLenOrder is the order DEFLATE writes the code-length alphabet's own
-// lengths in, which puts the ones most likely to be zero last.
+// codeLenOrder is the order DEFLATE writes the code-length alphabet's own lengths in.
 var codeLenOrder = [19]int{16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15}
 
 // lengthBase and lengthExtra turn a length symbol into a match length.

@@ -27,8 +27,7 @@ func (r *run) checkObjectDirs() {
 	if !r.o.CheckFull {
 		return
 	}
-	// One meter spans every pack, as git's does: its total is the whole
-	// repository's packed object count, not this pack's.
+	// One meter spans every pack, as git's does: its total is the whole repository's packed object count.
 	packs := r.db.Packs()
 	total := int64(0)
 	for _, p := range packs {
@@ -53,9 +52,7 @@ func (r *run) checkLooseDir(group int, path, shown string) {
 		oid   gitobj.OID
 		path  string
 		shown string
-		// sub is the fanout directory this object came from, which is what
-		// the meter counts: git measures this phase in directories, so a
-		// repository with a handful of loose objects is done at once.
+		// sub is the fanout directory this object came from, which is what the meter counts.
 		sub int
 	}
 	var (
@@ -155,10 +152,7 @@ func (r *run) checkPack(group int, p *odb.Pack, m *progress.Meter) {
 		Progress:         m.Step,
 		Emit: func(oid gitobj.OID, text string) {
 			if oid.Valid() && strings.HasPrefix(text, "cannot unpack ") {
-				// The pack check reports an entry that will not
-				// decode and carries on to the next one. It puts
-				// the object on the bad list, and whoever reads
-				// it by name afterwards dies instead.
+				// The pack check reports an entry that will not decode and carries on to the next one.
 				r.db.MarkBadPacked(oid)
 			}
 			r.rep.Errf(key(oid, 0), "error: %s", text)
@@ -194,8 +188,7 @@ func (r *run) finishDeferredBlobs() {
 		for _, oid := range oids {
 			typ, data, err := r.readObject(oid)
 			if err != nil {
-				// A tree named this blob, so something wants it and
-				// the database will not produce it.
+				// A tree named this blob, so something wants it and the database will not produce it.
 				r.noteDamaged(oid, false)
 				if r.fsck.ReportMissingBlob(key, oid, kind) != 0 {
 					r.fail(ErrorObject)

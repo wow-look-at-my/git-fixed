@@ -20,23 +20,8 @@ const (
 )
 
 // objEntry is one object the run knows about, whether or not it exists.
-//
-// There is one of these per object, so a field here costs megabytes on a large
-// repository. It is 56 bytes and holds no pointer, so a hundred million of them
-// cost the collector nothing per cycle. A slice header here was 16 of those
-// bytes and put a pointer in every entry, which is seven gigabytes for the
-// collector to walk on a repository of that size, on every cycle, near a memory
-// limit that makes those cycles constant.
-// The two edge fields are an edgeSpan, written out flat: the 33 bytes of an
-// object name leave a four-byte hole after it, and edgeLen sits in the hole.
 type objEntry struct {
-	// edgeRef and edgeLen name what the object pass found this object points
-	// at, as a place in the run's edge arena. Keeping them saves the
-	// connectivity walk from inflating and parsing every object a second
-	// time. git keeps the whole parsed object for the same reason; an edge is
-	// a fraction of the memory.
-	//
-	// see docs/architecture.md
+	// edgeRef and edgeLen name what the object pass found this object points at. see docs/architecture.md
 	edgeRef uint64
 
 	OID     gitobj.OID
@@ -45,26 +30,13 @@ type objEntry struct {
 	flags   atomic.Uint32
 }
 
-// edgeSpan names a run of edges in the arena: the slab in the high half of ref,
-// the first edge's place in that slab in the low half, and how many there are.
+// edgeSpan names a run of edges in the arena: the slab in the high half of ref.
 type edgeSpan struct {
 	ref uint64
 	n   uint32
 }
 
-// edge is one resolved reference, in the compact form the connectivity walk
-// needs.
-//
-// It names its target by index into the table's slabs, not by pointer, and it
-// holds no string, so an edge contains no pointer at all. There is one edge per
-// tree entry, which is tens of millions of them on a large repository, and a
-// pointer in this structure puts every one of them under the collector on every
-// cycle.
-//
-// The target's index sits in the low 32 bits. Above it are the bit that says
-// the reference resolved, the bit that marks a tag's target, and the type the
-// reference implies. That type is only ever commit, tree, blob or tag, so four
-// bits hold it.
+// edge is one resolved reference, in the compact form the connectivity walk needs.
 type edge uint64
 
 const (
@@ -89,9 +61,7 @@ func makeEdge(target uint32, resolved bool, typ gitobj.Type, viaTag bool) edge {
 // index is the target's place in the table.
 func (e edge) index() uint32 { return uint32(e) }
 
-// ok reports whether the reference resolved. The table hands back no entry when
-// the target's type contradicts what the reference implies, which git reports
-// as a broken link.
+// ok reports whether the reference resolved.
 func (e edge) ok() bool { return e&edgeResolved != 0 }
 
 // viaTag marks a tag's target, which git accepts at any type.
@@ -100,11 +70,7 @@ func (e edge) viaTag() bool { return e&edgeViaTag != 0 }
 // typ is the type the reference implies.
 func (e edge) typ() gitobj.Type { return gitobj.Type((e & edgeTypeMask) >> edgeTypeShift) }
 
-// SetEdges records what the object pass found. Only the goroutine that won the
-// flagSeen race calls this.
-//
-// The span is written before the flag, and Edges reads the flag first, so a
-// reader that sees the flag sees the span the writer put there.
+// SetEdges records what the object pass found.
 func (e *objEntry) SetEdges(span edgeSpan) {
 	e.edgeRef, e.edgeLen = span.ref, span.n
 	e.SetFlag(flagWalked)
@@ -119,8 +85,7 @@ func (t *objTable) Edges(e *objEntry) ([]edge, bool) {
 	return t.arena.at(edgeSpan{ref: e.edgeRef, n: e.edgeLen}), true
 }
 
-// Type returns the object's type, which may be an expectation recorded by
-// whatever referenced it rather than something read from the database.
+// Type returns the object's type, which may be what referenced it expects rather than what the database holds.
 func (e *objEntry) Type() gitobj.Type { return gitobj.Type(e.typ.Load()) }
 
 // SetType records a type, keeping the first one seen.
@@ -152,9 +117,7 @@ func (e *objEntry) ClearFlags(f uint32) {
 	}
 }
 
-// objSlabSize is how many entries one allocation holds. A repository has
-// millions of objects, and one allocation each was both memory the run did not
-// need and, through the collector, a good part of the time it took.
+// objSlabSize is how many entries one allocation holds.
 const (
 	objSlabBits = 12
 	objSlabSize = 1 << objSlabBits
@@ -164,43 +127,27 @@ type objSlab = [objSlabSize]objEntry
 
 // objTable holds every object the run has heard of.
 //
-// It is not a Go map. An object name is itself a hash, spread uniformly by
-// construction, so a table that takes four of its bytes as the hash needs no
-// hash function at all: with a map, Lookup was a quarter of the whole run on a
-// million-object repository. Entries come from slabs so that a million objects
-// cost a few hundred allocations, and each one has an index an edge can hold
-// without a pointer.
+// It is not a Go map. An object name is itself a hash, so four of its bytes are the hash and no hash
+// function is needed: with a map, Lookup was a quarter of a million-object run. Entries come from slabs.
 //
 // see docs/architecture.md
 type objTable struct {
 	shards []objShard
 	mask   uint32
-	// arena holds every edge the object pass records, so an entry can name
-	// its own without holding a pointer to them.
+	// arena holds every edge the object pass records.
 	arena edgeArena
-	// created counts objects the way git's object hash does, which is what
-	// its verbose "Checking connectivity (N objects)" line reports. It is
-	// also where the next entry's index comes from, so indices are dense
-	// and the phases that visit every object can just count.
+	// created counts objects the way git's object hash does.
 	created atomic.Int64
 
 	// start is how many slots a shard's table is made with. see newObjTable.
 	start int
 
-	// slabs is replaced rather than written in place, so a reader holding an
-	// index follows it without a lock.
+	// slabs is replaced rather than written in place, so a reader holding an index follows it without a lock.
 	slabs  atomic.Pointer[[]*objSlab]
 	slabMu sync.Mutex
 }
 
-// slot is one place in a shard's open-addressed table. It holds four bytes of
-// the name, which decide whether a probe is worth following into an entry, and
-// the entry's index plus one, so the zero value is an empty slot. Nothing here
-// is a pointer, so the table costs the collector nothing either.
-//
-// Eight bytes means eight slots to a cache line and sixteen bytes an object at
-// the load factor below, which on a hundred-million-object repository is the
-// difference between one and a half gigabytes and three.
+// slot is one place in a shard's open-addressed table.
 type slot struct {
 	key uint32
 	idx uint32
@@ -211,24 +158,14 @@ type objShard struct {
 	slots []slot
 	mask  uint32
 	used  int
-	// pad keeps one shard's lock off the cache line of the next one. Two
-	// threads on neighbouring shards otherwise fight over a cache line while
-	// holding different locks, which looks like contention that is not there.
+	// pad keeps one shard's lock off the cache line of the next one.
 	_ [16]byte
 }
 
-// objShardMin is the smallest a shard's table is made. There is one per shard
-// and tens of thousands of shards on a large machine, so a repository with a
-// handful of objects must not pay for all of them.
+// objShardMin is the smallest a shard's table is made.
 const objShardMin = 8
 
 // shardCount picks how finely to split the table.
-//
-// The table is written once per tree entry, which is millions of times in a
-// large repository, so two workers landing on one shard is a cost that scales
-// with the core count. A fixed 256 was fine on four cores and poor on ninety
-// six, where a third of accesses would collide. Sixty four shards per core
-// keeps that near one percent wherever it runs.
 func shardCount() int {
 	n := 64 * runtime.GOMAXPROCS(0)
 	size := 256
@@ -254,29 +191,17 @@ func newObjTable(expect int64) *objTable {
 	for want := 2 * (expect/int64(n) + 1); int64(t.start) < want && t.start < 1<<24; {
 		t.start <<= 1
 	}
-	// The slot tables themselves are made on first write. A big repository
-	// fills every shard, and a small one should not pay to build tens of
-	// thousands of tables it will never use.
+	// The slot tables themselves are made on first write.
 	return t
 }
 
-// shard picks an object's shard from the first two bytes of its name. One byte
-// only distinguishes 256 of them, which would waste every shard past that.
+// shard picks an object's shard from the first two bytes of its name.
 func (t *objTable) shard(oid gitobj.OID) *objShard {
 	h := uint32(oid.H[0])<<8 | uint32(oid.H[1])
 	return &t.shards[h&t.mask]
 }
 
-// slotKey is the hash: where a name starts probing, and what a probe compares
-// before it follows a slot into an entry.
-//
-// An object name is already a uniform hash, so this takes four of its bytes as
-// they are rather than running a hash function over them. It does not take the
-// first two, which chose the shard: reusing those here would leave most of a
-// shard's table unreachable. The probe position is the low bits of the key, so
-// the bits above the table's size are what a comparison against the slot rules
-// out, and a shard has to be a hundred thousand slots wide before that leaves
-// fewer than a thousand names to one slot's worth of doubt.
+// slotKey is the hash: where a name starts probing.
 func slotKey(oid gitobj.OID) uint32 { return binary.LittleEndian.Uint32(oid.H[4:8]) }
 
 // At returns the object at an index. Indices run from zero to Len.
@@ -390,8 +315,7 @@ func reconcile(e *objEntry, idx uint32, want gitobj.Type) (*objEntry, uint32, bo
 		return e, idx, true
 	}
 	if cur != want {
-		// git's object_as_type() returns NULL here, and its caller
-		// treats that as a broken link.
+		// git's object_as_type() returns NULL here, and its caller treats that as a broken link.
 		return nil, 0, false
 	}
 	return e, idx, true
@@ -418,9 +342,7 @@ func (sh *objShard) grow() {
 // Len is the number of objects the run knows about.
 func (t *objTable) Len() int64 { return t.created.Load() }
 
-// HashSlots mirrors the size of git's internal object hash, which is the number
-// its verbose connectivity line prints. The table starts at 32 entries and
-// doubles once it is half full.
+// HashSlots mirrors the size of git's internal object hash.
 func (t *objTable) HashSlots() int64 {
 	size := int64(0)
 	for i := int64(0); i < t.created.Load(); i++ {

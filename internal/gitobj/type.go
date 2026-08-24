@@ -2,8 +2,7 @@ package gitobj
 
 import "fmt"
 
-// Type mirrors git's enum object_type, including the two delta encodings that
-// only ever appear inside a packfile.
+// Type mirrors git's enum object_type, including the two delta encodings that live only inside a packfile.
 type Type int
 
 // The object types, with the same numeric values git uses on the wire.

@@ -4,9 +4,7 @@ package fsckcmd
 
 import "github.com/wow-look-at-my/git-fixed/internal/progress"
 
-// meterOn starts a meter that draws immediately, or returns nil when nobody
-// asked for progress. A nil meter is a working meter that draws nothing, so no
-// caller has to ask.
+// meterOn starts a meter that draws immediately, or returns nil when nobody asked for progress.
 func (r *run) meterOn(title string, total int64) *progress.Meter {
 	if !r.o.ShowProgress {
 		return nil

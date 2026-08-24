@@ -23,8 +23,7 @@ type BadPack struct {
 	Idx  string
 	// Why is the first complaint the verification made.
 	Why string
-	// Objects is how many the index says the pack holds, which is what the
-	// extraction below has to account for.
+	// Objects is how many the index says the pack holds, which is what the extraction below has to account for.
 	Objects int
 }
 
@@ -36,14 +35,11 @@ type RescuedPack struct {
 	Extracted int
 	// Present is how many were already outside the pack and needed no copy.
 	Present int
-	// Lost is how many entries the pack would not decode. Each one is left
-	// for the recovery ladder, and reported if no source has it.
+	// Lost is how many entries the pack would not decode.
 	Lost int
 }
 
-// companionSuffixes are the files that belong to one pack. All of them travel
-// with it: an index or a reverse index left behind describes a pack that is no
-// longer there, which is a second fault to repair.
+// companionSuffixes are the files that belong to one pack.
 var companionSuffixes = []string{".pack", ".idx", ".rev", ".bitmap", ".keep", ".promisor", ".mtimes"}
 
 // scanPacks verifies the packs nobody has verified yet, and records the ones
@@ -94,10 +90,7 @@ func verifyPack(p *odb.Pack, m *progress.Meter) (BadPack, bool) {
 			}
 		},
 		Progress: m.Step,
-		// Every core, as the fsck above uses. This reads and writes
-		// nothing, so there is no ordering to keep: rescuePack is the one
-		// that needs a single worker, because it writes each object out.
-		// Verify calls Emit under its own lock.
+		// Every core, as the fsck above uses.
 	})
 	if ok && first == "" {
 		return BadPack{}, false
@@ -145,13 +138,9 @@ func rescuePack(repo *gitrepo.Repo, q *Quarantine, bad BadPack) (RescuedPack, er
 				out.Present++
 			}
 		},
-		// One worker, so quarantining a corrupt loose copy and writing over
-		// it stay ordered without a lock. A repair is not a hot path.
+		// One worker, so quarantining a corrupt loose copy and writing over it stay ordered without a lock.
 		Workers: 1,
-		// Zero, so every object arrives with its content. Above the
-		// threshold Verify hashes a large blob by streaming and hands the
-		// callback a nil payload, which is enough to check a pack and not
-		// enough to rewrite one.
+		// Zero, so every object arrives with its content.
 		BigFileThreshold: 0,
 	})
 	if writeErr != nil {
@@ -159,10 +148,7 @@ func rescuePack(repo *gitrepo.Repo, q *Quarantine, bad BadPack) (RescuedPack, er
 	}
 	out.Lost = int(p.Num) - out.Extracted - out.Present
 	if out.Extracted == 0 && out.Present == 0 && p.Num > 0 {
-		// Nothing came out. Either the index will not map, or the pack's own
-		// header stopped the read before the first entry. Displacing it now
-		// would remove every object it holds from a repository that has no
-		// other copy of them, which is the repair losing the data itself.
+		// Nothing came out.
 		return out, fmt.Errorf("%s holds %d object(s) and yielded none of them: %s",
 			out.Pack, p.Num, bad.Why)
 	}
@@ -186,9 +172,7 @@ func keepLoose(repo *gitrepo.Repo, q *Quarantine, oid gitobj.OID, typ gitobj.Typ
 	name := oid.String()
 	path := filepath.Join(repo.ObjectsDir, name[:2], name[2:])
 	if _, err := os.Stat(path); err == nil {
-		// ReadLoose answers from this one file, never from a pack, so it is
-		// the only check here that says anything about the copy that will be
-		// left behind.
+		// ReadLoose answers from this one file, never from a pack.
 		res := odb.ReadLoose(path, path, oid, repo.Algo, 0)
 		if !res.Failed {
 			return false, nil

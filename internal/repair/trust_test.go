@@ -36,8 +36,7 @@ func TestOnlyAnUnchangedPackIsTakenOnTrust(t *testing.T) {
 	gone := write("gone.pack", "about to vanish")
 
 	require.NoError(t, os.WriteFile(grown.Path, []byte("longer than before"), 0o644))
-	// The same number of bytes, written a moment later. A size on its own
-	// would call this the file it read.
+	// The same number of bytes, written a moment later.
 	touched := time.Now().Add(time.Second)
 	require.NoError(t, os.WriteFile(rewritten.Path, []byte("SAME LENGTH"), 0o644))
 	require.NoError(t, os.Chtimes(rewritten.Path, touched, touched))

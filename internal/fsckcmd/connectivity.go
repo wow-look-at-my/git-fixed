@@ -22,9 +22,7 @@ func (r *run) checkConnectivity() {
 	}
 	n := int(r.objs.Len())
 	if r.o.Verbose {
-		// The verbose line names each object as it is checked, and that
-		// order is part of what the reader is watching, so this stays on one
-		// goroutine when it is asked for.
+		// The verbose line names each object as it is checked, and that order is part of what the reader is watching.
 		for i := range n {
 			e := r.objs.At(uint32(i))
 			r.rep.Verbosef("Checking %s", r.fsck.Describe(e.OID))
@@ -32,9 +30,7 @@ func (r *run) checkConnectivity() {
 		}
 		return
 	}
-	// Every object in the repository passes through here. The checks touch
-	// only their own entry and the reporter, both of which are safe to share,
-	// so this runs across the workers like the phases before it.
+	// Every object in the repository passes through here.
 	r.parallel(n, func(i int) { r.checkOneObject(r.objs.At(uint32(i))) })
 }
 
@@ -57,8 +53,7 @@ func (r *run) traverseReachable() {
 	if len(stack) == 0 {
 		return
 	}
-	// git counts the objects it walks here, with no total to measure them
-	// against, and stays quiet for a second first.
+	// git counts the objects it walks here, with no total to measure them against.
 	m := r.meterDelayed("Checking connectivity", 0)
 	defer m.Finish()
 	workers := r.o.Workers
@@ -77,22 +72,15 @@ func (r *run) traverseReachable() {
 	var mu sync.Mutex
 	cond := sync.NewCond(&mu)
 	// active counts the workers holding objects that could still yield more.
-	// A worker that finds the stack empty must wait while any of them can.
 	active := 0
 	var wg sync.WaitGroup
 	for range workers {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			// Each worker keeps its own stack and only visits the shared one
-			// when it runs dry or has a surplus. Taking the shared lock once
-			// per object made it the limit on how many cores the walk could
-			// use: with a worker per core, every core pays for that one lock
-			// twice per object. A batch divides that traffic by its size.
+			// Each worker keeps its own stack and only visits the shared one when it runs dry or has a surplus.
 			local := make([]*objEntry, 0, walkBatch*2)
-			// holding says this worker is counted in active. It stays counted
-			// for as long as it has local work, because that work can still
-			// produce more for everyone else.
+			// holding says this worker is counted in active.
 			holding := false
 			for {
 				if len(local) == 0 {
@@ -142,8 +130,6 @@ func (r *run) traverseReachable() {
 }
 
 // walkBatch is how many objects a worker claims from the shared stack at once.
-// Large enough that the lock is not the limit on many cores, small enough that
-// a shallow history still spreads across them.
 const walkBatch = 64
 
 // traverseOne reads one object and marks everything it points at.
@@ -155,9 +141,7 @@ func (r *run) traverseOne(e *objEntry) []*objEntry {
 	}
 	key := sortKey{phase: phaseConnectivity, oid: e.OID}
 	if edges, cached := r.objs.Edges(e); cached {
-		// Nothing to print alongside them: an object only has edges
-		// recorded once the object pass has read it, and the object pass
-		// rejects one whose links will not parse before it gets that far.
+		// Nothing to print alongside them: an object only has edges recorded once the object pass has read it.
 		var out []*objEntry
 		for _, ed := range edges {
 			var target *objEntry
@@ -196,8 +180,7 @@ func (r *run) markLinkInto(key sortKey, parent *objEntry, typ gitobj.Type, viaTa
 			r.printableType(parent.OID, parent.Type()), r.fsck.Describe(parent.OID))
 		r.rep.Outf(key, "broken link from %7s %s", linkTypeName(typ), "unknown")
 		r.fail(ErrorReachable)
-		// The link was refused on the type it implies, so the fault is the
-		// pair and not one object. Nothing here to hand anybody a name.
+		// The link was refused on the type it implies, so the fault is the pair and not one object.
 		r.notePartialDamage()
 		return sink
 	}
@@ -271,9 +254,7 @@ func (r *run) checkReachableObject(e *objEntry) {
 	if e.Flags()&flagHasObj != 0 {
 		return
 	}
-	// Being in a pack is proof enough for git, which does not re-open the
-	// pack here. A loose file that exists but does not decode still counts
-	// as missing, and the object pass has already said why.
+	// Being in a pack is proof enough for git, which does not re-open the pack here.
 	if r.db.HasPacked(e.OID) {
 		return
 	}
@@ -287,8 +268,7 @@ func (r *run) checkReachableObject(e *objEntry) {
 // of unreachable history by default and the whole set only when asked.
 func (r *run) checkUnreachableObject(e *objEntry) {
 	if e.Flags()&flagHasObj == 0 {
-		// Missing and unreachable at once is not worth a word: nothing
-		// can reach it, so nothing misses it.
+		// Missing and unreachable at once is not worth a word: nothing can reach it, so nothing misses it.
 		return
 	}
 	key := sortKey{phase: phaseConnectivity, group: 1, oid: e.OID}

@@ -183,8 +183,7 @@ func checkSubmoduleURL(u string) error {
 		return errBadSubmodule
 	}
 	if startsWithDotSlash(u) || startsWithDotDotSlash(u) || strings.HasPrefix(u, "git://") {
-		// This can be appended to an http URL and then url-decoded, so
-		// it must not smuggle a newline through.
+		// This can be appended to an http URL and then url-decoded, so it must not smuggle a newline through.
 		decoded, err := url.QueryUnescape(u)
 		if err != nil {
 			decoded = u

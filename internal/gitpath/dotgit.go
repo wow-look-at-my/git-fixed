@@ -43,9 +43,7 @@ func IsDotGitattributes(name []byte) bool { return matches(name, dotGitattrs) }
 // IsDotMailmap reports whether name reaches ".mailmap".
 func IsDotMailmap(name []byte) bool { return matches(name, dotMailmap) }
 
-// IsNTFSDotGit reports only the NTFS spelling of ".git". The tree check applies
-// it on its own to each segment after a backslash, because NTFS reads a
-// backslash as a directory separator and git does not.
+// IsNTFSDotGit reports only the NTFS spelling of ".git".
 func IsNTFSDotGit(name []byte) bool { return couldReach(name) && isNTFSDotGit(name) }
 
 // IsNTFSDotGitmodules reports only the NTFS spelling of ".gitmodules".
@@ -54,20 +52,6 @@ func IsNTFSDotGitmodules(name []byte) bool {
 }
 
 // couldReach rules a name out on its first two bytes.
-//
-// Every spelling below starts with a period, with a tilde, with the first two
-// letters of an 8.3 short name, or with a code point HFS+ ignores -- and every
-// ignored code point is outside ASCII. Nothing any of the four filesystems do
-// can put one of those at the front of a name that does not have it: a case
-// fold and a normalization both leave an ASCII byte alone, and neither deletes
-// one.
-//
-// Two bytes rather than one because "g" and "m" begin a great many ordinary
-// names, and only "gi" and "ma" begin one of these.
-//
-// This stands in for six checks, and it runs once per tree entry per control
-// name, which is five times for every entry in the repository. The checks it
-// replaces were a twelfth of the whole run.
 func couldReach(name []byte) bool {
 	if len(name) == 0 {
 		return false
@@ -104,10 +88,7 @@ func matches(name []byte, n needle) bool {
 		return true
 	}
 	if isASCII(name) {
-		// Normalization leaves an ASCII name alone, and ext4's case fold
-		// over ASCII is the fold the HFS check above already applied. So
-		// neither filesystem reaches anything new, and an ordinary
-		// repository takes this path for every entry.
+		// Normalization leaves an ASCII name alone, and ext4's case fold over ASCII is the fold the HFS check above.
 		return false
 	}
 	return isExt4DotGeneric(name, n) || isZFSDotGeneric(name, n)
@@ -277,10 +258,7 @@ func onlySpacesAndPeriods(name []byte, i int) bool {
 	return true
 }
 
-// isExt4DotGeneric reports whether an ext4 directory with the casefold feature
-// would resolve name to the control name. ext4 compares names under Unicode
-// case folding, which reaches past the ASCII folding the NTFS check does: the
-// long s U+017F folds to "s", so ".gitmoduleſ" opens .gitmodules there.
+// isExt4DotGeneric reports whether a casefold ext4 directory resolves name to the control name.
 func isExt4DotGeneric(name []byte, n needle) bool {
 	if !utf8.Valid(name) {
 		return false
@@ -288,11 +266,7 @@ func isExt4DotGeneric(name []byte, n needle) bool {
 	return bytes.EqualFold(name, dotted(n))
 }
 
-// isZFSDotGeneric reports whether a ZFS dataset that normalizes names would
-// resolve name to the control name. Comparing under NFKD covers every
-// normalization= setting at once, because two names equal under formC, formD,
-// or formKC are equal under formKD too. Folding case on top covers
-// casesensitivity=insensitive and =mixed.
+// isZFSDotGeneric reports whether a ZFS dataset that normalizes names would resolve name to the control name.
 func isZFSDotGeneric(name []byte, n needle) bool {
 	if !utf8.Valid(name) {
 		return false

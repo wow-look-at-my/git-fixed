@@ -1,8 +1,6 @@
 package fsck
 
-// Code in this file mirrors git's FOREACH_FSCK_MSG_ID list in fsck.h. The
-// spellings are load-bearing: the camel-cased form is printed in every
-// message, and the lower-cased form is the fsck.<msgid> configuration key.
+// Code in this file mirrors git's FOREACH_FSCK_MSG_ID list in fsck.h.
 
 // MsgID identifies one fsck check.
 type MsgID int
@@ -67,8 +65,7 @@ const (
 	MsgBadTagName
 	MsgMissingTaggerEntry
 	MsgExtraHeaderEntry
-	// The checks on the reference database itself, which git runs as
-	// "git refs verify".
+	// The checks on the reference database itself, which git runs as "git refs verify".
 	MsgBadHeadTarget
 	MsgBadPackedRefEntry
 	MsgBadPackedRefHeader

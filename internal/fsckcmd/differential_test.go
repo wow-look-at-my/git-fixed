@@ -365,13 +365,7 @@ func runWith(o *fsckcmd.Options) gittest.Result {
 	}
 }
 
-// TestIndexWithACacheTree covers the index a real checkout has. Most
-// repositories here never grow one: gittest writes objects straight into the
-// database and never runs git add, so nothing exercised the cache tree.
-//
-// --connectivity-only is the mode that was wrong. It reads no object, so every
-// cache-tree entry had an unknown type and reported "non-tree in cache-tree",
-// while git parses the object at that point and says nothing.
+// TestIndexWithACacheTree covers the index a real checkout has.
 func TestIndexWithACacheTree(t *testing.T) {
 	gittest.RequireGit(t)
 	r := gittest.New(t)

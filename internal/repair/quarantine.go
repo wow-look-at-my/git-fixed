@@ -16,9 +16,7 @@ import (
 	"sync"
 )
 
-// quarantineRoot is where a run's displaced files live, under the git
-// directory so they travel with the repository and are never on a path git
-// itself reads.
+// quarantineRoot is where a run's displaced files live.
 const quarantineRoot = "git-fixed/quarantine"
 
 // manifestName holds one run's record, written next to the files it displaced.
@@ -30,8 +28,7 @@ type Displaced struct {
 	From string `json:"from"`
 	// To is where it is now, relative to the run's quarantine directory.
 	To string `json:"to"`
-	// Why says which repair displaced it, for the report and for anyone
-	// reading the manifest later.
+	// Why says which repair displaced it, for the report and for anyone reading the manifest later.
 	Why string `json:"why"`
 }
 
@@ -44,11 +41,6 @@ type Manifest struct {
 }
 
 // Quarantine holds files a run has taken out of the repository.
-//
-// Nothing in this package calls os.Remove on a repository file. Removal means
-// Take, which moves the file here and records it. A run is therefore undoable
-// in full, which is what lets repair act without asking permission for each
-// step.
 type Quarantine struct {
 	gitDir string
 	run    string
@@ -58,9 +50,7 @@ type Quarantine struct {
 	made bool
 }
 
-// NewQuarantine prepares a quarantine for one run. It creates nothing on disk
-// until the first file is taken, so a run that displaces nothing leaves no
-// trace.
+// NewQuarantine prepares a quarantine for one run.
 func NewQuarantine(gitDir, run string) *Quarantine {
 	return &Quarantine{gitDir: gitDir, run: run, man: Manifest{Run: run}}
 }
@@ -155,8 +145,7 @@ func (q *Quarantine) writeManifest() error {
 	return os.WriteFile(filepath.Join(q.Dir(), manifestName), append(data, '\n'), 0o666)
 }
 
-// replacedDir holds what an undo had to move out of the way, inside the run it
-// is undoing.
+// replacedDir holds what an undo had to move out of the way, inside the run it is undoing.
 const replacedDir = "replaced"
 
 // Undo puts a run's files back where they came from.
@@ -187,9 +176,7 @@ func Undo(gitDir, run string) ([]Displaced, error) {
 		src := filepath.Join(q.Dir(), filepath.FromSlash(f.To))
 		dest := q.resolve(f.From)
 		if _, err := os.Lstat(src); err != nil {
-			// Already restored by an earlier undo of the same run. The
-			// manifest records what the run displaced, not what is still
-			// sitting here, so a second undo finds nothing to move.
+			// Already restored by an earlier undo of the same run.
 			continue
 		}
 		if _, err := os.Lstat(dest); err == nil {
@@ -250,8 +237,7 @@ func copyFile(src, dest string) error {
 		return err
 	}
 	defer in.Close()
-	// A loose object is mode 0444, and a copy of one must be writable long
-	// enough to write it.
+	// A loose object is mode 0444, and a copy of one must be writable long enough to write it.
 	out, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o666)
 	if err != nil {
 		return err
@@ -268,9 +254,7 @@ func copyFile(src, dest string) error {
 	return os.Chmod(dest, info.Mode().Perm())
 }
 
-// ReplacedDir is where an undo of this run put what it had to move out of the
-// way, or empty when it moved nothing. A repair that replaced nothing -- one
-// that only displaced a derived cache, say -- leaves no such directory.
+// ReplacedDir is where an undo of this run put what it had to move out of the way.
 func ReplacedDir(gitDir, run string) string {
 	dir := filepath.Join(NewQuarantine(gitDir, run).Dir(), replacedDir)
 	if _, err := os.Stat(dir); err != nil {

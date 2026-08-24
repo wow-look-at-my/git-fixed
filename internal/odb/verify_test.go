@@ -119,14 +119,7 @@ func TestAChainBudgetChangesNothingButMemory(t *testing.T) {
 	}
 }
 
-// TestABudgetOfOneStillDecodesADeferredSubtree pins the case the budget exists
-// for.
-//
-// The root of branchingPack has three children and the first of them has
-// children of its own. A walk holding one byte cannot descend into a child that
-// is not its parent's last, so that subtree is deferred and comes back through
-// rebuild. The objects below it exist in the result only if that path decoded
-// them, and they have to be the same bytes as the walk that had room.
+// TestABudgetOfOneStillDecodesADeferredSubtree pins the case the budget exists for.
 func TestABudgetOfOneStillDecodesADeferredSubtree(t *testing.T) {
 	gittest.RequireGit(t)
 	r := gittest.New(t)
@@ -146,15 +139,12 @@ func TestABudgetOfOneStillDecodesADeferredSubtree(t *testing.T) {
 func TestACorruptDeltaIsReportedWhateverTheBudget(t *testing.T) {
 	gittest.RequireGit(t)
 	objs := branchingPack()
-	// Object 3 hangs below the child the tight budget defers, so it is
-	// reached through rebuild there and through the descent otherwise.
+	// Object 3 hangs below the child the tight budget defers.
 	const broken = 3
 	for _, budget := range []int64{0, 1} {
 		r := gittest.New(t)
 		path, offsets := r.WritePack("test", objs)
-		// The index is built before this, so it still describes the pack
-		// as it was: a good index over a bad entry, which is the shape of
-		// the damage this tool exists for.
+		// The index is built before this, so it still describes the pack as it was: a good index over a bad entry.
 		data, err := os.ReadFile(path)
 		require.NoError(t, err)
 		data[(offsets[broken]+offsets[broken+1])/2] ^= 0xff
@@ -190,9 +180,7 @@ func TestAnEntryCannotAskForMoreThanThePackHolds(t *testing.T) {
 
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
-	// The header is rewritten in place to claim 32 TB. It runs over the
-	// start of the entry's own stream, which is what an entry with a wrong
-	// size looks like from here anyway.
+	// The header is rewritten in place to claim 32 TB.
 	copy(data[offsets[1]:], packHeaderClaiming(gitobj.TypeBlob, 1<<45))
 	gittest.WriteOver(t, path, data)
 

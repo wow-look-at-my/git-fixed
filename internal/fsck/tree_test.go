@@ -141,16 +141,14 @@ func TestVerifyOrdered(t *testing.T) {
 	assert.Equal(t, treeOrdered, pair(0o100644, "a", 0o100644, "b"))
 	assert.Equal(t, treeUnordered, pair(0o100644, "b", 0o100644, "a"))
 	assert.Equal(t, treeHasDups, pair(0o100644, "a", 0o40000, "a"))
-	// A directory sorts as though its name ended in a slash, so the tree
-	// "foo/" comes after the blob "foo.bar", not before it.
+	// A directory sorts as though its name ended in a slash, so the tree "foo/" comes after the blob "foo.bar".
 	assert.Equal(t, treeOrdered, pair(0o100644, "foo", 0o100644, "foo.bar"))
 	assert.Equal(t, treeOrdered, pair(0o100644, "foo.bar", 0o40000, "foo"))
 	assert.Equal(t, treeUnordered, pair(0o40000, "foo", 0o100644, "foo.bar"))
 }
 
 func TestVerifyOrderedNonAdjacentDuplicate(t *testing.T) {
-	// git's own comment names this sequence: the implied slash makes "foo"
-	// and "foo/" duplicates even though three entries separate them.
+	// git's own comment names this sequence: the implied slash makes "foo" and "foo/" duplicates even though.
 	var candidates [][]byte
 	names := []struct {
 		mode uint32

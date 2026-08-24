@@ -31,9 +31,7 @@ func New(t *testing.T) *Repo {
 	r.Git("init", "-q", "--template=", ".")
 	r.Git("config", "user.name", "A U Thor")
 	r.Git("config", "user.email", "author@example.com")
-	// git runs maintenance in the background after a commit. It repacks
-	// underneath the test and holds the multi-pack-index lock, so a test
-	// that writes one of its own loses a race it never knew it was in.
+	// git runs maintenance in the background after a commit.
 	r.Git("config", "gc.auto", "0")
 	r.Git("config", "maintenance.auto", "false")
 	return r
@@ -47,9 +45,7 @@ func NewSHA256(t *testing.T) *Repo {
 	r.Git("init", "-q", "--template=", "--object-format=sha256", ".")
 	r.Git("config", "user.name", "A U Thor")
 	r.Git("config", "user.email", "author@example.com")
-	// git runs maintenance in the background after a commit. It repacks
-	// underneath the test and holds the multi-pack-index lock, so a test
-	// that writes one of its own loses a race it never knew it was in.
+	// git runs maintenance in the background after a commit.
 	r.Git("config", "gc.auto", "0")
 	r.Git("config", "maintenance.auto", "false")
 	return r
@@ -125,9 +121,7 @@ func (r *Repo) WriteRaw(typeName string, content []byte) gitobj.OID {
 	return oid
 }
 
-// WriteLooseBytes stores these bytes, header and all, as the object named by
-// oid. git compresses them the same way, so this builds a readable file whose
-// content does not match its name.
+// WriteLooseBytes stores these bytes, header and all, as the object named by oid.
 func (r *Repo) WriteLooseBytes(oid gitobj.OID, body []byte) {
 	r.t.Helper()
 	r.writeLoose(oid, body)

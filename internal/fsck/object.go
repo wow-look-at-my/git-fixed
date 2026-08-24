@@ -298,9 +298,7 @@ func validHexLine(buf []byte, hexsz int) bool {
 	return true
 }
 
-// afterLine advances past an object name line, or past the next newline when the
-// name was malformed. git leaves its pointer just after the character its parse
-// stopped at, and this keeps that behaviour.
+// afterLine advances past an object name line, or past the next newline when the name was malformed.
 func afterLine(buf []byte, hexsz int) []byte {
 	if len(buf) >= hexsz+1 && buf[hexsz] == '\n' {
 		return buf[hexsz+1:]

@@ -39,11 +39,7 @@ func (r *run) checkObject(key sortKey, e *objEntry, typ gitobj.Type, buf []byte)
 	if r.o.Verbose {
 		r.rep.Verbosef("Checking %s %s", r.printableType(e.OID, typ), r.fsck.Describe(e.OID))
 	}
-	// git walks the links first, marking each target used, and complains
-	// once if any of them does not resolve to the right kind of object.
-	// A tree is decoded once here and handed to both the link walk and the
-	// object checks, because decoding it twice was the single largest cost
-	// of the object pass.
+	// git walks the links first, marking each target used.
 	var edges []edge
 	var span edgeSpan
 	broken := false
@@ -67,10 +63,7 @@ func (r *run) checkObject(key sortKey, e *objEntry, typ gitobj.Type, buf []byte)
 			return
 		}
 	} else {
-		// The errors are dropped: parsable() ran this same walk before
-		// this object got here and rejected it if the walk had anything to
-		// say, which is where git rejects it too, in parse_object_buffer()
-		// before any check runs.
+		// The errors are dropped: parsable() ran this same walk already and rejected the object if it had anything to say.
 		links, _ := walkLinks(typ, e.OID, buf, r.repo.Algo, r.fsck.ObjectName(e.OID), r.o.NameObjects)
 		linkCount = len(links)
 		span, edges = r.objs.arena.alloc(len(links))
@@ -104,17 +97,14 @@ func (r *run) checkObject(key sortKey, e *objEntry, typ gitobj.Type, buf []byte)
 	}
 }
 
-// treeScratch lends each worker one entry slice, so decoding a tree does not
-// allocate one per tree.
+// treeScratch lends each worker one entry slice, so decoding a tree does not allocate one per tree.
 var treeScratch sync.Pool
 
 // recordEdges keeps the references for the connectivity walk, unless the names
 // that walk prints make them useless.
 func (r *run) recordEdges(e *objEntry, span edgeSpan, n int) {
 	if r.o.NameObjects {
-		// --name-objects builds each name from the path the walk took to
-		// reach an object, so a recorded edge cannot carry it. The walk
-		// re-reads the object in that case.
+		// --name-objects builds each name from the path the walk took to reach an object.
 		return
 	}
 	span.n = uint32(n)

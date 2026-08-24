@@ -144,8 +144,7 @@ func TestTagErrors(t *testing.T) {
 }
 
 func TestTagExtraHeaderIsIgnoredByDefault(t *testing.T) {
-	// Only mktag asks about a header after 'tagger', so fsck stays quiet
-	// until the check is turned on.
+	// Only mktag asks about a header after 'tagger', so fsck stays quiet until the check is turned on.
 	body := "object " + hexA + "\ntype commit\ntag v1\ntagger A <a@e> " + goodDate + "\nextra x\n\nm\n"
 	_, msgs := collect(t, func(o *Options) int { return o.Tag(nil, oidN(1), []byte(body)) })
 	assert.Empty(t, msgs)
@@ -210,8 +209,7 @@ func TestValidHexLineAndAfterLine(t *testing.T) {
 	assert.False(t, validHexLine([]byte(hexA[:39]+"\n"), 40))
 
 	assert.Equal(t, "next\n", string(afterLine([]byte(hexA+"\nnext\n"), 40)))
-	// A malformed line advances by the hex it did hold plus the byte that
-	// stopped the scan, which is where git's parser leaves its pointer.
+	// A malformed line advances by the hex it did hold plus the byte that stopped the scan.
 	assert.Equal(t, "next\n", string(afterLine([]byte("abc\nnext\n"), 40)))
 	assert.Equal(t, "z\nnext\n", string(afterLine([]byte("zz\nnext\n"), 40)))
 }

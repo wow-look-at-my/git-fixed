@@ -21,12 +21,10 @@ import (
 	"github.com/wow-look-at-my/git-fixed/internal/memwatch"
 )
 
-// tick is how often a meter is allowed to redraw. git arms a one second
-// SIGALRM and draws on the next call after it fires.
+// tick is how often a meter is allowed to redraw.
 const tick = time.Second
 
-// delay is how long a delayed meter stays quiet, as git's GIT_PROGRESS_DELAY
-// does. A phase that finishes inside it prints nothing at all.
+// delay is how long a delayed meter stays quiet, as git's GIT_PROGRESS_DELAY does.
 const delay = time.Second
 
 // Meter draws one phase's progress: a title, then a count that is rewritten in
@@ -38,13 +36,11 @@ const delay = time.Second
 type Meter struct {
 	w     io.Writer
 	title string
-	// total is what the caller believed the count would reach. It is an
-	// estimate and it moves: see raise.
+	// total is what the caller believed the count would reach. see raise.
 	total atomic.Int64
 
 	count atomic.Int64
-	// pct is the percentage last drawn, so a step that does not move it
-	// costs one atomic load and no lock.
+	// pct is the percentage last drawn, so a step that does not move it costs one atomic load and no lock.
 	pct atomic.Int32
 	// quiet holds a delayed meter back until its delay is up.
 	quiet atomic.Bool
@@ -63,13 +59,11 @@ type Meter struct {
 }
 
 // Start begins a meter that draws immediately, as git's start_progress does.
-// total is zero for a phase that counts without knowing where it ends.
 func Start(w io.Writer, title string, total int64) *Meter {
 	return start(w, title, total, false)
 }
 
-// StartDelayed begins a meter that stays quiet for a second first, as git's
-// start_delayed_progress does. It is for a phase that is usually instant.
+// StartDelayed begins a meter that stays quiet for a second first, as git's start_delayed_progress does.
 func StartDelayed(w io.Writer, title string, total int64) *Meter {
 	return start(w, title, total, true)
 }
@@ -137,14 +131,7 @@ func (m *Meter) Advance(n int64) {
 	}
 }
 
-// raise moves the total up to meet a count that has passed it, and returns the
-// total to measure against.
-//
-// A total is what the caller believed the count would reach, and a caller can
-// be wrong low. The repair walk counts against the objects the repository holds
-// and then reaches one it does not hold, which is the whole reason that walk
-// runs. A meter that answered "150%" there would be reporting on its own
-// arithmetic and not on the run.
+// raise moves the total up to meet a count that has passed it, and returns the total to measure against.
 func (m *Meter) raise(n int64) int64 {
 	for {
 		total := m.total.Load()
@@ -169,8 +156,7 @@ func (m *Meter) report(n int64) {
 			return
 		}
 	} else if !m.due.Load() {
-		// Without a total there is no percentage to move, so the timer is
-		// the only thing that draws.
+		// Without a total there is no percentage to move, so the timer is the only thing that draws.
 		return
 	}
 	m.due.Store(false)
@@ -196,8 +182,7 @@ func (m *Meter) draw(end string) {
 	} else {
 		counters = fmt.Sprintf("%d %s", n, m.status())
 	}
-	// A shorter line than the last one leaves the tail of the last one on
-	// screen, so it is painted over with spaces.
+	// A shorter line than the last one leaves the tail of the last one on screen.
 	pad := ""
 	if len(counters) < m.lastLen {
 		pad = strings.Repeat(" ", m.lastLen-len(counters)+1)
@@ -228,14 +213,7 @@ func (m *Meter) Finish() {
 	m.draw(", done.")
 }
 
-// status is the bracketed field after the count: how long this phase has been
-// running, and what the run has cost the machine at its worst moment.
-//
-// git prints neither. Without the clock a person watches a number climb with no
-// idea whether it is minutes or hours from the end, and without the mark no idea
-// whether the machine will last that long. A run the kernel kills for memory
-// never reaches the closing line that would have said so, which is why the mark
-// is drawn here and not only there.
+// status is the bracketed field after the count: how long this phase has been running.
 func (m *Meter) status() string {
 	s := elapsed(time.Since(m.start))
 	if marks, ok := memwatch.Peak(); ok {

@@ -21,8 +21,7 @@ type SalvagedIndex struct {
 	Entries []IndexEntry
 	// Stopped is what ended the read, empty when the file parsed whole.
 	Stopped string
-	// Count is how many entries the header claimed, which says how many were
-	// left behind when Stopped is set.
+	// Count is how many entries the header claimed, which says how many were left behind when Stopped is set.
 	Count int
 }
 
@@ -53,8 +52,7 @@ func (r *Repo) SalvageIndex(path string) (*SalvagedIndex, error) {
 		return &SalvagedIndex{Stopped: fmt.Sprintf("index version %d is not one git writes", version)}, nil
 	}
 	out := &SalvagedIndex{Count: int(binary.BigEndian.Uint32(data[8:12]))}
-	// The entries end before the trailing checksum, when there is room for
-	// one. A truncated file has no trailer, so the entries run to the end.
+	// The entries end before the trailing checksum, when there is room for one.
 	end := len(data)
 	if end > 12+rawsz {
 		end -= rawsz
@@ -100,28 +98,22 @@ func (r *Repo) WriteIndex(path string, entries []IndexEntry) error {
 	rawsz := r.Algo.RawSize
 	for _, e := range sorted {
 		start := buf.Len()
-		// The mode is a field inside the stat block, at the offset git's own
-		// reader takes it from. Writing it here rather than trusting the
-		// block is what lets an entry rebuilt from a tree carry a mode at
-		// all: it has no stat data, so its block is forty zero bytes.
+		// The mode is a field inside the stat block, at the offset git's own reader takes it from.
 		stat := e.Stat
 		binary.BigEndian.PutUint32(stat[24:28], e.Mode)
 		buf.Write(stat[:])
-		// Always rawsz bytes: a zero OID reports a length of zero, and a
-		// short name field would shift every following entry.
+		// Always rawsz bytes: a zero OID reports a length of zero.
 		var oid [gitobj.MaxRawSize]byte
 		copy(oid[:], e.OID.Raw())
 		buf.Write(oid[:rawsz])
 		nameLen := len(e.Name)
 		if nameLen > 0x0fff {
-			// The field only holds twelve bits. git stores the maximum and
-			// reads the name up to its terminator instead.
+			// The field only holds twelve bits.
 			nameLen = 0x0fff
 		}
 		binary.Write(&buf, binary.BigEndian, uint16(e.Stage)<<12|uint16(nameLen))
 		buf.WriteString(e.Name)
-		// At least one terminator, then padding to an eight-byte boundary
-		// measured from the start of the entry.
+		// At least one terminator, then padding to an eight-byte boundary measured from the start of the entry.
 		buf.WriteByte(0)
 		for (buf.Len()-start)%8 != 0 {
 			buf.WriteByte(0)

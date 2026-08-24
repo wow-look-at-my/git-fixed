@@ -18,34 +18,23 @@ import (
 	"fmt"
 )
 
-// windowSize is DEFLATE's largest distance, which is how far back a match may
-// reach and therefore how much output has to be kept.
+// windowSize is DEFLATE's largest distance, which is how far back a match may reach and therefore how much.
 const windowSize = 32768
 
 // maxBits is the longest Huffman code DEFLATE allows.
 const maxBits = 15
 
-// Whole asks Diagnose about the whole stream, for a caller that decompressed
-// until the stream ended.
+// Whole asks Diagnose about the whole stream, for a caller that decompressed until the stream ended.
 const Whole = -1
 
-// Diagnose returns the line git prints for raw, such as
-// "inflate: data stream error (invalid block type)". It returns "" when zlib
-// finds nothing to complain about, which includes a stream that simply stops
-// early: zlib asks for more input there rather than reporting an error.
-//
-// maxOut is how many bytes the caller had room for, or Whole. zlib stops as
-// soon as it has filled the room it was given, so a fault further down the
-// stream is one it never reaches: git reads a loose object's header into 32
-// bytes and reports nothing about what follows until it reads the rest.
+// Diagnose returns the line git prints for raw, such as "inflate: data stream error (invalid block type)".
 func Diagnose(raw []byte, maxOut int64) string {
 	f := (&inflater{in: bits{data: raw}, sum: newAdler(), limit: maxOut}).run()
 	switch f.kind {
 	case faultNone:
 		return ""
 	case faultNeedDict:
-		// zlib leaves no message of its own for a stream that wants a
-		// dictionary, and git prints its placeholder instead.
+		// zlib leaves no message of its own for a stream that wants a dictionary.
 		return "inflate: needs dictionary (no message)"
 	default:
 		return fmt.Sprintf("inflate: data stream error (%s)", f.msg)
@@ -75,9 +64,7 @@ type bits struct {
 	pos  int
 	hold uint64
 	n    uint
-	// short is set once a read has asked for more input than there is. The
-	// caller stops and reports nothing, because zlib would ask for more
-	// input rather than refuse the stream.
+	// short is set once a read has asked for more input than there is.
 	short bool
 }
 
@@ -124,13 +111,11 @@ func (b *bits) byteAt() (byte, bool) {
 type inflater struct {
 	in     bits
 	window [windowSize]byte
-	// next is where the byte after the last one goes. A match reaches back
-	// from it, and the window wraps around.
+	// next is where the byte after the last one goes.
 	next  int
 	total int64
 	sum   adler
-	// limit is how much output the caller had room for, and full marks the
-	// moment that room ran out. Everything past it belongs to a later read.
+	// limit is how much output the caller had room for, and full marks the moment that room ran out.
 	limit int64
 	full  bool
 }
@@ -138,9 +123,7 @@ type inflater struct {
 // room reports whether one more byte of output fits in what the caller had.
 func (i *inflater) room() bool { return i.limit < 0 || i.total < i.limit }
 
-// adler is the running Adler-32 of the output, which zlib writes after the last
-// block. One byte at a time is slow, and this runs only on a stream that has
-// already failed.
+// adler is the running Adler-32 of the output, which zlib writes after the last block.
 type adler struct{ a, b uint32 }
 
 func newAdler() adler { return adler{a: 1} }

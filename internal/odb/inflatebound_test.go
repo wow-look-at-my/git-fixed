@@ -42,8 +42,7 @@ func TestPlausibleSizeAcceptsWhatDeflateCanDo(t *testing.T) {
 }
 
 func TestMaxDeltaOutput(t *testing.T) {
-	// One byte of delta is one copy command with no offset and no size,
-	// which means the first 0x10000 bytes of the base.
+	// One byte of delta is one copy command with no offset and no size.
 	assert.Equal(t, uint64(0x10000), maxDeltaOutput(1))
 	assert.Equal(t, uint64(0), maxDeltaOutput(0))
 }

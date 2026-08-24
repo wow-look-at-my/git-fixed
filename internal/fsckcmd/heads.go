@@ -45,9 +45,7 @@ func (r *run) handleArgs() {
 			r.fail(ErrorObject)
 			continue
 		}
-		// git hands the argument to the same code that handles a
-		// reference, so an object that is not there is reported as a
-		// reference pointing at nothing rather than as a missing object.
+		// git hands the argument to the same code that handles a reference.
 		r.handleRef(arg, oid, false)
 	}
 }
@@ -60,9 +58,7 @@ func (r *run) defaultHeads() {
 	}
 	for _, wt := range r.repo.Worktrees() {
 		name := wt.RefName("HEAD")
-		// Whether HEAD is well formed is the ref database's business,
-		// and checkRefs has already said so. Here it is only a starting
-		// point, and one that resolves to nothing is simply not one.
+		// Whether HEAD is well formed is the ref database's business, and checkRefs has already said so.
 		_, oid, ok := r.repo.Head(wt.Dir)
 		if ok && !oid.IsNull() {
 			r.handleRef(name, oid, false)
@@ -73,9 +69,7 @@ func (r *run) defaultHeads() {
 	}
 }
 
-// noteNoHeads reports that nothing became a starting point. git counts an
-// object named on the command line the same way it counts a reference, so an
-// argument that does not resolve leaves the run with no heads at all.
+// noteNoHeads reports that nothing became a starting point.
 func (r *run) noteNoHeads() {
 	if r.defaultRefs.Load() != 0 {
 		return
@@ -92,8 +86,7 @@ func (r *run) handleRef(refname string, oid gitobj.OID, broken bool) {
 		e = r.objs.Get(oid)
 	}
 	if e == nil || e.Flags()&flagHasObj == 0 {
-		// git parses the object again here, so an object that failed to
-		// parse in the object pass reports its complaint a second time.
+		// git parses the object again here, so one that failed the object pass reports its complaint twice.
 		r.reparse(key, oid)
 		r.rep.Errf(key, "error: %s: invalid sha1 pointer %s", refname, oid)
 		r.fail(ErrorReachable)
@@ -104,8 +97,7 @@ func (r *run) handleRef(refname string, oid gitobj.OID, broken bool) {
 		case !r.db.Has(oid):
 			r.noteDamaged(oid, true)
 		default:
-			// A file is there and this run would not take it. Whatever
-			// is wrong with it, no object name says so.
+			// A file is there and this run would not take it.
 			r.notePartialDamage()
 		}
 		return
@@ -143,9 +135,7 @@ func (r *run) handleReflogOID(refname string, oid gitobj.OID, timestamp int64) {
 	if e == nil || e.Flags()&flagHasObj == 0 {
 		r.rep.Errf(key, "error: %s: invalid reflog entry %s", refname, oid)
 		r.fail(ErrorReachable)
-		// A reflog is a record of where a reference has been, and an entry
-		// naming an object that is gone is not a broken repository. It is
-		// also not this list's business: nothing walks from a reflog.
+		// A reflog is a record of where a reference has been.
 		r.notePartialDamage()
 		return
 	}
@@ -160,9 +150,7 @@ func (r *run) handleReflogOID(refname string, oid gitobj.OID, timestamp int64) {
 func (r *run) checkIndexes() {
 	for _, wt := range r.repo.Worktrees() {
 		path := wt.IndexPath()
-		// Every message below names the index the way git names it. git
-		// works from the top of the worktree and writes ".git/index"; this
-		// process opened an absolute path and must not print it.
+		// Every message below names the index the way git names it.
 		shown := r.repo.Shown(path)
 		if r.o.Verbose {
 			r.rep.Verbosef("Checking cache tree of %s", shown)
@@ -172,11 +160,7 @@ func (r *run) checkIndexes() {
 			r.rep.Errf(sortKey{phase: phaseIndex}, "error: %s", e)
 		}
 		if err != nil {
-			// git dies here, which takes the reverse-index checks, the
-			// bitmap checks, the connectivity walk and the graph checks
-			// with it -- none of which reads the index. This says what is
-			// wrong with the file and goes on to check the repository.
-			// see docs/exit-status.md
+			// git dies here, which takes the reverse-index checks, the bitmap checks. see docs/exit-status.md
 			r.rep.Errf(sortKey{phase: phaseIndex}, "error: %s", err)
 			r.fail(ErrorIndex)
 			continue
@@ -239,10 +223,7 @@ func (r *run) fsckCacheTree(key sortKey, ct *gitrepo.CacheTree, path string) {
 		e.SetFlag(flagUsed)
 		r.fsck.PutObjectName(ct.OID, ":")
 		r.markReachable(e)
-		// ensureType, not Type: --connectivity-only never reads the objects,
-		// so the type is still unknown here and every cache-tree entry reads
-		// as a non-tree. git's own parse_object() resolves it at this point
-		// and reports nothing.
+		// ensureType, not Type: --connectivity-only never reads the objects.
 		if r.ensureType(e) != gitobj.TypeTree {
 			r.objError(key, ct.OID, "non-tree in cache-tree")
 		}
