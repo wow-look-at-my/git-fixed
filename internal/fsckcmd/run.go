@@ -378,7 +378,7 @@ func (r *run) ensureType(e *objEntry) gitobj.Type {
 	if t := e.Type(); t != gitobj.TypeNone {
 		return t
 	}
-	t, _, err := r.db.Info(e.OID)
+	t, _, err := r.db.Info(r.oid(e))
 	if err != nil {
 		return gitobj.TypeNone
 	}

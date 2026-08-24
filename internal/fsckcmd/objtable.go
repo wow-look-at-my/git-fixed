@@ -19,15 +19,27 @@ const (
 	flagWalked = 1 << 4
 )
 
-// objEntry is one object the run knows about, whether or not it exists.
+// metaFlagShift is where the flags sit in meta. The type has the byte below them.
+const metaFlagShift = 8
+
+// objEntry is one object the run knows about, whether or not it exists. It is
+// 48 bytes, and every field is a field per object in the repository.
+// see docs/architecture.md
 type objEntry struct {
 	// edgeRef and edgeLen name what the object pass found this object points at. see docs/architecture.md
 	edgeRef uint64
 
-	OID     gitobj.OID
 	edgeLen uint32
-	typ     atomic.Int32
-	flags   atomic.Uint32
+	// meta is the type in its low byte and the flags above it: two words here would round the entry up to 56.
+	meta atomic.Uint32
+
+	// hash is the name without the length, which belongs to the algorithm.
+	hash [gitobj.MaxRawSize]byte
+}
+
+// oid rebuilds the object's name from the repository's hash algorithm.
+func (r *run) oid(e *objEntry) gitobj.OID {
+	return gitobj.OID{H: e.hash, N: uint8(r.repo.Algo.RawSize)}
 }
 
 // edgeSpan names a run of edges in the arena: the slab in the high half of ref.
@@ -36,39 +48,34 @@ type edgeSpan struct {
 	n   uint32
 }
 
-// edge is one resolved reference, in the compact form the connectivity walk needs.
-type edge uint64
+// edge is one reference, in the form the walk needs: one per tree entry. see docs/architecture.md
+type edge uint32
 
 const (
-	edgeResolved  edge = 1 << 32
-	edgeViaTag    edge = 1 << 33
-	edgeTypeShift      = 34
-	edgeTypeMask  edge = 0xf << edgeTypeShift
+	// edgeUnresolved marks a reference the table refused, and the low bits then carry the type it implied.
+	edgeUnresolved edge = 1 << 31
+	edgeTypeMask   edge = 0xf
+	// maxObjIndex is the largest table index an edge can name.
+	maxObjIndex = int64(edgeUnresolved) - 1
 )
 
-// makeEdge builds one reference. target means nothing when resolved is false.
-func makeEdge(target uint32, resolved bool, typ gitobj.Type, viaTag bool) edge {
-	e := edge(target) | edge(typ&0xf)<<edgeTypeShift
-	if resolved {
-		e |= edgeResolved
+// makeEdge builds one reference. target means nothing when resolved is false,
+// and typ means nothing when it is true. see Edges.
+func makeEdge(target uint32, resolved bool, typ gitobj.Type) edge {
+	if !resolved {
+		return edgeUnresolved | edge(typ)&edgeTypeMask
 	}
-	if viaTag {
-		e |= edgeViaTag
-	}
-	return e
+	return edge(target)
 }
 
-// index is the target's place in the table.
+// index is the target's place in the table. It answers for a resolved edge.
 func (e edge) index() uint32 { return uint32(e) }
 
 // ok reports whether the reference resolved.
-func (e edge) ok() bool { return e&edgeResolved != 0 }
+func (e edge) ok() bool { return e&edgeUnresolved == 0 }
 
-// viaTag marks a tag's target, which git accepts at any type.
-func (e edge) viaTag() bool { return e&edgeViaTag != 0 }
-
-// typ is the type the reference implies.
-func (e edge) typ() gitobj.Type { return gitobj.Type((e & edgeTypeMask) >> edgeTypeShift) }
+// typ is the type the reference implies. It answers for an unresolved edge.
+func (e edge) typ() gitobj.Type { return gitobj.Type(e & edgeTypeMask) }
 
 // SetEdges records what the object pass found.
 func (e *objEntry) SetEdges(span edgeSpan) {
@@ -76,8 +83,8 @@ func (e *objEntry) SetEdges(span edgeSpan) {
 	e.SetFlag(flagWalked)
 }
 
-// Edges returns the recorded references, and reports whether the object pass
-// recorded any.
+// Edges returns the recorded references, and whether the pass recorded any.
+// A resolved edge holds no type: its target's is the one it implied.
 func (t *objTable) Edges(e *objEntry) ([]edge, bool) {
 	if e.Flags()&flagWalked == 0 {
 		return nil, false
@@ -85,23 +92,34 @@ func (t *objTable) Edges(e *objEntry) ([]edge, bool) {
 	return t.arena.at(edgeSpan{ref: e.edgeRef, n: e.edgeLen}), true
 }
 
-// Type returns the object's type, which may be what referenced it expects rather than what the database holds.
-func (e *objEntry) Type() gitobj.Type { return gitobj.Type(e.typ.Load()) }
+// Type is what referenced this object expects, when the database has not said. The byte is signed: TypeBad is -1.
+func (e *objEntry) Type() gitobj.Type { return gitobj.Type(int8(e.meta.Load())) }
 
 // SetType records a type, keeping the first one seen.
-func (e *objEntry) SetType(t gitobj.Type) { e.typ.CompareAndSwap(int32(gitobj.TypeNone), int32(t)) }
+func (e *objEntry) SetType(t gitobj.Type) {
+	for {
+		old := e.meta.Load()
+		if int8(old) != int8(gitobj.TypeNone) {
+			return
+		}
+		if e.meta.CompareAndSwap(old, old&^0xff|uint32(uint8(t))) {
+			return
+		}
+	}
+}
 
 // Flags reads the object's flags.
-func (e *objEntry) Flags() uint32 { return e.flags.Load() }
+func (e *objEntry) Flags() uint32 { return e.meta.Load() >> metaFlagShift }
 
 // SetFlag turns one flag on and reports whether it was already set.
 func (e *objEntry) SetFlag(f uint32) bool {
+	f <<= metaFlagShift
 	for {
-		old := e.flags.Load()
+		old := e.meta.Load()
 		if old&f != 0 {
 			return true
 		}
-		if e.flags.CompareAndSwap(old, old|f) {
+		if e.meta.CompareAndSwap(old, old|f) {
 			return false
 		}
 	}
@@ -109,9 +127,10 @@ func (e *objEntry) SetFlag(f uint32) bool {
 
 // ClearFlags turns flags off.
 func (e *objEntry) ClearFlags(f uint32) {
+	f <<= metaFlagShift
 	for {
-		old := e.flags.Load()
-		if e.flags.CompareAndSwap(old, old&^f) {
+		old := e.meta.Load()
+		if e.meta.CompareAndSwap(old, old&^f) {
 			return
 		}
 	}
@@ -212,13 +231,18 @@ func (t *objTable) At(i uint32) *objEntry {
 
 // newEntry takes the next index and returns the entry it names.
 func (t *objTable) newEntry(oid gitobj.OID) (*objEntry, uint32) {
-	idx := uint32(t.created.Add(1) - 1)
+	n := t.created.Add(1) - 1
+	if n > maxObjIndex {
+		// An edge names its target by this index, so one past the top bit would resolve to another object.
+		panic("git-fixed: this repository holds more objects than the object table can name")
+	}
+	idx := uint32(n)
 	s := t.slabs.Load()
 	if s == nil || int(idx>>objSlabBits) >= len(*s) {
 		s = t.growSlabs(idx)
 	}
 	e := &(*s)[idx>>objSlabBits][idx&(objSlabSize-1)]
-	e.OID = oid
+	e.hash = oid.H
 	return e, idx
 }
 
@@ -259,7 +283,7 @@ func (t *objTable) Get(oid gitobj.OID) *objEntry {
 			return nil
 		}
 		if sl.key == key {
-			if e := t.At(sl.idx - 1); e.OID == oid {
+			if e := t.At(sl.idx - 1); e.hash == oid.H {
 				return e
 			}
 		}
@@ -285,7 +309,7 @@ func (t *objTable) Lookup(oid gitobj.OID, want gitobj.Type) (*objEntry, uint32, 
 			break
 		}
 		if sl.key == key {
-			if e := t.At(sl.idx - 1); e.OID == oid {
+			if e := t.At(sl.idx - 1); e.hash == oid.H {
 				return reconcile(e, sl.idx-1, want)
 			}
 		}
@@ -293,7 +317,7 @@ func (t *objTable) Lookup(oid gitobj.OID, want gitobj.Type) (*objEntry, uint32, 
 	}
 	e, idx := t.newEntry(oid)
 	if want != gitobj.TypeAny {
-		e.typ.Store(int32(want))
+		e.SetType(want)
 	}
 	sh.slots[i] = slot{key: key, idx: idx + 1}
 	sh.used++
@@ -309,9 +333,9 @@ func reconcile(e *objEntry, idx uint32, want gitobj.Type) (*objEntry, uint32, bo
 	if want == gitobj.TypeAny {
 		return e, idx, true
 	}
-	cur := gitobj.Type(e.typ.Load())
+	cur := e.Type()
 	if cur == gitobj.TypeNone {
-		e.typ.Store(int32(want))
+		e.SetType(want)
 		return e, idx, true
 	}
 	if cur != want {

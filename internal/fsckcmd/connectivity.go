@@ -25,7 +25,7 @@ func (r *run) checkConnectivity() {
 		// The verbose line names each object as it is checked, and that order is part of what the reader is watching.
 		for i := range n {
 			e := r.objs.At(uint32(i))
-			r.rep.Verbosef("Checking %s", r.fsck.Describe(e.OID))
+			r.rep.Verbosef("Checking %s", r.fsck.Describe(r.oid(e)))
 			r.checkOneObject(e)
 		}
 		return
@@ -139,25 +139,27 @@ func (r *run) traverseOne(e *objEntry) []*objEntry {
 		// A blob points at nothing, so git's walk returns immediately.
 		return nil
 	}
-	key := sortKey{phase: phaseConnectivity, oid: e.OID}
+	key := sortKey{phase: phaseConnectivity, oid: r.oid(e)}
 	if edges, cached := r.objs.Edges(e); cached {
 		// Nothing to print alongside them: an object only has edges recorded once the object pass has read it.
 		var out []*objEntry
 		for _, ed := range edges {
-			var target *objEntry
-			if ed.ok() {
-				target = r.objs.At(ed.index())
+			if !ed.ok() {
+				out = r.markLinkInto(key, e, ed.typ(), false, nil, false, out)
+				continue
 			}
-			out = r.markLinkInto(key, e, ed.typ(), ed.viaTag(), target, ed.ok(), out)
+			// A resolved edge implies the type its target holds. see objTable.Edges.
+			target := r.objs.At(ed.index())
+			out = r.markLinkInto(key, e, target.Type(), false, target, true, out)
 		}
 		return out
 	}
-	_, buf, err := r.readObject(e.OID)
+	_, buf, err := r.readObject(r.oid(e))
 	if err != nil {
-		r.rep.Errf(key, "error: Unknown object type for %s", r.fsck.Describe(e.OID))
+		r.rep.Errf(key, "error: Unknown object type for %s", r.fsck.Describe(r.oid(e)))
 		return nil
 	}
-	links, parseErrs := walkLinks(typ, e.OID, buf, r.repo.Algo, r.fsck.ObjectName(e.OID), r.o.NameObjects)
+	links, parseErrs := walkLinks(typ, r.oid(e), buf, r.repo.Algo, r.fsck.ObjectName(r.oid(e)), r.o.NameObjects)
 	for _, msg := range parseErrs {
 		r.rep.Errf(key, "error: %s", msg)
 	}
@@ -177,7 +179,7 @@ func (r *run) traverseOne(e *objEntry) []*objEntry {
 func (r *run) markLinkInto(key sortKey, parent *objEntry, typ gitobj.Type, viaTag bool, target *objEntry, ok bool, sink []*objEntry) []*objEntry {
 	if !ok || target == nil {
 		r.rep.Outf(key, "broken link from %7s %s",
-			r.printableType(parent.OID, parent.Type()), r.fsck.Describe(parent.OID))
+			r.printableType(r.oid(parent), parent.Type()), r.fsck.Describe(r.oid(parent)))
 		r.rep.Outf(key, "broken link from %7s %s", linkTypeName(typ), "unknown")
 		r.fail(ErrorReachable)
 		// The link was refused on the type it implies, so the fault is the pair and not one object.
@@ -185,7 +187,7 @@ func (r *run) markLinkInto(key sortKey, parent *objEntry, typ gitobj.Type, viaTa
 		return sink
 	}
 	if !viaTag && target.Type() != gitobj.TypeNone && target.Type() != typ {
-		r.objError(key, parent.OID, "wrong object type in link")
+		r.objError(key, r.oid(parent), "wrong object type in link")
 	}
 	if target.SetFlag(flagReachable) {
 		return sink
@@ -194,10 +196,10 @@ func (r *run) markLinkInto(key sortKey, parent *objEntry, typ gitobj.Type, viaTa
 		// A file that is present but unreadable is not a broken link:
 		// the object check already complained about the file itself, and
 		// the report below still calls the object missing.
-		if !r.db.Has(target.OID) {
+		if !r.db.Has(r.oid(target)) {
 			r.rep.Outf(key, "broken link from %7s %s\n              to %7s %s",
-				r.printableType(parent.OID, parent.Type()), r.fsck.Describe(parent.OID),
-				r.printableType(target.OID, target.Type()), r.fsck.Describe(target.OID))
+				r.printableType(r.oid(parent), parent.Type()), r.fsck.Describe(r.oid(parent)),
+				r.printableType(r.oid(target), target.Type()), r.fsck.Describe(r.oid(target)))
 			r.fail(ErrorReachable)
 		}
 		return sink
@@ -217,7 +219,7 @@ func (r *run) markUnreachableReferents() {
 		}
 		typ := e.Type()
 		if typ == gitobj.TypeNone {
-			t, _, err := r.readObject(e.OID)
+			t, _, err := r.readObject(r.oid(e))
 			if err != nil {
 				return
 			}
@@ -235,11 +237,11 @@ func (r *run) markUnreachableReferents() {
 			}
 			return
 		}
-		_, buf, err := r.readObject(e.OID)
+		_, buf, err := r.readObject(r.oid(e))
 		if err != nil {
 			return
 		}
-		links, _ := walkLinks(typ, e.OID, buf, r.repo.Algo, "", false)
+		links, _ := walkLinks(typ, r.oid(e), buf, r.repo.Algo, "", false)
 		for _, l := range links {
 			if target, _, ok := r.objs.Lookup(l.oid, l.typ); ok && target != nil {
 				target.SetFlag(flagUsed)
@@ -255,13 +257,13 @@ func (r *run) checkReachableObject(e *objEntry) {
 		return
 	}
 	// Being in a pack is proof enough for git, which does not re-open the pack here.
-	if r.db.HasPacked(e.OID) {
+	if r.db.HasPacked(r.oid(e)) {
 		return
 	}
-	r.rep.Outf(sortKey{phase: phaseConnectivity, group: 1, oid: e.OID}, "missing %s %s",
-		r.printableType(e.OID, e.Type()), r.fsck.Describe(e.OID))
+	r.rep.Outf(sortKey{phase: phaseConnectivity, group: 1, oid: r.oid(e)}, "missing %s %s",
+		r.printableType(r.oid(e), e.Type()), r.fsck.Describe(r.oid(e)))
 	r.fail(ErrorReachable)
-	r.noteDamaged(e.OID, true)
+	r.noteDamaged(r.oid(e), true)
 }
 
 // checkUnreachableObject reports an object nothing reaches. git shows the tips
@@ -271,9 +273,9 @@ func (r *run) checkUnreachableObject(e *objEntry) {
 		// Missing and unreachable at once is not worth a word: nothing can reach it, so nothing misses it.
 		return
 	}
-	key := sortKey{phase: phaseConnectivity, group: 1, oid: e.OID}
+	key := sortKey{phase: phaseConnectivity, group: 1, oid: r.oid(e)}
 	if r.o.ShowUnreachable {
-		r.rep.Outf(key, "unreachable %s %s", r.printableType(e.OID, e.Type()), r.fsck.Describe(e.OID))
+		r.rep.Outf(key, "unreachable %s %s", r.printableType(r.oid(e), e.Type()), r.fsck.Describe(r.oid(e)))
 		return
 	}
 	if e.Flags()&flagUsed != 0 {
@@ -281,7 +283,7 @@ func (r *run) checkUnreachableObject(e *objEntry) {
 		return
 	}
 	if r.o.ShowDangling {
-		r.rep.Outf(key, "dangling %s %s", r.printableType(e.OID, e.Type()), r.fsck.Describe(e.OID))
+		r.rep.Outf(key, "dangling %s %s", r.printableType(r.oid(e), e.Type()), r.fsck.Describe(r.oid(e)))
 	}
 	if r.o.WriteLostFound {
 		r.writeLostFound(key, e)
@@ -299,7 +301,7 @@ func (r *run) writeLostFound(key sortKey, e *objEntry) {
 		r.rep.Errf(key, "error: could not create lost-found")
 		return
 	}
-	name := filepath.Join(dir, r.fsck.Describe(e.OID))
+	name := filepath.Join(dir, r.fsck.Describe(r.oid(e)))
 	f, err := os.Create(name)
 	if err != nil {
 		r.rep.Errf(key, "error: could not create lost-found")
@@ -307,12 +309,12 @@ func (r *run) writeLostFound(key sortKey, e *objEntry) {
 	}
 	defer f.Close()
 	if e.Type() == gitobj.TypeBlob {
-		if _, data, err := r.readObject(e.OID); err == nil {
+		if _, data, err := r.readObject(r.oid(e)); err == nil {
 			if _, err := f.Write(data); err != nil {
 				fmt.Fprintf(r.o.Stderr, "fatal: could not write '%s'\n", name)
 			}
 		}
 		return
 	}
-	fmt.Fprintf(f, "%s\n", r.fsck.Describe(e.OID))
+	fmt.Fprintf(f, "%s\n", r.fsck.Describe(r.oid(e)))
 }

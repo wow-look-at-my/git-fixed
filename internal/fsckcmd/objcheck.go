@@ -37,7 +37,7 @@ func (r *run) checkObject(key sortKey, e *objEntry, typ gitobj.Type, buf []byte)
 		return
 	}
 	if r.o.Verbose {
-		r.rep.Verbosef("Checking %s %s", r.printableType(e.OID, typ), r.fsck.Describe(e.OID))
+		r.rep.Verbosef("Checking %s %s", r.printableType(r.oid(e), typ), r.fsck.Describe(r.oid(e)))
 	}
 	// git walks the links first, marking each target used.
 	var edges []edge
@@ -53,18 +53,18 @@ func (r *run) checkObject(key sortKey, e *objEntry, typ gitobj.Type, buf []byte)
 		*scratch = entries
 		span, edges, broken = r.treeEdges(entries)
 		linkCount = len(edges)
-		ret := r.fsck.TreeEntries(key, e.OID, entries, treeErr)
+		ret := r.fsck.TreeEntries(key, r.oid(e), entries, treeErr)
 		treeScratch.Put(scratch)
 		r.recordEdges(e, span, linkCount)
 		if broken {
-			r.objError(key, e.OID, "broken links")
+			r.objError(key, r.oid(e), "broken links")
 		}
 		if ret != 0 {
 			return
 		}
 	} else {
 		// The errors are dropped: parsable() ran this same walk already and rejected the object if it had anything to say.
-		links, _ := walkLinks(typ, e.OID, buf, r.repo.Algo, r.fsck.ObjectName(e.OID), r.o.NameObjects)
+		links, _ := walkLinks(typ, r.oid(e), buf, r.repo.Algo, r.fsck.ObjectName(r.oid(e)), r.o.NameObjects)
 		linkCount = len(links)
 		span, edges = r.objs.arena.alloc(len(links))
 		edges = edges[:0]
@@ -75,24 +75,24 @@ func (r *run) checkObject(key sortKey, e *objEntry, typ gitobj.Type, buf []byte)
 			} else {
 				target.SetFlag(flagUsed)
 			}
-			edges = append(edges, makeEdge(idx, ok, l.typ, l.viaTag))
+			edges = append(edges, makeEdge(idx, ok, l.typ))
 		}
 		r.recordEdges(e, span, len(edges))
 		if broken {
-			r.objError(key, e.OID, "broken links")
+			r.objError(key, r.oid(e), "broken links")
 		}
-		if r.fsck.Object(key, e.OID, typ, buf) != 0 {
+		if r.fsck.Object(key, r.oid(e), typ, buf) != 0 {
 			return
 		}
 	}
 	if typ == gitobj.TypeCommit && r.o.ShowRoot && linkCount == 1 {
-		r.rep.Outf(key, "root %s", r.fsck.Describe(e.OID))
+		r.rep.Outf(key, "root %s", r.fsck.Describe(r.oid(e)))
 	}
 	if typ == gitobj.TypeTag && r.o.ShowTags {
-		if _, info := r.fsck.TagWithInfo(key, e.OID, buf); info.Object.Valid() {
+		if _, info := r.fsck.TagWithInfo(key, r.oid(e), buf); info.Object.Valid() {
 			r.rep.Outf(key, "tagged %s %s (%s) in %s",
 				r.printableType(info.Object, info.TargetType),
-				r.fsck.Describe(info.Object), info.Name, r.fsck.Describe(e.OID))
+				r.fsck.Describe(info.Object), info.Name, r.fsck.Describe(r.oid(e)))
 		}
 	}
 }
