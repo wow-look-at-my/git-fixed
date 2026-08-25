@@ -35,6 +35,9 @@ type Sources struct {
 	byOID map[string][]string
 	// entries is the index, for rebuilding a tree.
 	entries []gitrepo.IndexEntry
+	// trees is the index folded back into tree objects, built on first use
+	// because every damaged tree asks the same question of the same index.
+	trees map[string][]byte
 	// remote is the scratch checkout a remote's objects arrive in.
 	remote *remoteSource
 	// policy says what the remote may be asked for, and whether a fetch of every ref is allowed at all.
@@ -77,6 +80,52 @@ func (s *Sources) Close() {
 	}
 }
 
+// Retarget points the local sources at a reopened repository and keeps the
+// remote.
+//
+// A pass reopens the object database to see what the pass before it wrote.
+// Nothing about that changes what a remote already sent, and fetching it again
+// costs another copy of the remote.
+func (s *Sources) Retarget(repo *gitrepo.Repo, db *odb.DB) {
+	remote, remoteErr := s.remote, s.remoteErr
+	*s = *NewSources(repo, db, s.policy)
+	s.remote, s.remoteErr = remote, remoteErr
+}
+
+// Prime fetches what this run is about to ask a remote for: one fetch for the
+// whole pass, and only for the objects no local source answers.
+//
+// The remote is the last rung, so an object the worktree or another copy in the
+// repository already holds must never be fetched at all. Asking per object
+// instead would be one round trip each, and asking for the whole damage list
+// would fetch what the rungs above were about to answer for free.
+func (s *Sources) Prime(bad []BadObject) {
+	if s.remoteErr != nil {
+		return
+	}
+	var need []gitobj.OID
+	for _, b := range bad {
+		if _, ok := s.local(b); !ok {
+			need = append(need, b.OID)
+		}
+	}
+	if len(need) == 0 {
+		// Everything damaged has a local answer, so there is no remote to open.
+		return
+	}
+	if s.remote == nil {
+		r, err := openRemote(s.repo, s.policy)
+		if err != nil {
+			s.remoteErr = err
+			return
+		}
+		s.remote = r
+	}
+	if err := s.remote.want(need); err != nil {
+		s.remoteErr = err
+	}
+}
+
 // Found is one object's bytes, before they are written back.
 type Found struct {
 	Type    gitobj.Type
@@ -95,6 +144,18 @@ type Found struct {
 // halfway, and every source yields identical bytes anyway, because the name
 // pins the content.
 func (s *Sources) Find(b BadObject) (Found, error) {
+	if f, ok := s.local(b); ok {
+		return f, nil
+	}
+	if f, ok := s.check(b, "a remote", s.fromRemote); ok {
+		return f, nil
+	}
+	return Found{}, fmt.Errorf("no source has %s", b.OID)
+}
+
+// local reads the bytes out of the first source in this repository that has
+// them. Prime uses it to decide what is worth asking a remote for.
+func (s *Sources) local(b BadObject) (Found, bool) {
 	type attempt struct {
 		name string
 		get  func(BadObject) (gitobj.Type, []byte, bool)
@@ -103,19 +164,26 @@ func (s *Sources) Find(b BadObject) (Found, error) {
 		{"another copy in this repository", s.fromDuplicate},
 		{"the worktree", s.fromWorktree},
 		{"a rebuild from the index", s.fromIndexTree},
-		{"a remote", s.fromRemote},
 	} {
-		typ, content, ok := a.get(b)
-		if !ok {
-			continue
+		if f, ok := s.check(b, a.name, a.get); ok {
+			return f, true
 		}
-		if odb.Hash(s.repo.Algo, typ, content).Compare(b.OID) != 0 {
-			// The source produced something that is not this object.
-			continue
-		}
-		return Found{Type: typ, Content: content, Source: a.name}, nil
 	}
-	return Found{}, fmt.Errorf("no source has %s", b.OID)
+	return Found{}, false
+}
+
+// check runs one source and keeps what it produced only when that is the object
+// asked for.
+func (s *Sources) check(b BadObject, name string, get func(BadObject) (gitobj.Type, []byte, bool)) (Found, bool) {
+	typ, content, ok := get(b)
+	if !ok {
+		return Found{}, false
+	}
+	if odb.Hash(s.repo.Algo, typ, content).Compare(b.OID) != 0 {
+		// The source produced something that is not this object.
+		return Found{}, false
+	}
+	return Found{Type: typ, Content: content, Source: name}, true
 }
 
 // Write puts a found object into the repository. WriteLoose hashes it again and
@@ -180,26 +248,21 @@ func (s *Sources) fromIndexTree(b BadObject) (gitobj.Type, []byte, bool) {
 	if len(s.entries) == 0 {
 		return 0, nil, false
 	}
-	// The wanted tree can be at any depth, and the index does not say which directory it is.
-	trees := buildTrees(s.entries, s.repo.Algo)
-	if content, ok := trees[b.OID.String()]; ok {
+	if s.trees == nil {
+		// The wanted tree can be at any depth, and the index does not say which directory it is.
+		s.trees = buildTrees(s.entries, s.repo.Algo)
+	}
+	if content, ok := s.trees[b.OID.String()]; ok {
 		return gitobj.TypeTree, content, true
 	}
 	return 0, nil, false
 }
 
-// fromRemote fetches the object from a configured remote.
+// fromRemote reads an object out of what a remote already sent. Prime does the
+// fetching, so this never reaches the network.
 func (s *Sources) fromRemote(b BadObject) (gitobj.Type, []byte, bool) {
-	if s.remoteErr != nil {
-		return 0, nil, false
-	}
 	if s.remote == nil {
-		r, err := openRemote(s.repo, s.policy)
-		if err != nil {
-			s.remoteErr = err
-			return 0, nil, false
-		}
-		s.remote = r
+		return 0, nil, false
 	}
 	return s.remote.get(b.OID)
 }

@@ -18,10 +18,23 @@ import (
 )
 
 // remoteSource is a scratch repository holding what a remote sent.
+//
+// A run has one, and it outlives every pass. A pass that opened its own threw
+// away what the pass before it fetched, so a repository whose damage takes four
+// passes to unpick paid for four copies of the remote.
 type remoteSource struct {
-	dir  string
-	db   *odb.DB
-	algo *gitobj.Algo
+	dir    string
+	url    string
+	db     *odb.DB
+	algo   *gitobj.Algo
+	policy RemotePolicy
+
+	// asked are the names already requested. What the remote answered is in
+	// the database below, and what it did not answer it does not answer the
+	// second time either.
+	asked map[string]bool
+	// everything says the every-ref fallback has run, so nothing is left to ask for.
+	everything bool
 }
 
 // errNoRemote says the repository has nothing to fetch from, which is an ordinary state and not a failure.
@@ -32,24 +45,14 @@ var errWouldClone = errors.New("this remote does not serve objects by name, so r
 
 // RemotePolicy says how the recovery ladder may use a remote.
 type RemotePolicy struct {
-	// Want is every object the run is looking for.
-	Want []gitobj.OID
 	// EveryRef allows the fallback for a server that refuses to serve an object by name.
 	EveryRef bool
 	// Progress is where git's own fetch progress goes.
 	Progress io.Writer
 }
 
-// openRemote brings the wanted objects into a scratch repository.
-//
-// It asks for them by name first. A server that allows that sends what was
-// asked for and nothing else, so the transfer is over in a moment however large
-// the repository is. Most do allow it: uploadpack.allowAnySHA1InWant, or
-// allowReachableSHA1InWant, which every object a reference reaches satisfies.
-//
-// Fetching every ref always works, because a ref is always servable. It is the
-// fallback and not the first move, because it costs a copy of the entire
-// repository to recover one object.
+// openRemote prepares the scratch repository. It fetches nothing: want does
+// that, once the caller knows which names no local source can answer.
 func openRemote(repo *gitrepo.Repo, policy RemotePolicy) (*remoteSource, error) {
 	url := firstRemoteURL(repo)
 	if url == "" {
@@ -73,58 +76,112 @@ func openRemote(repo *gitrepo.Repo, policy RemotePolicy) (*remoteSource, error) 
 	if err := run(dir, "git", "init", "--bare", "--object-format="+objectFormat, "."); err != nil {
 		return clean(err)
 	}
-	if err := fetchWanted(dir, url, policy); err != nil {
-		return clean(err)
-	}
-
 	db, err := odb.Open(filepath.Join(dir, "objects"), filepath.Join(dir, "objects"), repo.Algo)
 	if err != nil {
 		return clean(err)
 	}
-	return &remoteSource{dir: dir, db: db, algo: repo.Algo}, nil
+	return &remoteSource{
+		dir:    dir,
+		url:    url,
+		db:     db,
+		algo:   repo.Algo,
+		policy: policy,
+		asked:  map[string]bool{},
+	}, nil
 }
 
 // wantBatch is how many object names go into one fetch.
 const wantBatch = 128
 
-// fetchWanted asks for the objects by name, and falls back to every ref only
-// when the policy allows it.
+// want brings the named objects in, asking only for the ones that are not here
+// already.
 //
-// A batch that fails takes the whole by-name attempt with it. A server that
-// refuses one name refuses all of them, and a partial answer here would read as
-// "the remote does not have it" about objects nobody got round to asking for.
-func fetchWanted(dir, url string, policy RemotePolicy) error {
-	if len(policy.Want) == 0 {
-		// Nothing to ask for by name, so every ref is the only question
-		// there is.
-		if !policy.EveryRef {
-			return errWouldClone
-		}
-	} else if err := fetchByName(dir, url, policy); err == nil {
+// This is the whole cost of the remote rung. A name is asked for once in a run:
+// what came back is in the database, and a second question gets the same answer
+// as the first. So a later pass costs a fetch only for the names it is the
+// first to need, and a run that needs nothing new costs no fetch at all.
+//
+// The by-name attempt comes first. Fetching every ref always works, because a
+// ref is always servable, but it costs a copy of the entire repository to
+// recover one object -- so it is the fallback, and it happens at most once.
+func (r *remoteSource) want(oids []gitobj.OID) error {
+	if r.everything {
+		// Every ref came back already, so there is no name left to ask about.
 		return nil
-	} else if !policy.EveryRef {
+	}
+	missing := r.missing(oids)
+	if len(missing) == 0 {
+		return nil
+	}
+	if err := r.fetchByName(missing); err == nil {
+		for _, oid := range missing {
+			r.asked[oid.String()] = true
+		}
+		return r.reopen()
+	} else if !r.policy.EveryRef {
 		return fmt.Errorf("%w (%v)", errWouldClone, err)
-	} else {
-		say(policy.Progress, "The remote will not serve objects by name, so recovering %d of them\n"+
-			"means fetching every branch and tag: a full copy of the repository, into\n"+
-			"%s.\n", len(policy.Want), dir)
 	}
-
-	if err := runVerbose(dir, policy.Progress, "git", "fetch", "--progress", "--no-tags", "--force", url,
+	say(r.policy.Progress, "The remote will not serve objects by name, so recovering %d of them\n"+
+		"means fetching every branch and tag: a full copy of the repository, into\n"+
+		"%s.\n", len(missing), r.dir)
+	if err := runVerbose(r.dir, r.policy.Progress, "git", "fetch", "--progress", "--no-tags", "--force", r.url,
 		"+refs/heads/*:refs/fixed/heads/*", "+refs/tags/*:refs/fixed/tags/*"); err != nil {
-		return fmt.Errorf("fetching from %s: %w", url, err)
+		return fmt.Errorf("fetching from %s: %w", r.url, err)
 	}
+	r.everything = true
+	return r.reopen()
+}
+
+// missing drops the names this scratch repository can answer already.
+func (r *remoteSource) missing(oids []gitobj.OID) []gitobj.OID {
+	out := make([]gitobj.OID, 0, len(oids))
+	seen := map[string]bool{}
+	for _, oid := range oids {
+		name := oid.String()
+		if seen[name] || r.asked[name] {
+			continue
+		}
+		seen[name] = true
+		if _, _, err := r.db.Read(oid); err == nil {
+			continue
+		}
+		out = append(out, oid)
+	}
+	return out
+}
+
+// reopen picks up the pack the fetch just wrote.
+func (r *remoteSource) reopen() error {
+	r.db.Close()
+	db, err := odb.Open(filepath.Join(r.dir, "objects"), filepath.Join(r.dir, "objects"), r.algo)
+	if err != nil {
+		return err
+	}
+	r.db = db
 	return nil
 }
 
 // fetchByName asks the server for the objects themselves.
-func fetchByName(dir, url string, policy RemotePolicy) error {
-	for chunk := range slices.Chunk(policy.Want, wantBatch) {
-		args := []string{"fetch", "--progress", "--no-tags", "--force", url}
+//
+// Two things keep the transfer near the size of what was asked for. Each name
+// is anchored to a reference, because a scratch repository with no references
+// has nothing to negotiate with and is sent every object the fetch before it
+// already brought. And the traversal is bounded: --depth=1 stops a commit
+// dragging its ancestry behind it, --filter=blob:none stops a tree dragging its
+// files. Both still send the named object itself, which is the only one this
+// reads. A server that cannot filter says so and sends the files anyway, so the
+// depth is the part that can be relied on.
+//
+// A batch that fails takes the whole by-name attempt with it. A server that
+// refuses one name refuses all of them, and a partial answer here would read as
+// "the remote does not have it" about objects nobody got round to asking for.
+func (r *remoteSource) fetchByName(oids []gitobj.OID) error {
+	for chunk := range slices.Chunk(oids, wantBatch) {
+		args := []string{"fetch", "--progress", "--no-tags", "--force", "--depth=1", "--filter=blob:none", r.url}
 		for _, oid := range chunk {
-			args = append(args, oid.String())
+			args = append(args, oid.String()+":refs/fixed/wanted/"+oid.String())
 		}
-		if err := runVerbose(dir, policy.Progress, "git", args...); err != nil {
+		if err := runVerbose(r.dir, r.policy.Progress, "git", args...); err != nil {
 			return err
 		}
 	}
