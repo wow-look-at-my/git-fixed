@@ -32,8 +32,6 @@ type remoteSource struct {
 	asked set.Set[string]
 	// everything says the every-ref fallback has run, so nothing is left to ask for.
 	everything bool
-	// bound indexes bounds: how far this server made the run loosen its ask.
-	bound int
 }
 
 // errNoRemote says the repository has nothing to fetch from, which is an ordinary state and not a failure.
@@ -75,6 +73,9 @@ func openRemote(repo *gitrepo.Repo, policy RemotePolicy) (*remoteSource, error) 
 	if err := run(dir, "git", "init", "--bare", "--object-format="+objectFormat, "."); err != nil {
 		return clean(err)
 	}
+	if err := declarePartial(dir, url); err != nil {
+		return clean(err)
+	}
 	db, err := odb.Open(filepath.Join(dir, "objects"), filepath.Join(dir, "objects"), repo.Algo)
 	if err != nil {
 		return clean(err)
@@ -87,6 +88,36 @@ func openRemote(repo *gitrepo.Repo, policy RemotePolicy) (*remoteSource, error) 
 		policy: policy,
 		asked:  set.New[string](),
 	}, nil
+}
+
+// remoteName is what the scratch repository calls the remote it fetches from.
+// A filter is a property of a named remote, so a fetch straight from a URL
+// cannot carry one.
+const remoteName = "origin"
+
+// declarePartial makes the scratch repository one that accepts a filtered pack.
+//
+// Without this git fetches the filtered pack and then refuses it -- "missing
+// blob object", because the tips it just wrote do not reach everything under
+// them. A repository that says it holds part of a remote on purpose is not
+// checked that way. A server that cannot filter is unaffected: it sends the
+// files anyway and the fetch is merely larger.
+//
+// remote.<name>.partialclonefilter is deliberately not set. It would apply the
+// filter to every later fetch, and the every-ref fallback would come back
+// without the blobs -- 60 objects of 90, and nothing said so.
+func declarePartial(dir, url string) error {
+	for _, kv := range [][2]string{
+		{"core.repositoryformatversion", "1"},
+		{"extensions.partialClone", remoteName},
+		{"remote." + remoteName + ".url", url},
+		{"remote." + remoteName + ".promisor", "true"},
+	} {
+		if err := run(dir, "git", "config", kv[0], kv[1]); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // wantBatch is how many object names go into one fetch.
@@ -119,7 +150,7 @@ func (r *remoteSource) want(oids []gitobj.OID) error {
 	say(r.policy.Progress, "The remote will not serve objects by name, so recovering %d of them\n"+
 		"means fetching every branch and tag: a full copy of the repository, into\n"+
 		"%s.\n", len(missing), r.dir)
-	if err := runVerbose(r.dir, r.policy.Progress, "git", "fetch", "--progress", "--no-tags", "--force", r.url,
+	if err := runVerbose(r.dir, r.policy.Progress, "git", "fetch", "--progress", "--no-tags", "--force", remoteName,
 		"+refs/heads/*:refs/fixed/heads/*", "+refs/tags/*:refs/fixed/tags/*"); err != nil {
 		return fmt.Errorf("fetching from %s: %w", r.url, err)
 	}
@@ -155,47 +186,25 @@ func (r *remoteSource) reopen() error {
 	return nil
 }
 
-// bounds are the ways to ask for an object without the history behind it, best
-// first.
-//
-// A commit asked for by name arrives with its whole ancestry unless something
-// stops the traversal. --filter=blob:none stops it at the trees, but the server
-// has to allow filtering and the scratch repository has to be a promisor to
-// accept the result -- over a plain path git fetches the pack and then refuses
-// it, missing blob object. --depth=1 needs neither and is what can be relied
-// on. Neither withholds the named object itself. see docs/repair.md
-var bounds = [][]string{
-	{"--depth=1", "--filter=blob:none"},
-	{"--depth=1"},
-	{},
-}
-
 // fetchByName asks the server for the objects themselves.
 //
-// Each name is anchored to a reference: a scratch repository with no reference
-// has nothing to negotiate with, and is sent every object the fetch before it
-// already brought.
+// Three things keep the transfer to about what was asked for. Each name is
+// anchored to a reference, because a scratch repository with no reference has
+// nothing to negotiate with and is sent every object the fetch before it
+// already brought. --depth=1 stops a commit dragging its ancestry behind it,
+// and --filter=blob:none stops a tree dragging its files. Neither withholds the
+// named object itself. see docs/repair.md
 //
 // A batch that fails takes the whole by-name attempt with it. A server that
 // refuses one name refuses all of them, and a partial answer would read as "the
 // remote does not have it" about objects nobody asked for.
 func (r *remoteSource) fetchByName(oids []gitobj.OID) error {
 	for chunk := range slices.Chunk(oids, wantBatch) {
-		var err error
-		// The bound that worked once works again, so a run pays for at
-		// most one refusal rather than one per batch.
-		for ; r.bound < len(bounds); r.bound++ {
-			args := append([]string{"fetch", "--progress", "--no-tags", "--force"}, bounds[r.bound]...)
-			args = append(args, r.url)
-			for _, oid := range chunk {
-				args = append(args, oid.String()+":refs/fixed/wanted/"+oid.String())
-			}
-			if err = runVerbose(r.dir, r.policy.Progress, "git", args...); err == nil {
-				break
-			}
+		args := []string{"fetch", "--progress", "--no-tags", "--force", "--depth=1", "--filter=blob:none", remoteName}
+		for _, oid := range chunk {
+			args = append(args, oid.String()+":refs/fixed/wanted/"+oid.String())
 		}
-		if r.bound == len(bounds) {
-			// Nothing left to loosen: this remote does not serve the name at all.
+		if err := runVerbose(r.dir, r.policy.Progress, "git", args...); err != nil {
 			return err
 		}
 	}
