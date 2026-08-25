@@ -35,8 +35,8 @@ type Sources struct {
 	byOID map[string][]string
 	// entries is the index, for rebuilding a tree.
 	entries []gitrepo.IndexEntry
-	// trees is the index folded back into tree objects, built on first use
-	// because every damaged tree asks the same question of the same index.
+	// trees is the index folded back into tree objects, built once because
+	// every damaged tree asks the same question of the same index.
 	trees map[string][]byte
 	// remote is the scratch checkout a remote's objects arrive in.
 	remote *remoteSource
@@ -81,24 +81,19 @@ func (s *Sources) Close() {
 }
 
 // Retarget points the local sources at a reopened repository and keeps the
-// remote.
-//
-// A pass reopens the object database to see what the pass before it wrote.
-// Nothing about that changes what a remote already sent, and fetching it again
-// costs another copy of the remote.
+// remote. Reopening says nothing about what a remote already sent, and fetching
+// that again costs another copy of it.
 func (s *Sources) Retarget(repo *gitrepo.Repo, db *odb.DB) {
 	remote, remoteErr := s.remote, s.remoteErr
 	*s = *NewSources(repo, db, s.policy)
 	s.remote, s.remoteErr = remote, remoteErr
 }
 
-// Prime fetches what this run is about to ask a remote for: one fetch for the
-// whole pass, and only for the objects no local source answers.
+// Prime fetches what this pass is about to ask a remote for, in one go and only
+// for the objects no local source answers.
 //
-// The remote is the last rung, so an object the worktree or another copy in the
-// repository already holds must never be fetched at all. Asking per object
-// instead would be one round trip each, and asking for the whole damage list
-// would fetch what the rungs above were about to answer for free.
+// The remote is the last rung, so an object the worktree or another copy here
+// already holds must never be fetched at all.
 func (s *Sources) Prime(bad []BadObject) {
 	if s.remoteErr != nil {
 		return

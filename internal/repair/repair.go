@@ -236,8 +236,8 @@ func Run(o *Options) (*Result, error) {
 	}
 
 	// Repair goes round until it stops making progress. One set of sources
-	// serves every pass: a pass that built its own refetched what the pass
-	// before it had already brought in.
+	// serves every pass, because a pass that built its own refetched
+	// everything the pass before it had brought in.
 	sources := NewSources(repo, db, RemotePolicy{EveryRef: true, Progress: o.Stderr})
 	defer sources.Close()
 
@@ -268,8 +268,7 @@ func Run(o *Options) (*Result, error) {
 		if len(todo) == 0 {
 			break
 		}
-		// The remote is asked once for the whole pass, and only for the names
-		// no local source answers and no earlier pass already fetched.
+		// One fetch for the pass, for the names nothing local answers.
 		sources.Prime(todo)
 		recovered := 0
 		back = nil

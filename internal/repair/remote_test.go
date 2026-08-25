@@ -139,8 +139,7 @@ func remoteFetches(calls []gitCall) []gitCall {
 	return out
 }
 
-// transferred counts the objects a run's fetches pulled over the wire, out of
-// git's own progress.
+// transferred finds the objects one fetch pulled, in git's own progress.
 var transferred = regexp.MustCompile(`Receiving objects: 100% \((\d+)/\d+\), `)
 
 func received(stderr string) int {
