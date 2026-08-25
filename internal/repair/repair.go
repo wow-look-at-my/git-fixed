@@ -148,18 +148,6 @@ func stillBad(found, carried []BadObject) []BadObject {
 	return out
 }
 
-// wanted is every object a scan found damaged.
-func wanted(d *Damage) []gitobj.OID { return names(d.Objects) }
-
-// names is every object in a list, by name.
-func names(bad []BadObject) []gitobj.OID {
-	out := make([]gitobj.OID, 0, len(bad))
-	for _, b := range bad {
-		out = append(out, b.OID)
-	}
-	return out
-}
-
 // Run repairs the repository and reports what it did.
 //
 // It never deletes: a displaced file goes to the run's quarantine directory and
@@ -247,8 +235,10 @@ func Run(o *Options) (*Result, error) {
 		verified = damage.Verified
 	}
 
-	// Repair goes round until it stops making progress.
-	sources := NewSources(repo, db, RemotePolicy{Want: wanted(damage), EveryRef: true, Progress: o.Stderr})
+	// Repair goes round until it stops making progress. One set of sources
+	// serves every pass, because a pass that built its own refetched
+	// everything the pass before it had brought in.
+	sources := NewSources(repo, db, RemotePolicy{EveryRef: true, Progress: o.Stderr})
 	defer sources.Close()
 
 	// done is every object this run has already put back.
@@ -272,16 +262,14 @@ func Run(o *Options) (*Result, error) {
 				return nil, err
 			}
 			verified = damage.Verified
+			sources.Retarget(repo, db)
 		}
 		todo := stillBad(damage.Objects, stuck)
 		if len(todo) == 0 {
 			break
 		}
-		if pass > 0 {
-			// The remote is asked for names, so it is asked after the pass knows all of them: what came back revealed.
-			sources.Close()
-			sources = NewSources(repo, db, RemotePolicy{Want: names(todo), EveryRef: true, Progress: o.Stderr})
-		}
+		// One fetch for the pass, for the names nothing local answers.
+		sources.Prime(todo)
 		recovered := 0
 		back = nil
 		stuck = nil
@@ -390,8 +378,9 @@ func plan(repo *gitrepo.Repo, db *odb.DB, damage *Damage, res *Result, progress 
 	// the repair that follows would have put most of them back.
 	if len(damage.Objects) > 0 {
 		// A plan may ask a remote for the objects by name, which costs a round trip.
-		src := NewSources(repo, db, RemotePolicy{Want: wanted(damage), Progress: progress})
+		src := NewSources(repo, db, RemotePolicy{Progress: progress})
 		defer src.Close()
+		src.Prime(damage.Objects)
 		for _, b := range damage.Objects {
 			f, err := src.Find(b)
 			if err != nil {

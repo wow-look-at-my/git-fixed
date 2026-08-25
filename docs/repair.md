@@ -113,6 +113,39 @@ Given one object name to recover, the sources are tried in this order:
 Local sources come before the remote because they cost nothing and cannot fail halfway. Which source answers first never changes the result: the hash
 check at the end means every source produces the identical bytes or none at all.
 
+### What the remote rung costs
+
+A remote is the one rung that costs the network, and on the repositories this tool is for the network is hours. Four things keep it to the objects
+that are actually missing. Each was a way this rung used to cost a copy of the whole repository.
+
+**One scratch repository for the run.** A pass used to build its own sources, which opened a scratch repository and deleted the one the pass before
+it had filled. Damage that takes four passes to unpick therefore fetched four times. `Sources.Retarget` now points the local sources at the reopened
+database and keeps the remote.
+
+**Only the names nothing local answers.** `Sources.Prime` runs the three local rungs over the whole pass first and asks the remote for what is left,
+in one fetch. A file sitting in the worktree is never fetched. Asking per object would be a round trip each; asking for the whole damage list would
+fetch what the rungs above were about to answer for free.
+
+**Each name asked once.** `remoteSource.asked` records what has been requested. What came back is in the scratch database, and what the remote
+refused it refuses again, so a later pass pays only for the names it is the first to need.
+
+**A bounded ask.** A commit asked for by name arrives with its entire ancestry unless something stops the traversal, which is what made one missing
+object cost eight gigabytes. Three flags bound it:
+
+- `--depth=1` stops the walk at the named commit.
+- `--filter=blob:none` stops a tree dragging its files. The scratch repository is declared a promisor
+  (`extensions.partialClone`, `remote.origin.promisor`) or git fetches the filtered pack and then refuses it -- *missing blob object* -- because the
+  tips it just wrote do not reach everything under them. A server that cannot filter says so and sends the files anyway; the fetch is merely larger.
+  `remote.origin.partialclonefilter` is deliberately **not** set: it would apply to every later fetch, and the every-ref fallback below would come
+  back without the blobs, silently.
+- `<oid>:refs/fixed/wanted/<oid>` anchors each name to a reference. A scratch repository with no reference has nothing to negotiate with, so the
+  next fetch is sent every object the last one already brought.
+
+Measured on a 120-commit repository whose upstream holds 480 objects, with one commit missing: 480 objects came over the wire before, 2 after.
+
+Fetching every branch and tag remains the fallback for a server that will not serve an object by name at all. It announces itself, and it now runs
+at most once per run -- `everything` records that there is nothing left to ask about.
+
 ## What a run does, in order
 
 0. Diagnose. `git-fixed` runs a full fsck first and prints git's own findings, so a person sees what was wrong before anything moves.
