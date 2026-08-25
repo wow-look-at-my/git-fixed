@@ -32,6 +32,8 @@ type remoteSource struct {
 	asked set.Set[string]
 	// everything says the every-ref fallback has run, so nothing is left to ask for.
 	everything bool
+	// bound indexes bounds: how far this server made the run loosen its ask.
+	bound int
 }
 
 // errNoRemote says the repository has nothing to fetch from, which is an ordinary state and not a failure.
@@ -153,23 +155,47 @@ func (r *remoteSource) reopen() error {
 	return nil
 }
 
+// bounds are the ways to ask for an object without the history behind it, best
+// first.
+//
+// A commit asked for by name arrives with its whole ancestry unless something
+// stops the traversal. --filter=blob:none stops it at the trees, but the server
+// has to allow filtering and the scratch repository has to be a promisor to
+// accept the result -- over a plain path git fetches the pack and then refuses
+// it, missing blob object. --depth=1 needs neither and is what can be relied
+// on. Neither withholds the named object itself. see docs/repair.md
+var bounds = [][]string{
+	{"--depth=1", "--filter=blob:none"},
+	{"--depth=1"},
+	{},
+}
+
 // fetchByName asks the server for the objects themselves.
 //
 // Each name is anchored to a reference: a scratch repository with no reference
 // has nothing to negotiate with, and is sent every object the fetch before it
-// already brought. --depth=1 and --filter=blob:none bound the traversal, and
-// neither withholds the named object itself.
+// already brought.
 //
 // A batch that fails takes the whole by-name attempt with it. A server that
 // refuses one name refuses all of them, and a partial answer would read as "the
-// remote does not have it" about objects nobody asked for. see docs/repair.md
+// remote does not have it" about objects nobody asked for.
 func (r *remoteSource) fetchByName(oids []gitobj.OID) error {
 	for chunk := range slices.Chunk(oids, wantBatch) {
-		args := []string{"fetch", "--progress", "--no-tags", "--force", "--depth=1", "--filter=blob:none", r.url}
-		for _, oid := range chunk {
-			args = append(args, oid.String()+":refs/fixed/wanted/"+oid.String())
+		var err error
+		// The bound that worked once works again, so a run pays for at
+		// most one refusal rather than one per batch.
+		for ; r.bound < len(bounds); r.bound++ {
+			args := append([]string{"fetch", "--progress", "--no-tags", "--force"}, bounds[r.bound]...)
+			args = append(args, r.url)
+			for _, oid := range chunk {
+				args = append(args, oid.String()+":refs/fixed/wanted/"+oid.String())
+			}
+			if err = runVerbose(r.dir, r.policy.Progress, "git", args...); err == nil {
+				break
+			}
 		}
-		if err := runVerbose(r.dir, r.policy.Progress, "git", args...); err != nil {
+		if r.bound == len(bounds) {
+			// Nothing left to loosen: this remote does not serve the name at all.
 			return err
 		}
 	}

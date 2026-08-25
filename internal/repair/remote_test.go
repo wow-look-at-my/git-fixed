@@ -74,8 +74,11 @@ func TestTheRemoteIsAskedForTheObjectsByName(t *testing.T) {
 // tag, because that writes a copy of the repository into a temporary directory
 // -- and on the repositories this tool is for, that fills the disk the
 // repository is on.
+//
+// The repository behind this one is ninety objects, so what a bounded ask costs
+// and what a copy costs are far enough apart to tell apart.
 func TestADryRunNeverFetchesEveryRef(t *testing.T) {
-	r := withRemote(t)
+	r := deepRemote(t, 30)
 	for _, path := range looseObjects(t, r) {
 		require.NoError(t, os.Remove(path))
 	}
@@ -83,10 +86,8 @@ func TestADryRunNeverFetchesEveryRef(t *testing.T) {
 	_, stderr := runWith(t, r, true)
 	assert.NotContains(t, stderr, "will not serve objects by name",
 		"a dry run fetched every ref")
-	for _, line := range strings.Split(stderr, "\n") {
-		assert.NotContains(t, line, "Receiving objects",
-			"a dry run pulled a whole repository")
-	}
+	assert.LessOrEqual(t, received(stderr), 10,
+		"a dry run pulled %d objects, which is the repository", received(stderr))
 }
 
 // gitCall is one git command a run made, and the directory it ran in.
