@@ -171,7 +171,9 @@ func deepRemote(t *testing.T, commits int) *gittest.Repo {
 	// What a real server allows: an object by name, and a filtered traversal.
 	r.Git("-C", upstream, "config", "uploadpack.allowAnySHA1InWant", "true")
 	r.Git("-C", upstream, "config", "uploadpack.allowFilter", "true")
-	r.Git("remote", "add", "origin", upstream)
+	// file://, because a bare path is git's local transport: it copies rather
+	// than negotiates, and reports nothing about what it moved.
+	r.Git("remote", "add", "origin", "file://"+upstream)
 	r.Git("push", "-q", "origin", "HEAD:refs/heads/master")
 	return r
 }

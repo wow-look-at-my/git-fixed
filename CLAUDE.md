@@ -11,6 +11,9 @@ after the fsck. There is one binary and there must stay one. More commands are p
 - **A pass hands the next pass what it learned.** One pass repairs one layer, so a chain of damage costs several. Each later pass carries the packs
   the one before it read, checked by size and modification time, and starts its walk under the objects that pass put back rather than at the
   references. Four passes used to mean four full pack reads and four full walks. `descend`, `trustUnchanged`, `docs/repair.md`.
+- **A remote is asked once, for the names only it has.** One scratch repository serves the run, `Prime` asks for what the three local rungs could not
+  answer, and each name is asked once. A commit asked for by name brings its whole ancestry, so the ask is bounded by `--depth=1`, by a filter the
+  scratch repository is a promisor to accept, and by a ref to negotiate from. One missing commit cost 480 objects and now costs 2. `docs/repair.md`.
 - **A phase that takes time draws a meter, and the meter says what the run costs.** git shows one on five phases of its fsck and this shows one on
   the same five, plus two on the repair scan, which git has nothing to copy for. Every line carries the clock and the memory high-water mark,
   because a run the kernel kills for memory never reaches the line that would have said so. `internal/progress`, `internal/memwatch`,
