@@ -69,14 +69,11 @@ func TestTheRemoteIsAskedForTheObjectsByName(t *testing.T) {
 
 // TestADryRunNeverFetchesEveryRef is the disk nobody offered.
 //
-// A run that promises to change nothing may ask a remote for an object by name,
-// which costs a round trip. It may not fall back to fetching every branch and
-// tag, because that writes a copy of the repository into a temporary directory
-// -- and on the repositories this tool is for, that fills the disk the
-// repository is on.
-//
-// The repository behind this one is ninety objects, so what a bounded ask costs
-// and what a copy costs are far enough apart to tell apart.
+// A run that promises to change nothing may ask a remote for an object by name.
+// It may not fall back to every branch and tag, which writes a copy of the
+// repository into a temporary directory -- and on the repositories this tool is
+// for, that fills the disk the repository is on. The upstream here is ninety
+// objects, so a bounded ask and a copy are far enough apart to tell apart.
 func TestADryRunNeverFetchesEveryRef(t *testing.T) {
 	r := deepRemote(t, 30)
 	for _, path := range looseObjects(t, r) {
@@ -171,8 +168,8 @@ func deepRemote(t *testing.T, commits int) *gittest.Repo {
 	// What a real server allows: an object by name, and a filtered traversal.
 	r.Git("-C", upstream, "config", "uploadpack.allowAnySHA1InWant", "true")
 	r.Git("-C", upstream, "config", "uploadpack.allowFilter", "true")
-	// file://, because a bare path is git's local transport: it copies rather
-	// than negotiates, and reports nothing about what it moved.
+	// file://, because a bare path is git's local transport: it copies
+	// instead of negotiating, and reports nothing about what it moved.
 	r.Git("remote", "add", "origin", "file://"+upstream)
 	r.Git("push", "-q", "origin", "HEAD:refs/heads/master")
 	return r

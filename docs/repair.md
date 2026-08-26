@@ -227,9 +227,13 @@ across the passes, for the same reason and by the same rule: hand over the fact,
   compares all three before trusting any of it, so a pack that grew, that was rewritten to the same size, or that is no longer there gets read.
   `trustUnchanged`, `internal/repair/scan.go`.
 - **The route back to the damage.** A later pass does not scan at all. `descend` starts the walk under the objects the pass before it put back,
-  because that is where the next layer is, and everything else reachable was approved by the walk that already ran. It reads nothing a full scan
-  would not have had to read: the earlier walk stopped at the object that was missing, so nothing below it has been looked at yet.
-  `internal/repair/walk.go`.
+  because that is where the next layer is, and everything else reachable was approved by the walk that already ran. `internal/repair/walk.go`.
+- **The objects already read.** Starting under a restored object is not by itself a small walk. A commit reaches its whole tree, and that tree is
+  mostly the tree an earlier pass has already read -- so a pass with a fresh record of what it had seen re-read the repository to reach the one
+  object above it. A chain of eight missing commits walked 3243 objects on a repository of 451; on a real one that is thirteen million objects and
+  forty-five seconds, per link. Each pass now carries `Damage.Seen`, and reads only what is newly reachable: the same chain walks 51. What an
+  earlier pass read stays true, because a pass only writes objects and only displaces files that were already unusable. The objects it put back are
+  dropped from the record first, or the walk would start nowhere. `descend`, `internal/repair/walk.go`.
 
 Two things do still scan the whole repository again, and must. Displacing a corrupt pack or rewriting `packed-refs` changes what the repository can
 produce and what its references reach, globally -- a line git's reader refuses hides every reference below it -- so each is followed by a `rescan`.

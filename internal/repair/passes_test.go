@@ -9,8 +9,10 @@ package repair_test
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -123,6 +125,127 @@ func TestAChainOfMissingObjectsCostsOneWalk(t *testing.T) {
 		"the run walked from the references once per layer:\n%s", meters)
 	assert.Positive(t, meterRuns(meters, "Checking what came back"),
 		"the run never went looking under what it had put back:\n%s", meters)
+}
+
+// walkSizes are the object counts every meter under a title finished at.
+//
+// The meter redraws on one line, so its counts arrive separated by carriage
+// returns and the last one before "done." is what that walk cost.
+func walkSizes(drawn, title string) []int {
+	var out []int
+	for _, line := range strings.Split(strings.ReplaceAll(drawn, "\r", "\n"), "\n") {
+		if !strings.Contains(line, title+":") || !strings.Contains(line, "done.") {
+			continue
+		}
+		fields := strings.Fields(strings.TrimPrefix(strings.TrimSpace(line), title+":"))
+		if len(fields) == 0 {
+			continue
+		}
+		if n, err := strconv.Atoi(fields[0]); err == nil {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// broadFiles is how many files every commit's tree holds. On a handful of them
+// a descent that re-reads everything and one that reads nothing cost the same,
+// and the test below measures nothing.
+const broadFiles = 150
+
+// chained builds a history whose every commit reaches a broad tree, with a run
+// of consecutive commits gone. Each one hides the one above it, so the run
+// needs a pass per link.
+func chained(t *testing.T, links int) (*gittest.Repo, []string, snapshot) {
+	t.Helper()
+	gittest.RequireGit(t)
+	r := gittest.New(t)
+	require.NoError(t, os.MkdirAll(filepath.Join(r.Dir, "wide"), 0o777))
+	for i := range broadFiles {
+		r.Write(fmt.Sprintf("wide/f%d.txt", i), fmt.Sprintf("file %d\n", i))
+	}
+	r.Git("add", "-A")
+	r.Git("commit", "-q", "-m", "base")
+	for i := range links + 4 {
+		r.Write("wide/f0.txt", fmt.Sprintf("rev %d\n", i))
+		r.Git("add", "-A")
+		r.Git("commit", "-q", "-m", fmt.Sprintf("c%d", i))
+	}
+	upstream := t.TempDir()
+	r.Git("init", "-q", "--bare", upstream)
+	r.Git("-C", upstream, "config", "uploadpack.allowAnySHA1InWant", "true")
+	r.Git("-C", upstream, "config", "uploadpack.allowFilter", "true")
+	r.Git("remote", "add", "origin", "file://"+upstream)
+	r.Git("push", "-q", "origin", "HEAD:refs/heads/master")
+
+	// Everything the repository holds, while git can still read it.
+	before := record(t, r)
+	var gone []string
+	for i := range links {
+		gone = append(gone, strings.TrimSpace(r.Git("rev-parse", fmt.Sprintf("HEAD~%d", i+2))))
+	}
+	for _, oid := range gone {
+		require.NoError(t, os.Remove(r.ObjectPath(mustOID(t, r, oid))))
+	}
+	require.NotEqual(t, 0, r.GitFsck().Code, "the test did not break anything")
+	return r, gone, before
+}
+
+// TestAChainCostsOneWalkOfTheRepositoryNotOnePerLink is the hour this cost on a
+// real repository.
+//
+// A missing commit hides its parent, so a chain takes a pass per link. Every
+// pass used to start a fresh record of what it had already read, and descending
+// under a restored commit still reaches everything that commit reaches -- so
+// each pass re-read the whole repository to find the one object above it.
+// Thirteen million objects, forty-five seconds, once per link.
+//
+// What a pass reads stays true: a pass only writes objects, and only displaces
+// files that were already unusable. So the walks after the first cost what is
+// newly reachable, which is the link itself.
+func TestAChainCostsOneWalkOfTheRepositoryNotOnePerLink(t *testing.T) {
+	const links = 4
+	r, gone, before := chained(t, links)
+
+	res, meters := fixWithMeters(t, r)
+	require.True(t, res.Ok(), "the chain was not repaired: %+v", res.Unrecovered)
+	assert.Len(t, res.Objects, links, "a link of the chain was missed")
+	requireGitClean(t, r)
+	requireSame(t, before, r)
+
+	walks := walkSizes(meters, "Checking what came back")
+	require.Len(t, walks, links, "a pass per link is the shape this measures:\n%s", meters)
+	assert.Len(t, gone, links)
+
+	// A descent that starts from nothing reads the whole tree under the commit
+	// it starts at, which is what every one of these sits on.
+	for i, n := range walks {
+		assert.Less(t, n, broadFiles/2,
+			"descent %d read %d objects, and every commit here reaches %d files: it re-read the tree it had already read (%v)",
+			i+1, n, broadFiles, walks)
+	}
+
+	// Whole again, so this is what they were walking over and over.
+	held := objectCount(t, r)
+	total := 0
+	for _, n := range walks {
+		total += n
+	}
+	assert.Less(t, total, held,
+		"%d descents read %d objects between them and the repository holds %d (%v)",
+		len(walks), total, held, walks)
+}
+
+// objectCount is how many objects the references reach.
+func objectCount(t *testing.T, r *gittest.Repo) int {
+	t.Helper()
+	n := 0
+	for _, line := range strings.Split(r.Git("rev-list", "--objects", "--all"), "\n") {
+		if strings.TrimSpace(line) != "" {
+			n++
+		}
+	}
+	return n
 }
 
 // TestAScanVouchesForThePacksItRead is what makes the pass above possible: a

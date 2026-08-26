@@ -35,8 +35,7 @@ type Sources struct {
 	byOID map[string][]string
 	// entries is the index, for rebuilding a tree.
 	entries []gitrepo.IndexEntry
-	// trees is the index folded back into tree objects, built once because
-	// every damaged tree asks the same question of the same index.
+	// trees is the index folded back into tree objects, built once.
 	trees map[string][]byte
 	// remote is the scratch checkout a remote's objects arrive in.
 	remote *remoteSource
@@ -81,8 +80,7 @@ func (s *Sources) Close() {
 }
 
 // Retarget points the local sources at a reopened repository and keeps the
-// remote. Reopening says nothing about what a remote already sent, and fetching
-// that again costs another copy of it.
+// remote, because refetching it costs another copy of it.
 func (s *Sources) Retarget(repo *gitrepo.Repo, db *odb.DB) {
 	remote, remoteErr := s.remote, s.remoteErr
 	*s = *NewSources(repo, db, s.policy)
@@ -131,13 +129,8 @@ type Found struct {
 // Find reads the bytes for one object out of the first source that has them.
 //
 // It does not write. The caller displaces the corrupt file first and writes
-// afterwards, because the other order destroys the corrupt copy: a write lands
-// on the same path, so quarantining after it would file away the repaired
-// object and leave nothing to undo.
-//
-// The order is local first. A local source costs a read and cannot fail
-// halfway, and every source yields identical bytes anyway, because the name
-// pins the content.
+// afterwards: a write lands on the same path, so quarantining after it files
+// away the repaired object and leaves nothing to undo.
 func (s *Sources) Find(b BadObject) (Found, error) {
 	if f, ok := s.local(b); ok {
 		return f, nil
@@ -149,7 +142,10 @@ func (s *Sources) Find(b BadObject) (Found, error) {
 }
 
 // local reads the bytes out of the first source in this repository that has
-// them. Prime uses it to decide what is worth asking a remote for.
+// them, which is the order the ladder wants: a local source costs a read and
+// cannot fail halfway, and the name pins the content, so every source that
+// answers at all yields the identical bytes. Prime uses it to decide what is
+// worth asking a remote for.
 func (s *Sources) local(b BadObject) (Found, bool) {
 	type attempt struct {
 		name string

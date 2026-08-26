@@ -58,12 +58,23 @@ func (p *pathNode) String() string {
 func (q queued) need() Need { return Need{Ref: q.ref, Path: q.path.String()} }
 
 // descend follows the objects a pass has just put back.
-func descend(repo *gitrepo.Repo, db *odb.DB, meters Meters, from []BadObject, verified []VerifiedPack) (*Damage, error) {
+//
+// seen is what every earlier walk of this run already read, and carrying it is
+// the difference between a pass and a run. Starting under a restored commit
+// still reaches everything that commit reaches, so a fresh set costs a full
+// walk per pass: a chain of a hundred missing commits read a repository of
+// thirteen million objects a hundred times, forty-five seconds each. What an
+// earlier pass read is still there, because a pass only writes objects and only
+// displaces files that were already unusable.
+func descend(repo *gitrepo.Repo, db *odb.DB, meters Meters, from []BadObject, verified []VerifiedPack, seen *concurrentmap.Map[gitobj.OID, bool]) (*Damage, error) {
+	if seen == nil {
+		seen = concurrentmap.New[gitobj.OID, bool]()
+	}
 	s := &scanner{
 		repo:   repo,
 		db:     db,
 		bad:    concurrentmap.New[gitobj.OID, *BadObject](),
-		seen:   concurrentmap.New[gitobj.OID, bool](),
+		seen:   seen,
 		queue:  concurrentbag.New[queued](),
 		meters: meters,
 		errand: true,
@@ -75,10 +86,12 @@ func descend(repo *gitrepo.Repo, db *odb.DB, meters Meters, from []BadObject, ve
 		if len(b.Needs) > 0 {
 			need = b.Needs[0]
 		}
+		// An earlier pass reached it, or it would not be here. Forget that.
+		s.seen.Delete(b.OID)
 		s.want(b.OID, b.Type, need.Ref, &pathNode{name: need.Path})
 	}
 	s.walk()
-	d := &Damage{Verified: s.verified}
+	d := &Damage{Verified: s.verified, Seen: s.seen}
 	s.collect(d)
 	return d, nil
 }

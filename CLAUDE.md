@@ -9,8 +9,9 @@ after the fsck. There is one binary and there must stay one. More commands are p
   list is the whole of it -- so the scan re-reads neither. A status bit answers none of those: `ErrorObject` is a corrupt file and also a commit
   with no author. `repair.Verdict`, `docs/repair.md`.
 - **A pass hands the next pass what it learned.** One pass repairs one layer, so a chain of damage costs several. Each later pass carries the packs
-  the one before it read, checked by size and modification time, and starts its walk under the objects that pass put back rather than at the
-  references. Four passes used to mean four full pack reads and four full walks. `descend`, `trustUnchanged`, `docs/repair.md`.
+  the one before it read, checked by size and modification time, the objects it reached, and it starts its walk under what that pass put back rather
+  than at the references. Starting there is not enough on its own: a commit reaches its whole tree, so without the objects a chain of eight walked
+  3243 of 451 objects, and with them 51. `descend`, `trustUnchanged`, `Damage.Seen`, `docs/repair.md`.
 - **A remote is asked once, for the names only it has.** One scratch repository serves the run, `Prime` asks for what the three local rungs could not
   answer, and each name is asked once. A commit asked for by name brings its whole ancestry, so the ask is bounded by `--depth=1`, by a filter the
   scratch repository is a promisor to accept, and by a ref to negotiate from. One missing commit cost 480 objects and now costs 2. `docs/repair.md`.

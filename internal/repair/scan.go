@@ -65,6 +65,8 @@ type Damage struct {
 	Packs []BadPack
 	// Verified are the packs this scan read end to end or took on trust, each with the file it read.
 	Verified []VerifiedPack
+	// Seen is every object the walk reached, for the next pass. see descend
+	Seen *concurrentmap.Map[gitobj.OID, bool]
 	// Index is .git/index when it will not parse, with the reason.
 	Index *BadIndex
 	// PackedRefs is packed-refs when it will not parse, with the reason.
@@ -171,6 +173,7 @@ func scan(repo *gitrepo.Repo, db *odb.DB, meters Meters, v *Verdict, verified []
 	if !v.refsReach() {
 		s.walk()
 	}
+	d.Seen = s.seen
 	s.collect(d)
 	return d, nil
 }
