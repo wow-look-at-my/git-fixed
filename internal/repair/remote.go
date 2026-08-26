@@ -27,8 +27,7 @@ type remoteSource struct {
 	algo   *gitobj.Algo
 	policy RemotePolicy
 
-	// asked are the names already requested. What came back is in the
-	// database below, and what the remote refused it refuses again.
+	// asked are the names already requested, answered or not.
 	asked set.Set[string]
 	// everything says the every-ref fallback has run, so nothing is left to ask for.
 	everything bool
@@ -90,22 +89,16 @@ func openRemote(repo *gitrepo.Repo, policy RemotePolicy) (*remoteSource, error) 
 	}, nil
 }
 
-// remoteName is what the scratch repository calls the remote it fetches from.
-// A filter is a property of a named remote, so a fetch straight from a URL
-// cannot carry one.
+// remoteName is what the scratch repository calls the remote, because a filter
+// is a property of a named remote and a bare URL cannot carry one.
 const remoteName = "origin"
 
 // declarePartial makes the scratch repository one that accepts a filtered pack.
+// Without it git fetches the pack and then refuses it, missing blob object.
 //
-// Without this git fetches the filtered pack and then refuses it -- "missing
-// blob object", because the tips it just wrote do not reach everything under
-// them. A repository that says it holds part of a remote on purpose is not
-// checked that way. A server that cannot filter is unaffected: it sends the
-// files anyway and the fetch is merely larger.
-//
-// remote.<name>.partialclonefilter is deliberately not set. It would apply the
-// filter to every later fetch, and the every-ref fallback would come back
-// without the blobs -- 60 objects of 90, and nothing said so.
+// Never add remote.<name>.partialclonefilter: it would filter every later fetch
+// too, and the every-ref fallback would come back without the blobs -- 60
+// objects of 90, silently. see docs/repair.md
 func declarePartial(dir, url string) error {
 	for _, kv := range [][2]string{
 		{"core.repositoryformatversion", "1"},
@@ -188,16 +181,11 @@ func (r *remoteSource) reopen() error {
 
 // fetchByName asks the server for the objects themselves.
 //
-// Three things keep the transfer to about what was asked for. Each name is
-// anchored to a reference, because a scratch repository with no reference has
-// nothing to negotiate with and is sent every object the fetch before it
-// already brought. --depth=1 stops a commit dragging its ancestry behind it,
-// and --filter=blob:none stops a tree dragging its files. Neither withholds the
-// named object itself. see docs/repair.md
-//
-// A batch that fails takes the whole by-name attempt with it. A server that
-// refuses one name refuses all of them, and a partial answer would read as "the
-// remote does not have it" about objects nobody asked for.
+// The refspec anchors each name: with no reference the scratch repository has
+// nothing to negotiate with and is sent everything the last fetch brought. The
+// depth and the filter bound the traversal, and neither withholds the named
+// object. A batch that fails takes the whole by-name attempt with it, because a
+// server that refuses one name refuses all of them. see docs/repair.md
 func (r *remoteSource) fetchByName(oids []gitobj.OID) error {
 	for chunk := range slices.Chunk(oids, wantBatch) {
 		args := []string{"fetch", "--progress", "--no-tags", "--force", "--depth=1", "--filter=blob:none", remoteName}

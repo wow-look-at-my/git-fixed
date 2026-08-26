@@ -166,8 +166,8 @@ func Run(o *Options) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	// verified carries the packs one scan read end to end forward to the next one.
-	verified := damage.Verified
+	// What one scan read, for the next one: the packs, and the objects.
+	verified, seen := damage.Verified, damage.Seen
 
 	res := &Result{}
 	if damage.Empty() {
@@ -214,7 +214,7 @@ func Run(o *Options) (*Result, error) {
 		if err != nil {
 			return nil, err
 		}
-		verified = damage.Verified
+		verified, seen = damage.Verified, damage.Seen
 	}
 
 	if damage.PackedRefs != nil {
@@ -232,12 +232,11 @@ func Run(o *Options) (*Result, error) {
 		if err != nil {
 			return nil, err
 		}
-		verified = damage.Verified
+		verified, seen = damage.Verified, damage.Seen
 	}
 
 	// Repair goes round until it stops making progress. One set of sources
-	// serves every pass, because a pass that built its own refetched
-	// everything the pass before it had brought in.
+	// serves every pass: a pass that builds its own refetches the remote.
 	sources := NewSources(repo, db, RemotePolicy{EveryRef: true, Progress: o.Stderr})
 	defer sources.Close()
 
@@ -257,11 +256,11 @@ func Run(o *Options) (*Result, error) {
 			if err != nil {
 				return nil, err
 			}
-			damage, err = descend(repo, db, o.meters(), back, verified)
+			damage, err = descend(repo, db, o.meters(), back, verified, seen)
 			if err != nil {
 				return nil, err
 			}
-			verified = damage.Verified
+			verified, seen = damage.Verified, damage.Seen
 			sources.Retarget(repo, db)
 		}
 		todo := stillBad(damage.Objects, stuck)
