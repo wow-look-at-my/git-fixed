@@ -2,7 +2,7 @@ package fsck
 
 // Code in this file mirrors git's FOREACH_FSCK_MSG_ID list in fsck.h.
 
-// MsgID identifies one fsck check.
+// MsgID identifies an fsck check.
 type MsgID int
 
 // The checks, in the order git declares them.
@@ -85,7 +85,7 @@ const (
 )
 
 // msgInfo is the printed spelling, the configuration key, and the default
-// severity of one check.
+// severity of a check.
 type msgInfo struct {
 	Camel    string
 	Lower    string

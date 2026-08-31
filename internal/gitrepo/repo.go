@@ -36,7 +36,7 @@ type Repo struct {
 	// PackedRefsFatal is the message git dies with when its reader refuses a line of packed-refs.
 	PackedRefsFatal string
 
-	// packed caches the packed reference table, read at most once.
+	// packed caches the packed reference table, so a repeated read reuses it rather than reading again.
 	packedOnce sync.Once
 	packed     map[string]gitobj.OID
 }
@@ -83,8 +83,8 @@ func Open(dir string) (*Repo, error) {
 
 // discover walks up from dir looking for a repository, the way git's
 // setup_git_directory() does. It returns the directory to read from and the
-// name git would print for it: git changes to the top of the worktree first, so
-// it names the repository ".git" or "." rather than by an absolute path.
+// name git would print for it: git changes to the top of the worktree before
+// naming it, so it names the repository ".git" or "." rather than by an absolute path.
 func discover(dir string) (path, shown string, err error) {
 	if v := os.Getenv("GIT_DIR"); v != "" {
 		abs, err := filepath.Abs(v)

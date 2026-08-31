@@ -40,7 +40,7 @@ func (o *Options) Blob(ctx any, oid gitobj.OID, buf []byte) int {
 }
 
 // checkGitattributes rejects a line no attribute parser would accept. git stops
-// at the first NUL, so this does too.
+// at the NUL byte, so this does too.
 func (o *Options) checkGitattributes(ctx any, oid gitobj.OID, buf []byte) int {
 	if i := bytes.IndexByte(buf, 0); i >= 0 {
 		buf = buf[:i]
@@ -192,7 +192,7 @@ func checkSubmoduleURL(u string) error {
 			return errBadSubmodule
 		}
 		// A URL that escapes its own root with "../" can overwrite the
-		// host, which is CVE-2020-11008.
+		// host, the submodule URL escape git's fsck rejects.
 		if n, next := countLeadingDotdots(u); n > 0 && next != "" && (next[0] == ':' || next[0] == '/') {
 			return errBadSubmodule
 		}

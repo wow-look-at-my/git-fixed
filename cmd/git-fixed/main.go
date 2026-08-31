@@ -106,13 +106,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	defer heapStop()
 
-	// The diagnosis comes first, and it is git's own. see what
+	// The diagnosis runs before repair, and it is git's own. see what
 	o := f.options(dir, rest, stdout, stderr)
 
-	// What the run cost, said once at the end, in the words the meters have been drawing all along.
+	// What the run cost, said at the end, in the words the meters have been drawing all along.
 	defer reportMemory(o.ShowProgress, stderr)
 
-	// Collected while fsck runs, because it is the one thing the status word cannot say.
+	// Collected while fsck runs, because the status word cannot say it.
 	var verified []string
 	var verifiedMu sync.Mutex
 	o.PackVerified = func(path string) {

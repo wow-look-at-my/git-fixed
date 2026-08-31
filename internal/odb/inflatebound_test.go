@@ -31,7 +31,7 @@ func TestPlausibleSize(t *testing.T) {
 // TestPlausibleSizeAcceptsWhatDeflateCanDo keeps the bound clear of anything a
 // real stream produces. Refusing a valid object would be far worse than the
 // allocation this exists to stop, so the ratio has room above the format's own
-// 1032 to 1 and nothing near it is refused.
+// worst-case compression ratio and nothing near it is refused.
 func TestPlausibleSizeAcceptsWhatDeflateCanDo(t *testing.T) {
 	const compressed = 1 << 20
 	assert.True(t, plausibleSize(1032*compressed, compressed),
@@ -42,7 +42,7 @@ func TestPlausibleSizeAcceptsWhatDeflateCanDo(t *testing.T) {
 }
 
 func TestMaxDeltaOutput(t *testing.T) {
-	// One byte of delta is one copy command with no offset and no size.
+	// A single-byte delta is a copy command with no offset and no size.
 	assert.Equal(t, uint64(0x10000), maxDeltaOutput(1))
 	assert.Equal(t, uint64(0), maxDeltaOutput(0))
 }

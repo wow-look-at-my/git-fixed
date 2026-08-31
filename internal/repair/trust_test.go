@@ -1,6 +1,6 @@
 package repair
 
-// What one scan of a run may take on trust from an earlier one.
+// What a scan of a run may take on trust from an earlier scan.
 
 import (
 	"os"
@@ -57,7 +57,7 @@ func TestOnlyAnUnchangedPackIsTakenOnTrust(t *testing.T) {
 
 // TestAScanHandsOnWhatItWasTold covers the packs a scan never read itself: the
 // caller's own fsck read them, and the next scan of the run must hear about them
-// too, or the saving lasts exactly one pass.
+// too, or the saving lasts only a single pass.
 func TestAScanHandsOnWhatItWasTold(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "told.pack")

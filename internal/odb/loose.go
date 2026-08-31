@@ -15,10 +15,10 @@ import (
 	"github.com/wow-look-at-my/git-fixed/internal/zlibmsg"
 )
 
-// maxHeaderLen is git's MAX_HEADER_LEN: the first inflate of a loose object must produce the whole "<type>.
+// maxHeaderLen is git's MAX_HEADER_LEN: the inflate of a loose object's header must produce the whole "<type>.
 const maxHeaderLen = 32
 
-// LooseResult is what reading one loose object produced. It mirrors git's
+// LooseResult is what reading a loose object produced. It mirrors git's
 // read_loose_object() closely enough that fsck can report the same lines.
 type LooseResult struct {
 	Type     gitobj.Type
@@ -34,14 +34,14 @@ type LooseResult struct {
 	Failed bool
 }
 
-// inflateFailed records the complaint git's decompressor prints before its caller adds one.
+// inflateFailed records the complaint git's decompressor prints before the caller appends its own.
 func (res *LooseResult) inflateFailed(raw []byte, maxOut int64) {
 	if msg := zlibmsg.Diagnose(raw, maxOut); msg != "" {
 		res.Errors = append(res.Errors, msg)
 	}
 }
 
-// ReadLoose decodes one loose object file and checks it against the object name
+// ReadLoose decodes a loose object file and checks it against the object name
 // its path claims.
 func ReadLoose(path, shown string, expected gitobj.OID, algo *gitobj.Algo, bigFileThreshold int64) *LooseResult {
 	res := &LooseResult{}
@@ -78,7 +78,7 @@ func readLooseBytes(raw []byte, shown string, expected gitobj.OID, algo *gitobj.
 	zr, err := zlib.NewReader(br)
 	if err != nil {
 		res.Failed = true
-		// git's decompressor prints its own complaint before its caller adds one.
+		// git's decompressor prints its own complaint before the caller appends its own.
 		res.inflateFailed(raw, maxHeaderLen)
 		res.Errors = append(res.Errors, fmt.Sprintf("unable to unpack header of %s", shown))
 		return res
@@ -211,7 +211,7 @@ func (res *LooseResult) streamCheck(zr io.Reader, raw []byte, br *bytes.Reader, 
 	}
 }
 
-// hasher is one lent-out digest and the room to build a header in.
+// hasher is a lent-out digest and the room to build a header in.
 type hasher struct {
 	algo *gitobj.Algo
 	h    hash.Hash
@@ -227,7 +227,7 @@ var hashers sync.Pool
 func HashLiteral(algo *gitobj.Algo, typeName string, content []byte) gitobj.OID {
 	hs, _ := hashers.Get().(*hasher)
 	if hs == nil || hs.algo != algo {
-		// A pool shared by a run over two repositories can hand back the other one's digest.
+		// A pool shared by a run over multiple repositories can hand back another repository's digest.
 		hs = &hasher{algo: algo, h: algo.New()}
 	} else {
 		hs.h.Reset()
@@ -248,8 +248,8 @@ func Hash(algo *gitobj.Algo, t gitobj.Type, content []byte) gitobj.OID {
 	return HashLiteral(algo, t.Name(), content)
 }
 
-// parseLooseHeader is git's parse_loose_header(): a type name, one space, and a
-// size in canonical decimal. "010" is not canonical and is rejected.
+// parseLooseHeader is git's parse_loose_header(): a type name, a single space, and a
+// size in canonical decimal. A padded size is not canonical and is rejected.
 func parseLooseHeader(hdr string) (typeName string, size int64, ok bool) {
 	sp := -1
 	for i := 0; i < len(hdr); i++ {
@@ -288,7 +288,7 @@ func parseLooseHeader(hdr string) (typeName string, size int64, ok bool) {
 	return typeName, size, true
 }
 
-// readUpTo fills as much of buf as the reader offers before its first stop.
+// readUpTo fills as much of buf as the reader offers before it stops.
 func readUpTo(r io.Reader, buf []byte) (int, error) {
 	total := 0
 	for total < len(buf) {
@@ -305,8 +305,8 @@ func readUpTo(r io.Reader, buf []byte) (int, error) {
 }
 
 // fillFrom reads len(buf) bytes and keeps the raw error. A clean early end and
-// a truncated stream mean different things here: git zero-fills the payload for
-// the first and calls the second corrupt.
+// a truncated stream mean different things here: git leaves the untouched tail
+// at its default value for a clean end, and calls a truncated read corrupt.
 func fillFrom(r io.Reader, buf []byte) error {
 	total := 0
 	for total < len(buf) {

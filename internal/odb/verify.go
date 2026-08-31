@@ -19,30 +19,30 @@ import (
 
 // VerifyOpts configures a full pack check.
 type VerifyOpts struct {
-	// Emit receives one diagnostic.
+	// Emit receives a diagnostic.
 	Emit func(oid gitobj.OID, text string)
-	// Object receives every object the pack holds, once it is known to decode and to hash to its recorded name.
+	// Object receives every object the pack holds, after it is known to decode and to hash to its recorded name.
 	Object func(oid gitobj.OID, typ gitobj.Type, size int64, data []byte)
 	// Workers is the number of goroutines that decode objects.
 	Workers int
 	// BigFileThreshold matches core.bigFileThreshold.
 	BigFileThreshold int64
-	// Progress is called once per object finished, from every worker.
+	// Progress is called per object finished, from every worker.
 	Progress func()
-	// ChainBudget bounds the decoded delta bases the walk holds at once.
+	// ChainBudget bounds the decoded delta bases the walk holds simultaneously.
 	ChainBudget int64
 	// ReleaseEvery is how much of the pack is read before its pages go back. see releaseEvery.
 	ReleaseEvery int64
 }
 
-// DefaultChainBudget is how many bytes of decoded delta bases one pack's walk may hold at a time.
+// DefaultChainBudget is how many bytes of decoded delta bases a pack's walk may hold at a time.
 const DefaultChainBudget = 256 << 20
 
 // releaseEvery is how much of a pack a pass reads before it hands the pages back. see docs/memory.md
 const releaseEvery = 256 << 20
 
 // releaser hands a pack's pages back as a pass reads past them. A pack can be
-// larger than the machine, so a sweep at the end of one is too late.
+// larger than the machine, so a sweep at the end of the pack is too late.
 type releaser struct {
 	p     *Pack
 	every int64
@@ -50,7 +50,7 @@ type releaser struct {
 	read atomic.Int64
 }
 
-// newReleaser builds one for a pack, at the caller's interval or the default.
+// newReleaser builds a releaser for a pack, at the caller's interval or the default.
 func newReleaser(p *Pack, every int64) *releaser {
 	if every <= 0 {
 		every = releaseEvery
@@ -58,7 +58,7 @@ func newReleaser(p *Pack, every int64) *releaser {
 	return &releaser{p: p, every: every}
 }
 
-// spent counts bytes as read, and sweeps once enough of them have been.
+// spent counts bytes as read, and sweeps as soon as enough of them have accumulated.
 func (r *releaser) spent(n int64) {
 	if r.read.Add(n) >= r.every && r.read.Swap(0) >= r.every {
 		r.p.Release()
@@ -88,7 +88,7 @@ func (p *Pack) Verify(o VerifyOpts) bool {
 		fail(fmt.Sprintf("packfile %s cannot be accessed", p.Path))
 		return false
 	}
-	// The pack's own hash is one thread reading every byte of the pack.
+	// The pack's own hash is a single thread reading every byte of the pack.
 	sums := make(chan []string, 1)
 	go func() { sums <- p.checksumComplaints() }()
 	objectsOK := p.verifyObjects(o)
@@ -103,14 +103,14 @@ func (p *Pack) Verify(o VerifyOpts) bool {
 	return ok
 }
 
-// checksumComplaints hashes the whole pack and compares it with the two copies of that hash the repository.
+// checksumComplaints hashes the whole pack and compares it with the copies of that hash the repository keeps.
 func (p *Pack) checksumComplaints() []string {
 	var out []string
 	rawsz := int64(p.Algo.RawSize)
 	sigOff := p.dataSize - rawsz
 	sum, err := p.hashThrough(sigOff)
 	if err != nil {
-		// The pack is mapped, so it opened once already.
+		// The pack is mapped, so an earlier open of this file already succeeded.
 		return []string{fmt.Sprintf("%s cannot be read: %s", p.Path, errnoText(err))}
 	}
 	if !bytes.Equal(sum, p.data[sigOff:]) {
@@ -122,10 +122,10 @@ func (p *Pack) checksumComplaints() []string {
 	return out
 }
 
-// hashBuf is what makes this pass one read instead of a fault storm.
+// hashBuf batches this pass into a single read instead of a fault storm.
 const hashBuf = 1 << 20
 
-// hashThrough hashes the first n bytes of the pack file.
+// hashThrough hashes the leading n bytes of the pack file.
 
 func (p *Pack) hashThrough(n int64) ([]byte, error) {
 	f, err := os.Open(p.File)
@@ -151,8 +151,8 @@ func (p *Pack) verifyIndexChecksum() bool {
 	return bytes.Equal(h.Sum(nil), p.idx[p.idxSize-rawsz:])
 }
 
-// validatePackHeader repeats the checks git makes when it first opens a pack.
-// It returns the specific complaint, and the caller adds git's generic one.
+// validatePackHeader repeats the checks git makes when it opens a pack.
+// It returns the specific complaint, and the caller adds git's generic message.
 func (p *Pack) validatePackHeader() (string, bool) {
 	rawsz := int64(p.Algo.RawSize)
 	if p.dataSize < 12+rawsz {
@@ -175,7 +175,7 @@ func (p *Pack) validatePackHeader() (string, bool) {
 }
 
 // cannotUnpack reports an entry that will not decode. Whatever stopped the read
-// says so first, and only then does its caller add the line naming the entry.
+// says so before its caller adds the line naming the entry.
 // An entry whose own header is unreadable never reaches the decompressor.
 func cannotUnpack(emit func(gitobj.OID, string), p *Pack, l *packLayout, oid gitobj.OID, i int32) {
 	e := l.ents[i]
@@ -210,13 +210,13 @@ const (
 // maxHeader is the longest header ReadHeader makes: a size varint, then a base name or an offset varint.
 const maxHeader = 1 + 9 + gitobj.MaxRawSize
 
-// packEntry is one object as the pack stores it, in offset order. It is 24
-// bytes: everything derivable is derived. see docs/pack-verification.md
+// packEntry is an object as the pack stores it, in offset order. Its size is
+// guarded by test; everything derivable is derived. see docs/pack-verification.md
 type packEntry struct {
 	off  int64
 	size int64
 	idx  uint32 // position in index order
-	// hdr is the length of the entry header, which is under fifty bytes.
+	// hdr is the length of the entry header, bounded by maxHeader.
 	hdr   uint8
 	typ   int8
 	flags uint8
@@ -229,10 +229,10 @@ func (e packEntry) objType() gitobj.Type { return gitobj.Type(e.typ) }
 func (e packEntry) dataOff() int64 { return e.off + int64(e.hdr) }
 
 // packLayout is every entry in offset order, plus the base-to-children links
-// that let each delta chain be decoded exactly once.
+// that let each delta chain be decoded without repeating work.
 type packLayout struct {
 	ents []packEntry
-	// The children of entry i are childList[childStart[i]:childStart[i+1]].
+	// Entry i's children occupy the span in childList between its childStart value and the next entry's.
 	childStart []int32
 	childList  []int32
 	bad        []int32
@@ -257,14 +257,14 @@ func (l *packLayout) children(i int32) []int32 {
 	return l.childList[l.childStart[i]:l.childStart[i+1]]
 }
 
-// setType records a type that has to survive in one byte.
+// setType records a type that has to fit in a byte.
 func (e *packEntry) setType(t gitobj.Type) { e.typ = int8(t) }
 
 // buildLayout reads every entry header and links each delta to its base.
 //
-// Nothing here holds a second structure per entry that outlives it: the offsets
+// Nothing here holds an extra structure per entry that outlives it: the offsets
 // are sorted in place, the parent links are spent on the child lists and
-// dropped, and what is left is the entries and the two child arrays.
+// dropped, and what is left is the entries and the child arrays.
 func (p *Pack) buildLayout(pages *releaser) *packLayout {
 	n := int(p.Num)
 	l := &packLayout{ents: make([]packEntry, n), headerErrs: map[int32]string{}, trailer: p.TrailerOffset()}
@@ -288,7 +288,7 @@ func (p *Pack) buildLayout(pages *releaser) *packLayout {
 	}
 	for i := range l.ents {
 		e := &l.ents[i]
-		// One header is one page of the pack, and there is an entry every kilobyte or so: this pass reads all of it.
+		// Each header lands on a page of the pack, and there is an entry every kilobyte or so: this pass reads all of it.
 		pages.spent(l.end(int32(i)) - e.off)
 		h, err := p.ReadHeader(e.off)
 		if err != nil {
@@ -298,7 +298,7 @@ func (p *Pack) buildLayout(pages *releaser) *packLayout {
 			continue
 		}
 		if h.DataOff-e.off > maxHeader {
-			// The entry holds this as a length in one byte. see maxHeader.
+			// The entry holds this as a length in a single byte. see maxHeader.
 			l.bad = append(l.bad, int32(i))
 			e.setType(gitobj.TypeBad)
 			l.headerErrs[int32(i)] = fmt.Sprintf("object header at %d in %s is malformed", e.off, p.Path)
@@ -352,9 +352,9 @@ func (p *Pack) buildLayout(pages *releaser) *packLayout {
 	return l
 }
 
-// parentOf reads an entry's base back off the pack, for the one path that walks
-// up a chain rather than down it. A layout that kept the link would hold four
-// bytes per object in the repository for a step taken on a handful of them.
+// parentOf reads an entry's base back off the pack, for the path that walks
+// up a chain rather than down it. A layout that kept the link would hold an
+// extra offset per object in the repository for a step taken on a handful of them.
 func (l *packLayout) parentOf(p *Pack, i int32) int32 {
 	e := l.ents[i]
 	h, err := p.ReadHeader(e.off)
@@ -385,7 +385,7 @@ func (p *Pack) verifyObjects(o VerifyOpts) bool {
 	if workers <= 0 {
 		workers = runtime.GOMAXPROCS(0)
 	}
-	// One releaser over every pass, so a sweep counts what all of them read.
+	// A shared releaser over every pass, so a sweep counts what all of them read.
 	pages := newReleaser(p, o.ReleaseEvery)
 	l := p.buildLayout(pages)
 
@@ -397,7 +397,7 @@ func (p *Pack) verifyObjects(o VerifyOpts) bool {
 		o.Emit(oid, text)
 		mu.Unlock()
 	}
-	// Object is called from every worker at once, without a lock: it is the whole per-object check.
+	// Object is called from every worker concurrently, without a lock: it is the whole per-object check.
 	object := o.Object
 
 	for _, i := range l.bad {
@@ -419,7 +419,7 @@ func (p *Pack) verifyObjects(o VerifyOpts) bool {
 		budget = DefaultChainBudget
 	}
 	w.budget.Store(budget)
-	// The workers claim entries and walk the ones nothing deltas against: a list of those is four bytes an object.
+	// The workers claim entries and walk the ones nothing deltas against: a list of those costs an edge index per object.
 	var wg sync.WaitGroup
 	var next int64
 	for i := 0; i < workers; i++ {

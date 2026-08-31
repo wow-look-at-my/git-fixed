@@ -210,7 +210,7 @@ func TestHashPathMismatch(t *testing.T) {
 	gittest.RequireGit(t)
 	r := gittest.New(t)
 	blob, _, _ := r.SimpleHistory()
-	// Store a different payload under the first blob's name.
+	// Store a different payload under the blob's original name.
 	var body bytes.Buffer
 	body.WriteString("blob 6\x00")
 	body.WriteString("wrong\n")
@@ -355,7 +355,7 @@ func defaultTestOptions(t *testing.T, dir string) *fsckcmd.Options {
 	return o
 }
 
-// runWith runs one configured check and collects its output.
+// runWith runs a configured check and collects its output.
 func runWith(o *fsckcmd.Options) gittest.Result {
 	code := fsckcmd.Run(o)
 	return gittest.Result{

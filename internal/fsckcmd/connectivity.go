@@ -34,7 +34,7 @@ func (r *run) checkConnectivity() {
 	r.parallel(n, func(i int) { r.checkOneObject(r.objs.At(uint32(i))) })
 }
 
-// checkOneObject reports on one object's reachability.
+// checkOneObject reports on an object's reachability.
 func (r *run) checkOneObject(e *objEntry) {
 	if e.Flags()&flagReachable != 0 {
 		r.checkReachableObject(e)
@@ -43,9 +43,9 @@ func (r *run) checkOneObject(e *objEntry) {
 	}
 }
 
-// traverseReachable walks out from the roots. Every worker draws from one
+// traverseReachable walks out from the roots. Every worker draws from a
 // shared stack rather than taking a turn at each level: history is usually
-// long and narrow, so a level at a time would leave three workers idle and pay
+// long and narrow, so a level at a time would leave the other workers idle and pay
 // a barrier per commit.
 func (r *run) traverseReachable() {
 	stack := r.pending
@@ -78,7 +78,7 @@ func (r *run) traverseReachable() {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			// Each worker keeps its own stack and only visits the shared one when it runs dry or has a surplus.
+			// Each worker keeps its own stack and only visits the shared stack when it runs dry or has a surplus.
 			local := make([]*objEntry, 0, walkBatch*2)
 			// holding says this worker is counted in active.
 			holding := false
@@ -129,10 +129,10 @@ func (r *run) traverseReachable() {
 	wg.Wait()
 }
 
-// walkBatch is how many objects a worker claims from the shared stack at once.
+// walkBatch is how many objects a worker claims from the shared stack per turn.
 const walkBatch = 64
 
-// traverseOne reads one object and marks everything it points at.
+// traverseOne reads an object and marks everything it points at.
 func (r *run) traverseOne(e *objEntry) []*objEntry {
 	typ := r.ensureType(e)
 	if typ == gitobj.TypeBlob || typ == gitobj.TypeNone {
@@ -141,7 +141,7 @@ func (r *run) traverseOne(e *objEntry) []*objEntry {
 	}
 	key := sortKey{phase: phaseConnectivity, oid: r.oid(e)}
 	if edges, cached := r.objs.Edges(e); cached {
-		// Nothing to print alongside them: an object only has edges recorded once the object pass has read it.
+		// Nothing to print alongside them: an object only has edges recorded after the object pass has read it.
 		var out []*objEntry
 		for _, ed := range edges {
 			if !ed.ok() {
@@ -182,7 +182,7 @@ func (r *run) markLinkInto(key sortKey, parent *objEntry, typ gitobj.Type, viaTa
 			r.printableType(r.oid(parent), parent.Type()), r.fsck.Describe(r.oid(parent)))
 		r.rep.Outf(key, "broken link from %7s %s", linkTypeName(typ), "unknown")
 		r.fail(ErrorReachable)
-		// The link was refused on the type it implies, so the fault is the pair and not one object.
+		// The link was refused on the type it implies, so the fault is the pair, not a single object.
 		r.notePartialDamage()
 		return sink
 	}
@@ -270,7 +270,7 @@ func (r *run) checkReachableObject(e *objEntry) {
 // of unreachable history by default and the whole set only when asked.
 func (r *run) checkUnreachableObject(e *objEntry) {
 	if e.Flags()&flagHasObj == 0 {
-		// Missing and unreachable at once is not worth a word: nothing can reach it, so nothing misses it.
+		// Missing and unreachable together is not worth a word: nothing can reach it, so nothing misses it.
 		return
 	}
 	key := sortKey{phase: phaseConnectivity, group: 1, oid: r.oid(e)}

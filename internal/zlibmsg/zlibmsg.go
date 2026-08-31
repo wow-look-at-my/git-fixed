@@ -1,13 +1,13 @@
 // Package zlibmsg says what zlib would have complained about, for a stream Go's
 // decompressor has already refused.
 //
-// git prints zlib's own message before its caller adds one, so a corrupt object
+// git prints zlib's own message before its caller adds its own, so a corrupt object
 // produces a line like "inflate: data stream error (invalid block type)". Go's
-// compress/flate collapses every one of those cases into one corrupt-input
+// compress/flate collapses every case into the same corrupt-input
 // error, so the reason has to be worked out separately.
 //
 // Diagnose therefore runs only after a read has failed. It is a plain,
-// unoptimised inflate whose only product is the first fault, and it never runs
+// unoptimised inflate that stops at the fault it finds, and it never runs
 // on a stream that decodes.
 //
 // see docs/zlib-messages.md
@@ -49,7 +49,7 @@ const (
 	faultNeedDict
 )
 
-// fault is the first thing zlib would object to.
+// fault is the thing zlib would object to.
 type fault struct {
 	kind faultKind
 	msg  string
@@ -57,14 +57,14 @@ type fault struct {
 
 func dataFault(msg string) fault { return fault{kind: faultData, msg: msg} }
 
-// bits reads a stream the way DEFLATE writes it: least significant bit first,
+// bits reads a stream the way DEFLATE writes it: the least significant bit leads,
 // within bytes taken in order.
 type bits struct {
 	data []byte
 	pos  int
 	hold uint64
 	n    uint
-	// short is set once a read has asked for more input than there is.
+	// short is set when a read asks for more input than there is.
 	short bool
 }
 
@@ -111,7 +111,7 @@ func (b *bits) byteAt() (byte, bool) {
 type inflater struct {
 	in     bits
 	window [windowSize]byte
-	// next is where the byte after the last one goes.
+	// next is the write position for the next output byte.
 	next  int
 	total int64
 	sum   adler
@@ -120,10 +120,10 @@ type inflater struct {
 	full  bool
 }
 
-// room reports whether one more byte of output fits in what the caller had.
+// room reports whether another byte of output fits in what the caller had.
 func (i *inflater) room() bool { return i.limit < 0 || i.total < i.limit }
 
-// adler is the running Adler-32 of the output, which zlib writes after the last block.
+// adler is the running Adler checksum of the output, which zlib writes after the last block.
 type adler struct{ a, b uint32 }
 
 func newAdler() adler { return adler{a: 1} }
@@ -148,7 +148,7 @@ func (i *inflater) back(dist int) byte {
 	return i.window[pos]
 }
 
-// run walks the whole stream and returns the first thing zlib would refuse.
+// run walks the whole stream and returns the fault zlib would raise, stopping at the point it occurs.
 func (i *inflater) run() fault {
 	if f, done := i.header(); done {
 		return f
@@ -182,9 +182,9 @@ func (i *inflater) run() fault {
 	}
 }
 
-// header reads the two bytes zlib puts in front of the DEFLATE data. The tests
-// zlib runs over them are in this order, and the order decides which message a
-// broken first byte produces.
+// header reads the header bytes zlib puts in front of the DEFLATE data. The tests
+// zlib runs over them run in this order, and that order decides which message a
+// bad header produces.
 func (i *inflater) header() (fault, bool) {
 	if !i.in.need(16) {
 		return fault{}, true
@@ -197,8 +197,8 @@ func (i *inflater) header() (fault, bool) {
 	if cmf&0x0f != 8 {
 		return dataFault("unknown compression method"), true
 	}
-	// zlib is asked for a 32 KiB window, so a stream that wants a larger
-	// one is refused.
+	// zlib is asked for a window capped at windowSize, so a stream that wants a
+	// larger window is refused.
 	if cmf>>4+8 > 15 {
 		return dataFault("invalid window size"), true
 	}
@@ -238,7 +238,7 @@ func (i *inflater) stored() fault {
 	return fault{}
 }
 
-// dynamic reads a block's own two code tables, then decodes it.
+// dynamic reads a block's own code tables, then decodes it.
 func (i *inflater) dynamic() fault {
 	nlen, ok := i.in.take(5)
 	if !ok {
@@ -289,7 +289,7 @@ func (i *inflater) dynamic() fault {
 	return i.block(tables{lengths: lengths, distances: distances})
 }
 
-// readLengths decodes the code lengths of one block's two alphabets, which are
+// readLengths decodes the code lengths of a block's alphabets, which are
 // themselves Huffman coded.
 func (i *inflater) readLengths(codes *code, lens []int) fault {
 	for at := 0; at < len(lens); {
@@ -342,7 +342,7 @@ func (i *inflater) readLengths(codes *code, lens []int) fault {
 	return fault{}
 }
 
-// tables are the two code tables one block decodes with.
+// tables are the code tables a block decodes with.
 type tables struct {
 	lengths   *code
 	distances *code
@@ -405,7 +405,7 @@ func (i *inflater) block(t tables) fault {
 	}
 }
 
-// checksum reads the Adler-32 zlib puts after the last block.
+// checksum reads the Adler checksum zlib puts after the last block.
 func (i *inflater) checksum() fault {
 	i.in.align()
 	var want [4]byte

@@ -1,16 +1,16 @@
 package zlibmsg
 
-// code is one canonical Huffman alphabet, held the way zlib's own reference decoder holds it: a count of
+// code is a canonical Huffman alphabet, held the way zlib's own reference decoder holds it: a count of
 // the codes of each length, then the symbols in order.
 type code struct {
 	counts [maxBits + 1]int
-	// symbols lists every symbol that has a code, shortest code first.
+	// symbols lists every symbol that has a code, ordered from shortest code to longest.
 	symbols []int
 	// empty marks an alphabet that codes nothing.
 	empty bool
 }
 
-// decodeStatus is what one read from an alphabet produced.
+// decodeStatus is what a read from an alphabet produced.
 type decodeStatus int
 
 const (
@@ -22,8 +22,8 @@ const (
 )
 
 // build makes the alphabet a list of code lengths describes, and reports
-// whether zlib would accept it. codeLengths marks the 19-symbol alphabet that
-// carries the other two, which zlib holds to a stricter rule.
+// whether zlib would accept it. codeLengths marks the code-length alphabet
+// that carries the other alphabets, which zlib holds to a stricter rule.
 func build(lengths []int, codeLengths bool) (*code, bool) {
 	c := &code{}
 	for _, l := range lengths {
@@ -70,7 +70,7 @@ func build(lengths []int, codeLengths bool) (*code, bool) {
 	return c, true
 }
 
-// decode reads one symbol, one bit at a time. A canonical code lets each length
+// decode reads a symbol, consuming the input a bit at a time. A canonical code lets each length
 // be tested as it is reached, which is what makes an unused pattern detectable.
 func (c *code) decode(b *bits) (int, decodeStatus) {
 	if c.empty {
@@ -94,7 +94,7 @@ func (c *code) decode(b *bits) (int, decodeStatus) {
 	return 0, decodeInvalid
 }
 
-// fixedLengths returns the two alphabets a fixed block uses. They are the same
+// fixedLengths returns the alphabets a fixed block uses. They are the same
 // in every stream, so DEFLATE writes neither of them down.
 func fixedLengths() tables {
 	lengths := make([]int, 288)
@@ -110,7 +110,7 @@ func fixedLengths() tables {
 			lengths[sym] = 8
 		}
 	}
-	// The fixed distance alphabet holds 32 codes, not 30: the last two name no distance.
+	// The fixed distance alphabet reserves codes beyond what DEFLATE assigns a distance to; the trailing ones name no distance.
 	distances := make([]int, 32)
 	for sym := range distances {
 		distances[sym] = 5

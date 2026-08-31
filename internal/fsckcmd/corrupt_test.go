@@ -23,10 +23,10 @@ import (
 
 // TestCorruptLooseObjects is the oracle for internal/zlibmsg. git links the
 // real zlib and prints its complaint, so a repository full of loose objects
-// broken one byte at a time compares this implementation's whole report against
+// broken a byte at a time compares this implementation's whole report against
 // zlib's own vocabulary, without having to name any of the messages here.
 //
-// The payloads make zlib choose a different block type for each one, so a
+// The payloads make zlib choose a different block type for each payload, so a
 // corruption lands in a stored block, in the built-in alphabets, and in a
 // block's own alphabets.
 func TestCorruptLooseObjects(t *testing.T) {
@@ -48,7 +48,7 @@ func TestCorruptLooseObjects(t *testing.T) {
 	for name, payload := range payloads {
 		for off := range 40 {
 			for _, value := range []byte{0x00, 0x55, 0xff} {
-				// The marker gives every variant its own object name, so one repository holds all of them.
+				// The marker gives every variant its own object name, so a single repository holds all of them.
 				marked := append([]byte(fmt.Sprintf("%s/%d/%d\n", name, off, value)), payload...)
 				oid, raw := looseObject(t, marked)
 				if off >= len(raw) || raw[off] == value {
@@ -74,7 +74,7 @@ func TestCorruptLooseObjects(t *testing.T) {
 }
 
 // difference returns the lines only want holds and the lines only got holds. It
-// keeps at most a few of each, because a report of every one is unreadable.
+// keeps at most a few of each, because reporting every line is unreadable.
 func difference(want, got []string) (missing, extra []string) {
 	const show = 8
 	inGot := set.New[string](len(got))
@@ -94,7 +94,7 @@ func difference(want, got []string) (missing, extra []string) {
 	return missing, extra
 }
 
-// TestCorruptPackBytes breaks one byte of a packfile at a time and requires the
+// TestCorruptPackBytes breaks a byte of a packfile at a time and requires the
 // whole report to match git's. A corrupt pack produces several different
 // reports depending on where the damage is: the pack's own checksum, an
 // entry's CRC, the complaint zlib makes, the entry that will not decode, and
@@ -142,7 +142,7 @@ func looseObject(t *testing.T, payload []byte) (gitobj.OID, []byte) {
 // git works from the top of the worktree and writes ".git/index". This
 // implementation opened an absolute path and printed that, which is a
 // divergence in a message a person reads on their worst day. Nothing caught it
-// until the two were run side by side over a truncated index.
+// until this implementation and git were run side by side over a truncated index.
 func TestUnreadableIndex(t *testing.T) {
 	gittest.RequireGit(t)
 	r := gittest.New(t)
@@ -158,7 +158,7 @@ func TestUnreadableIndex(t *testing.T) {
 	want := r.GitFsck()
 	got := ours(t, r.Dir)
 
-	// git gives up here: status 128, and the reverse-index checks, the bitmap checks. see docs/exit-status.md
+	// git gives up here with its fatal exit status, skipping the reverse-index checks and the bitmap checks. see docs/exit-status.md
 	assert.Equal(t, 128, want.Code, "git's own behaviour, which this deliberately does not copy")
 	assert.Equal(t, fsckcmd.ErrorIndex, got.Code, "the index is unusable, and that is what the status says")
 
@@ -174,9 +174,9 @@ func TestUnreadableIndex(t *testing.T) {
 // nothing.
 //
 // A pack that carries a delta on an object it does not hold is what a thin pack
-// is, and one on disk is a pack whose index was built and whose bytes then
-// moved. git reports the entry twice: once for the base it could not locate,
-// and once for the object it could not produce.
+// is; the same shape appears on disk when a pack's index was built and its bytes
+// then moved. git reports the entry from both sides: it names the base it could
+// not locate, then names the object it could not produce.
 func TestADeltaWhoseBaseIsNotInThePack(t *testing.T) {
 	gittest.RequireGit(t)
 	r := gittest.New(t)
@@ -230,7 +230,7 @@ func TestARefDeltaWhoseBaseIsNotInThePack(t *testing.T) {
 
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
-	// One byte of the base's name is enough: the pack still holds the base.
+	// A single byte of the base's name is enough: the pack still holds the base.
 	at := afterObjHeader(data, offsets[1])
 	data[at] ^= 0xff
 	gittest.WriteOver(t, path, data)
@@ -270,7 +270,7 @@ func TestAPackWithAnUnusualName(t *testing.T) {
 // which this had backwards.
 //
 // git skips an extension whose name starts with a capital letter and refuses
-// one whose name does not. Reading that the other way round made every index
+// any extension whose name does not. Reading that the other way round made every index
 // with an untracked cache in it a fatal error, and an untracked cache is
 // something a person turns on to make git faster.
 func TestAnIndexExtensionThisDoesNotRead(t *testing.T) {
@@ -293,11 +293,11 @@ func TestAnIndexExtensionThisDoesNotRead(t *testing.T) {
 
 // TestAnUnknownIndexExtension covers git's rule for a name it has never seen,
 // which is the other half of the rule TestAnIndexExtensionThisDoesNotRead
-// covers. A capital first letter means the extension is optional: git skips it
-// with a note and carries on. Any other first letter means the index holds
+// covers. A capital leading letter means the extension is optional: git skips it
+// with a note and carries on. Any other leading letter means the index holds
 // something required that nobody can read, and git refuses the whole file.
 //
-// Neither half had a test. The rule was implemented backwards once already.
+// Neither half had a test. The rule was already implemented backwards before this.
 func TestAnUnknownIndexExtension(t *testing.T) {
 	t.Run("optional", func(t *testing.T) {
 		gittest.RequireGit(t)
@@ -321,7 +321,7 @@ func TestAnUnknownIndexExtension(t *testing.T) {
 		want := r.GitFsck()
 		got := ours(t, r.Dir)
 
-		// git dies, taking four later phases that never open the index with it. see docs/exit-status.md
+		// git dies, taking the later phases that never open the index down with it. see docs/exit-status.md
 		assert.Equal(t, 128, want.Code, "git's own behaviour, which this deliberately does not copy")
 		assert.Equal(t, fsckcmd.ErrorIndex, got.Code)
 		assert.Contains(t, want.Stderr, "index uses zzzz extension, which we do not understand")
@@ -330,7 +330,7 @@ func TestAnUnknownIndexExtension(t *testing.T) {
 	})
 }
 
-// addIndexExtension appends one extension record to the index git wrote, and
+// addIndexExtension appends an extension record to the index git wrote, and
 // puts back the trailing checksum over the whole file.
 func addIndexExtension(t *testing.T, r *gittest.Repo, sig string, body []byte) {
 	t.Helper()

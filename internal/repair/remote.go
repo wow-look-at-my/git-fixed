@@ -19,7 +19,7 @@ import (
 )
 
 // remoteSource is a scratch repository holding what a remote sent. A run has
-// one, and it outlives every pass. see docs/repair.md
+// a single remoteSource, and it outlives every pass. see docs/repair.md
 type remoteSource struct {
 	dir    string
 	url    string
@@ -48,7 +48,7 @@ type RemotePolicy struct {
 }
 
 // openRemote prepares the scratch repository. It fetches nothing: want does
-// that, once the caller knows which names no local source can answer.
+// that, after the caller knows which names no local source can answer.
 func openRemote(repo *gitrepo.Repo, policy RemotePolicy) (*remoteSource, error) {
 	url := firstRemoteURL(repo)
 	if url == "" {
@@ -67,8 +67,7 @@ func openRemote(repo *gitrepo.Repo, policy RemotePolicy) (*remoteSource, error) 
 	if repo.Algo != nil && repo.Algo.Name != "" {
 		objectFormat = repo.Algo.Name
 	}
-	// A scratch repository must not inherit the damaged one's alternates, or
-	// it would believe it already has the objects that are broken there.
+	// A scratch repository must not inherit the damaged repository's alternates, or it believes it already has the broken objects.
 	if err := run(dir, "git", "init", "--bare", "--object-format="+objectFormat, "."); err != nil {
 		return clean(err)
 	}
@@ -109,16 +108,16 @@ func declarePartial(dir, url string) error {
 	return nil
 }
 
-// wantBatch is how many object names go into one fetch.
+// wantBatch is how many object names go into a single fetch.
 const wantBatch = 128
 
 // want brings the named objects in, asking only for the ones that are not here
 // already.
 //
-// A name is asked for once in a run, so a later pass costs a fetch only for
-// what it is the first to need. Fetching every ref is the fallback, and it
-// happens at most once: it costs a copy of the repository to recover one
-// object. see docs/repair.md
+// A name is asked for a single time per run, so a later pass costs a fetch
+// only for what it is the earliest to need. Fetching every ref is the
+// fallback, and it runs at most a single time in a run: it costs a copy of the
+// repository to recover a single object. see docs/repair.md
 func (r *remoteSource) want(oids []gitobj.OID) error {
 	if r.everything {
 		// Every ref came back already, so there is no name left to ask about.
@@ -181,7 +180,7 @@ func (r *remoteSource) reopen() error {
 // nothing to negotiate with and is sent everything the last fetch brought. The
 // depth and the filter bound the traversal, and neither withholds the named
 // object. A batch that fails takes the whole by-name attempt with it, because a
-// server that refuses one name refuses all of them. see docs/repair.md
+// server that refuses a name refuses all of them. see docs/repair.md
 func (r *remoteSource) fetchByName(oids []gitobj.OID) error {
 	for chunk := range slices.Chunk(oids, wantBatch) {
 		args := []string{"fetch", "--progress", "--no-tags", "--force", "--depth=1", "--filter=blob:none", remoteName}
@@ -195,7 +194,7 @@ func (r *remoteSource) fetchByName(oids []gitobj.OID) error {
 	return nil
 }
 
-// get reads one object out of what the remote sent.
+// get reads an object out of what the remote sent.
 func (r *remoteSource) get(oid gitobj.OID) (gitobj.Type, []byte, bool) {
 	typ, data, err := r.db.Read(oid)
 	if err != nil {
@@ -213,7 +212,7 @@ func (r *remoteSource) Close() {
 }
 
 // firstRemoteURL picks the remote to ask. origin wins when it is there, because
-// that is the one a clone set up and the one most likely to be complete.
+// that is the remote a clone sets up and the remote most likely to be complete.
 func firstRemoteURL(repo *gitrepo.Repo) string {
 	if url, ok := repo.Config.Get("remote.origin.url"); ok && url != "" {
 		return url
@@ -231,7 +230,7 @@ func firstRemoteURL(repo *gitrepo.Repo) string {
 	return best
 }
 
-// leaked are the variables that would point a scratch repository back at the damaged one.
+// leaked are the variables that would point a scratch repository back at the damaged repository.
 var leaked = set.Of(
 	"GIT_DIR",
 	"GIT_WORK_TREE",
@@ -266,7 +265,7 @@ func say(w io.Writer, format string, args ...any) {
 
 // runVerbose is run with git's own progress passed straight through.
 //
-// A fetch is the one step here that takes minutes, and the only one whose
+// A fetch is the step here that takes minutes, and the only step whose
 // progress somebody else already writes. Swallowing it, which is what
 // CombinedOutput does, leaves a transfer of tens of gigabytes looking like a
 // hung process.

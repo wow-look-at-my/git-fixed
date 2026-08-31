@@ -13,7 +13,7 @@ import (
 	"strings"
 )
 
-// Bool is one boolean option.
+// Bool is a boolean option.
 type Bool struct {
 	Short byte
 	Long  string
@@ -22,7 +22,7 @@ type Bool struct {
 	Value *int
 }
 
-// Str is one option that takes a value.
+// Str is an option that takes a value.
 type Str struct {
 	Short byte
 	Long  string
@@ -45,7 +45,7 @@ type ErrHelp struct{}
 
 func (ErrHelp) Error() string { return "usage requested" }
 
-// ErrUsage is returned for a bad option. git exits 129 for both.
+// ErrUsage is returned for a bad option; git's usage-error exit status covers both.
 type ErrUsage struct{ Msg string }
 
 func (e ErrUsage) Error() string { return e.Msg }
@@ -75,14 +75,14 @@ func (s *Set) Parse(args []string) ([]string, error) {
 			}
 			i += used
 		default:
-			// git's parse_options stops at the first non-option unless KEEP_UNKNOWN is set; fsck does not set it.
+			// git's parse_options stops at the earliest non-option unless KEEP_UNKNOWN is set; fsck does not set it.
 			return append(rest, args[i:]...), nil
 		}
 	}
 	return rest, nil
 }
 
-// long handles one "--" argument and reports how many of the arguments after it
+// long handles a "--" argument and reports how many of the arguments after it
 // were consumed as its value.
 func (s *Set) long(name string, next []string) (int, error) {
 	arg := name
@@ -132,13 +132,13 @@ func (s *Set) longBool(name string) error {
 	return nil
 }
 
-// find resolves an exact long name, or the one option it abbreviates.
+// find resolves an exact long name, or the option it abbreviates.
 func (s *Set) find(name string) *Bool {
 	o, _ := s.resolve(name)
 	return o
 }
 
-// resolve finds the one option a long name spells, exactly or as the only
+// resolve finds the option a long name spells, exactly or as the only
 // abbreviation of it. Both tables are searched together, so a prefix that fits
 // an option of each kind is ambiguous and resolves to neither.
 func (s *Set) resolve(name string) (*Bool, *Str) {
@@ -171,7 +171,7 @@ func (s *Set) resolve(name string) (*Bool, *Str) {
 	return abbrevBool, abbrevStr
 }
 
-// short handles one "-" argument and reports how many of the arguments after it
+// short handles a "-" argument and reports how many of the arguments after it
 // were consumed as a value.
 func (s *Set) short(chars string, next []string) (int, error) {
 	for i := 0; i < len(chars); i++ {
@@ -205,7 +205,7 @@ func (s *Set) short(chars string, next []string) (int, error) {
 	return 0, nil
 }
 
-// shortStr finds the value option one letter names.
+// shortStr finds the value option a letter names.
 func (s *Set) shortStr(c byte) *Str {
 	for _, o := range s.Strs {
 		if o.Short == c {
@@ -252,7 +252,7 @@ func (s *Set) PrintUsage(w io.Writer) {
 	fmt.Fprintln(w)
 }
 
-// spell joins an option's two names the way git prints them.
+// spell joins an option's short and long names the way git prints them.
 func spell(short byte, long string) string {
 	switch {
 	case short == 0:
@@ -263,7 +263,7 @@ func spell(short byte, long string) string {
 	return "-" + string(short) + ", " + long
 }
 
-// writeOption lays one option out against the help column, wrapping onto the
+// writeOption lays an option out against the help column, wrapping onto the
 // next line when the names are too wide for it.
 func writeOption(w io.Writer, names, help string) {
 	line := "    " + names

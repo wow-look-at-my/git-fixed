@@ -3,8 +3,8 @@ package odb_test
 // The pack walk under a memory cap.
 //
 // The walk decodes a chain from the top down and holds each level while the
-// deltas below it are built. Past its budget it stops holding one and rebuilds
-// it later from its own chain instead, which is a second way of arriving at the
+// deltas below it are built. Past its budget it stops holding a level and rebuilds
+// it later from its own chain instead, which is another way of arriving at the
 // same object and must arrive at the same bytes.
 
 import (
@@ -23,13 +23,13 @@ import (
 // branchingPack is a delta tree that branches at every level, so that a walk
 // with no room to spare has to defer and rebuild rather than descending.
 //
-//	0                  whole
-//	├── 1              delta on 0
-//	│   ├── 3          delta on 1
-//	│   └── 4          delta on 1
-//	├── 2              delta on 0
-//	│   └── 5          delta on 2
-//	└── 6              delta on 0
+//	root                whole
+//	├── A                delta on root
+//	│   ├── Aa           delta on A
+//	│   └── Ab           delta on A
+//	├── B                delta on root
+//	│   └── Ba           delta on B
+//	└── C                delta on root
 func branchingPack() []gittest.PackObject {
 	body := func(tag string) []byte {
 		return []byte(strings.Repeat("a line that deltas well\n", 400) + tag + "\n")
@@ -45,7 +45,7 @@ func branchingPack() []gittest.PackObject {
 	}
 }
 
-// linearPack is one chain with no branch in it, which is what a large file
+// linearPack is a single chain with no branch in it, which is what a large file
 // rewritten many times looks like.
 func linearPack(n int) []gittest.PackObject {
 	objs := make([]gittest.PackObject, n)
@@ -57,7 +57,7 @@ func linearPack(n int) []gittest.PackObject {
 	return objs
 }
 
-// verified is what one walk of a pack produced: every object it handed back,
+// verified is what a walk of a pack produced: every object it handed back,
 // and every complaint it made.
 type verified struct {
 	objects map[gitobj.OID]string
@@ -65,7 +65,7 @@ type verified struct {
 	ok      bool
 }
 
-// walkPack verifies a pack at one budget and records everything it said.
+// walkPack verifies a pack at a given budget and records everything it said.
 func walkPack(t *testing.T, path string, workers int, budget int64) verified {
 	t.Helper()
 	return walkPackWith(t, path, odb.VerifyOpts{Workers: workers, ChainBudget: budget})
@@ -89,7 +89,7 @@ func walkPackWith(t *testing.T, path string, o odb.VerifyOpts) verified {
 		},
 		Object: func(oid gitobj.OID, typ gitobj.Type, size int64, data []byte) {
 			// The payload is only borrowed, so what is kept is a digest of
-			// it. Comparing those is what proves the two walks agree.
+			// it. Comparing those is what proves both walks agree.
 			got.objects[oid] = fmt.Sprintf("%s %d %s", typ.Name(), size,
 				odb.HashLiteral(gitobj.SHA1, typ.Name(), data))
 		},
@@ -127,7 +127,7 @@ func TestAChainBudgetChangesNothingButMemory(t *testing.T) {
 }
 
 // TestHandingPagesBackChangesNothingButMemory is the other bound on what a pack
-// costs. The walk drops its mapped pages as it reads past them, and every one it
+// costs. The walk drops its mapped pages as it reads past them, and every page it
 // still needs comes back from the page cache, so a sweep after every byte has to
 // produce what a sweep after none of them does.
 func TestHandingPagesBackChangesNothingButMemory(t *testing.T) {
@@ -166,12 +166,12 @@ func TestABudgetOfOneStillDecodesADeferredSubtree(t *testing.T) {
 }
 
 // TestACorruptDeltaIsReportedWhateverTheBudget keeps the cap from swallowing a
-// finding. A deferred entry is decoded a second way, and the second way has to
-// refuse the same object the first way refused.
+// finding. A deferred entry is decoded a further way too, and that way has to
+// refuse the same object the original way refused.
 func TestACorruptDeltaIsReportedWhateverTheBudget(t *testing.T) {
 	gittest.RequireGit(t)
 	objs := branchingPack()
-	// Object 3 hangs below the child the tight budget defers.
+	// The entry named broken below hangs under the child the tight budget defers.
 	const broken = 3
 	for _, budget := range []int64{0, 1} {
 		r := gittest.New(t)
@@ -198,9 +198,9 @@ func hashOf(o gittest.PackObject) gitobj.OID {
 // TestAnEntryCannotAskForMoreThanThePackHolds is about the number in an entry's
 // header rather than the bytes after it.
 //
-// That number says how big the object will be once it is inflated, and a walk
+// That number says how big the object will be after inflation, and a walk
 // that takes it at its word reserves it before reading a byte of the payload.
-// Four wrong bytes there ask for thirty-two terabytes, and the run dies with
+// A few wrong bytes there ask for an absurd size, and the run dies with
 // the runtime's own out-of-memory message, naming no object and no pack. No
 // stream of the length actually available can inflate that far, so the entry is
 // refused and reported like any other that will not decode.
@@ -212,7 +212,7 @@ func TestAnEntryCannotAskForMoreThanThePackHolds(t *testing.T) {
 
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
-	// The header is rewritten in place to claim 32 TB.
+	// The header is rewritten in place to claim far more than the machine can hold.
 	copy(data[offsets[1]:], packHeaderClaiming(gitobj.TypeBlob, 1<<45))
 	gittest.WriteOver(t, path, data)
 
@@ -237,7 +237,7 @@ func packHeaderClaiming(typ gitobj.Type, size int64) []byte {
 //
 // git decodes each object from its own root, so a base that will not build
 // fails every object standing on it and it says so about each of them. Walking
-// the forest once meets that fault once, and stopping there leaves the deltas
+// the forest meets that fault a single time, and stopping there leaves the deltas
 // below it unmentioned: a pack reported as holding objects it cannot produce,
 // and a repair that never hears of them.
 func TestEveryDeltaUnderABrokenOneIsReported(t *testing.T) {

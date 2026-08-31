@@ -1,11 +1,11 @@
 // Package progress draws a phase's progress the way git's progress.c draws it.
 //
-// A run over a large repository spends minutes inside one phase, and until this
-// existed it printed nothing at all for the whole time. git shows a meter on
-// five phases of its fsck and this shows one on the same five, with the same
-// titles, the same delays and the same wording, because --dry-run stands in for
-// git fsck. The repair scan that follows gets one too, for the same reason and
-// with nothing to copy.
+// A run over a large repository spends minutes inside a single phase, and
+// until this existed it printed nothing at all for the whole time. git draws
+// a meter on several phases of its fsck, and this draws a meter on the same
+// phases, with the same titles, the same delays and the same wording,
+// because --dry-run stands in for git fsck. The repair scan that follows
+// draws a meter too, for the same reason and with nothing to copy.
 //
 // see docs/progress.md
 package progress
@@ -27,11 +27,11 @@ const tick = time.Second
 // delay is how long a delayed meter stays quiet, as git's GIT_PROGRESS_DELAY does.
 const delay = time.Second
 
-// Meter draws one phase's progress: a title, then a count that is rewritten in
+// Meter draws a phase's progress: a title, then a count that is rewritten in
 // place, then a "done." line when the phase ends.
 //
 // Every method works on a nil Meter and draws nothing, so a caller with
-// progress turned off keeps one nil Meter rather than a condition at every
+// progress turned off keeps a nil Meter rather than a condition at every
 // place it counts.
 type Meter struct {
 	w     io.Writer
@@ -40,7 +40,7 @@ type Meter struct {
 	total atomic.Int64
 
 	count atomic.Int64
-	// pct is the percentage last drawn, so a step that does not move it costs one atomic load and no lock.
+	// pct is the percentage last drawn, so a step that does not move it costs a single atomic load and no lock.
 	pct atomic.Int32
 	// quiet holds a delayed meter back until its delay is up.
 	quiet atomic.Bool
@@ -63,7 +63,7 @@ func Start(w io.Writer, title string, total int64) *Meter {
 	return start(w, title, total, false)
 }
 
-// StartDelayed begins a meter that stays quiet for a second first, as git's start_delayed_progress does.
+// StartDelayed begins a meter that stays quiet until the delay interval passes, as git's start_delayed_progress does.
 func StartDelayed(w io.Writer, title string, total int64) *Meter {
 	return start(w, title, total, true)
 }
@@ -105,7 +105,7 @@ func (m *Meter) run(delayed bool) {
 	}
 }
 
-// Step counts one unit of work. Workers call it once per object, so the path
+// Step counts a unit of work. Workers call it for each object, so the path
 // that draws nothing must stay to a couple of atomics.
 func (m *Meter) Step() {
 	if m == nil {
@@ -165,13 +165,14 @@ func (m *Meter) report(n int64) {
 	m.draw("")
 }
 
-// draw writes one line. end is empty for an update, which returns the cursor to
-// the start of the line, and ", done." for the last one.
+// draw writes a line. end is empty for an update, which returns the cursor to
+// the start of the line, and ", done." for the last update.
 //
-// The count it draws is the one the counter holds now, not the one the caller
-// was holding when it decided to draw. Those differ under workers: two that
-// step the counter can reach the lock in the other order, and each drawing its
-// own number sends the meter backwards over work that was already done.
+// The count it draws is whatever the counter holds now, not whatever the
+// caller was holding when it decided to draw. These differ under workers:
+// several that step the counter can reach the lock in a different order, and
+// each drawing its own number sends the meter backwards over work that was
+// already done.
 func (m *Meter) draw(end string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -184,7 +185,7 @@ func (m *Meter) draw(end string) {
 	} else {
 		counters = fmt.Sprintf("%d %s", n, m.status())
 	}
-	// A shorter line than the last one leaves the tail of the last one on screen.
+	// A line shorter than the previous line leaves the tail of that line on screen.
 	pad := ""
 	if len(counters) < m.lastLen {
 		pad = strings.Repeat(" ", m.lastLen-len(counters)+1)
@@ -225,8 +226,8 @@ func (m *Meter) status() string {
 }
 
 // elapsed renders how long a phase has been running, in the widest unit that
-// has a whole number in it. A fixed unit is either three digits of seconds or
-// a leading zero on everything short.
+// carries a nonzero span, and pads the smaller field on the left so a short
+// value still shows a full width.
 func elapsed(d time.Duration) string {
 	switch s := int64(d.Seconds()); {
 	case s < 60:

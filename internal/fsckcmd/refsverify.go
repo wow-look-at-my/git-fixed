@@ -23,7 +23,7 @@ func (r *run) checkRefs() {
 	if r.o.Verbose {
 		r.rep.Verbosef("Checking ref database")
 	}
-	// git measures this phase in one step, because it hands the whole of it to "git refs verify" and cannot see.
+	// git measures this phase as a single step, because it hands the whole of it to "git refs verify" and cannot see.
 	m := r.meterOn("Checking ref database", 1)
 	defer func() {
 		m.Advance(1)
@@ -43,14 +43,14 @@ func (r *run) checkRefs() {
 	}
 }
 
-// refReport prints one finding about a reference. git prints the path, the name
+// refReport prints a finding about a reference. git prints the path, the name
 // of the check, and the complaint, and only an error counts toward the status.
 func (r *run) refReport(path string, id fsck.MsgID, format string, args ...any) {
 	sev := r.fsck.Severity(id)
 	if sev == fsck.SevIgnore {
 		return
 	}
-	// A ref check has no fatal level, and an informational one is printed
+	// A ref check has no fatal level, and an informational finding prints
 	// as a warning, exactly as fsck's own reporting does.
 	if sev == fsck.SevInfo {
 		sev = fsck.SevWarn
@@ -65,7 +65,7 @@ func (r *run) refReport(path string, id fsck.MsgID, format string, args ...any) 
 	r.fail(ErrorRefs)
 }
 
-// checkRefsDir walks one worktree's refs directory. Every file under it is a
+// checkRefsDir walks a worktree's refs directory. Every file under it is a
 // reference, whatever its depth.
 func (r *run) checkRefsDir(root, prefix string) {
 	var paths []string
@@ -87,7 +87,7 @@ func (r *run) checkRefsDir(root, prefix string) {
 	for _, path := range paths {
 		name := filepath.Base(path)
 		// A lock file is not a reference. A name that starts with a dot
-		// is not exempt: a ref may not begin with one, and the name
+		// is not exempt: a ref may not begin with a dot, and the name
 		// check has to see it.
 		if name[0] != '.' && strings.HasSuffix(name, ".lock") {
 			continue
@@ -149,7 +149,7 @@ func (r *run) checkRefName(refname string) {
 	}
 }
 
-// checkRefContent reads one ref file and judges what is in it.
+// checkRefContent reads a ref file and judges what is in it.
 func (r *run) checkRefContent(refname, path string, mode os.FileMode) {
 	if mode&os.ModeSymlink != 0 {
 		r.refReport(refname, fsck.MsgSymlinkRef, "use deprecated symbolic link for symref")
@@ -243,7 +243,7 @@ func (r *run) checkSymrefTarget(refname, target string) {
 func (r *run) checkPackedRefs(path string) {
 	st, err := os.Lstat(path)
 	if err != nil {
-		return // not having one is normal
+		return // not having a packed-refs file is normal
 	}
 	if st.Mode()&os.ModeSymlink != 0 {
 		r.refReport("packed-refs", fsck.MsgBadRefFiletype, "not a regular file but a symlink")
@@ -285,7 +285,7 @@ func (r *run) checkPackedRefsContent(data []byte) bool {
 	line := 1
 	off := 0
 	sorted := false
-	// git looks at the first line before it knows whether the file has a header.
+	// git looks at the opening line before it knows whether the file has a header.
 	first, next := r.packedLine(data, off, line)
 	if len(data) > 0 && data[0] == '#' {
 		sorted = r.checkPackedRefsHeader(first)
@@ -304,7 +304,7 @@ func (r *run) checkPackedRefsContent(data []byte) bool {
 	return sorted
 }
 
-// checkPackedRefsHeader judges the first line, and reports whether it claims the
+// checkPackedRefsHeader judges the opening line, and reports whether it claims the
 // file is sorted.
 func (r *run) checkPackedRefsHeader(text []byte) bool {
 	traits, ok := bytes.CutPrefix(text, []byte("# pack-refs with: "))
@@ -321,7 +321,7 @@ func (r *run) checkPackedRefsHeader(text []byte) bool {
 	return false
 }
 
-// checkPackedRefsEntry judges one "<oid> <refname>" line.
+// checkPackedRefsEntry judges an "<oid> <refname>" line.
 func (r *run) checkPackedRefsEntry(line int, text []byte) {
 	where := fmt.Sprintf("packed-refs line %d", line)
 	oid, rest, ok := r.repo.Algo.ParsePrefix(string(text))

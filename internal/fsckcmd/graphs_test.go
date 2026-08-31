@@ -21,8 +21,8 @@ func history(t *testing.T, r *gittest.Repo, n int) {
 	}
 }
 
-// onlyFile returns the one file matching a glob, failing when there is not
-// exactly one.
+// onlyFile returns the single file matching a glob, failing unless the glob
+// matches exactly a single file.
 func onlyFile(t *testing.T, glob string) string {
 	t.Helper()
 	names, err := filepath.Glob(glob)
@@ -32,7 +32,7 @@ func onlyFile(t *testing.T, glob string) string {
 }
 
 // flipLastByte corrupts a file by inverting its final byte, which lands inside
-// the trailing checksum of every one of these formats.
+// the trailing checksum of every format here.
 func flipLastByte(t *testing.T, path string) {
 	t.Helper()
 	data, err := os.ReadFile(path)

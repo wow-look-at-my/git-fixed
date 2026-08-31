@@ -24,7 +24,7 @@ func deflate(t *testing.T, raw []byte) []byte {
 	return buf.Bytes()
 }
 
-// looseObject returns the compressed form of "<type> <size>\0<content>".
+// looseObject returns the compressed form of "<type> <size>NUL<content>".
 func looseObject(t *testing.T, typeName, content string) []byte {
 	t.Helper()
 	return deflate(t, []byte(typeName+" "+itoa(len(content))+"\x00"+content))
@@ -80,7 +80,7 @@ func TestParseLooseHeader(t *testing.T) {
 }
 
 func TestHash(t *testing.T) {
-	// The empty blob is the one object name every git repository shares.
+	// The empty blob is the object name every git repository shares.
 	assert.Equal(t, gitobj.SHA1.Empty, Hash(gitobj.SHA1, gitobj.TypeBlob, nil))
 	assert.Equal(t, gitobj.SHA1.EmptyTree, Hash(gitobj.SHA1, gitobj.TypeTree, nil))
 	assert.Equal(t, gitobj.SHA256.Empty, Hash(gitobj.SHA256, gitobj.TypeBlob, nil))

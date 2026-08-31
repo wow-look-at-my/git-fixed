@@ -13,7 +13,7 @@ const deltaCacheLimit = 96 << 20
 // deltaCacheShards splits the cache so several workers rarely wait on the same lock.
 const deltaCacheShards = 64
 
-// deltaKey names one entry in a pack.
+// deltaKey names an entry in a pack.
 type deltaKey struct {
 	pack *Pack
 	off  int64
@@ -31,7 +31,7 @@ type deltaShard struct {
 	size int64
 }
 
-// deltaValue is one cached object. The bytes are shared and never written to.
+// deltaValue is a cached object. The bytes are shared and never written to.
 type deltaValue struct {
 	key  deltaKey
 	typ  gitobj.Type
@@ -48,7 +48,7 @@ func newDeltaCache() *deltaCache {
 }
 
 func (c *deltaCache) shard(off int64) *deltaShard {
-	// Offsets grow by whole objects, so the low bits alone would land neighbours in one shard.
+	// Offsets grow by whole objects, so the low bits alone would land neighbours in the same shard.
 	h := uint64(off)
 	h ^= h >> 17
 	return &c.shards[h%deltaCacheShards]
@@ -72,7 +72,7 @@ func (c *deltaCache) get(p *Pack, off int64) (gitobj.Type, []byte, bool) {
 // inside the limit.
 func (c *deltaCache) put(p *Pack, off int64, typ gitobj.Type, data []byte) {
 	if int64(len(data)) > deltaCacheLimit/deltaCacheShards {
-		// One object that fills a whole shard would evict everything else for a single hit.
+		// An object that fills a whole shard would evict everything else for a single hit.
 		return
 	}
 	key := deltaKey{p, off}

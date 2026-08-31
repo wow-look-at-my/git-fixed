@@ -1,6 +1,6 @@
 package main
 
-// The two modes that only read or undo a quarantine, and never scan anything.
+// The modes that only read or undo a quarantine, and never scan anything.
 
 import (
 	"fmt"
@@ -34,7 +34,7 @@ func listQuarantines(dir string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// undoRun puts one run's files back, the newest when none is named.
+// undoRun puts a run's files back, the newest when none is named.
 func undoRun(dir string, rest []string, stdout, stderr io.Writer) int {
 	gitDir, code := commonDir(dir, stderr)
 	if code != 0 {

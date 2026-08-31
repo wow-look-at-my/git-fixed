@@ -16,12 +16,12 @@ const (
 	modeGitlink = 0o160000
 )
 
-// TreeEntry is one line of a tree object, with the mode exactly as stored.
+// TreeEntry is a line of a tree object, with the mode exactly as stored.
 type TreeEntry struct {
 	Mode uint32
 	Name []byte
 	OID  gitobj.OID
-	// Raw is the entry's bytes, whose first byte tells a zero-padded mode.
+	// Raw is the entry's bytes; the leading byte is what hasZeroPad below checks.
 	Raw []byte
 }
 
@@ -48,7 +48,7 @@ func (e TreeEntry) WalkKind() (gitobj.Type, bool) {
 	return gitobj.TypeNone, false
 }
 
-// errBadTree is git's decode_tree_entry() failure, which fsck turns into one "cannot be parsed as a tree".
+// errBadTree is git's decode_tree_entry() failure, which fsck turns into the message "cannot be parsed as a tree".
 var errBadTree = errors.New("cannot be parsed as a tree")
 
 // ParseTree decodes a whole tree object.
@@ -56,8 +56,8 @@ func ParseTree(buf []byte, algo *gitobj.Algo) ([]TreeEntry, error) {
 	return ParseTreeInto(nil, buf, algo)
 }
 
-// ParseTreeInto decodes a tree into dst[:0], so a caller that reads many trees
-// reuses one allocation instead of making one per tree.
+// ParseTreeInto decodes a tree into a truncated dst, so a caller that reads
+// many trees reuses the same allocation instead of allocating fresh for each tree.
 func ParseTreeInto(dst []TreeEntry, buf []byte, algo *gitobj.Algo) ([]TreeEntry, error) {
 	out := dst[:0]
 	rest := buf
@@ -72,7 +72,8 @@ func ParseTreeInto(dst []TreeEntry, buf []byte, algo *gitobj.Algo) ([]TreeEntry,
 	return out, nil
 }
 
-// decodeTreeEntry is git's decode_tree_entry(): "<octal mode> <name>\0<hash>".
+// decodeTreeEntry is git's decode_tree_entry(): "<octal mode> <name>" followed
+// by a NUL byte and the hash.
 func decodeTreeEntry(buf []byte, algo *gitobj.Algo) (TreeEntry, []byte, error) {
 	rawsz := algo.RawSize
 	if len(buf) < rawsz+3 {
@@ -118,7 +119,7 @@ func (o *Options) Tree(ctx any, oid gitobj.OID, buf []byte) int {
 
 // TreeEntries runs the tree checks over entries a caller already decoded, along
 // with the error ParseTree gave it. Decoding a tree is the most expensive part
-// of checking one, so a caller that needs the entries anyway passes them here
+// of checking it, so a caller that needs the entries anyway passes them here
 // instead of handing back the bytes.
 func (o *Options) TreeEntries(ctx any, oid gitobj.OID, entries []TreeEntry, err error) int {
 	retval := 0
@@ -180,7 +181,7 @@ func (o *Options) TreeEntries(ctx any, oid gitobj.OID, entries []TreeEntry, err 
 		}
 
 		// NTFS reads a backslash as a directory separator, so each
-		// segment after one is a name in its own right there.
+		// segment after it is a name in its own right there.
 		for rest := e.Name; ; {
 			k := bytes.IndexByte([]byte(rest), '\\')
 			if k < 0 {
@@ -287,7 +288,7 @@ func verifyOrdered(mode1 uint32, name1 []byte, mode2 uint32, name2 []byte, candi
 		c2 = name2[l]
 	}
 	if c1 == 0 && c2 == 0 {
-		// git-write-tree once wrote a tree with the same name twice, one blob and one tree.
+		// git-write-tree could write a tree with the same name for both a blob and a tree entry.
 		return treeHasDups
 	}
 	if c1 == 0 && mode1&0o170000 == modeDir {

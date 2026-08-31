@@ -20,14 +20,14 @@ const (
 	phaseGraphs
 )
 
-// sortKey orders one message. Work runs in parallel, so a message carries where
+// sortKey orders a message. Work runs in parallel, so a message carries where
 // it came from and the output is put back in that order before it is printed.
 type sortKey struct {
 	phase int
 	group int   // object directory, or pack number
 	pos   int64 // offset in a pack
 	oid   gitobj.OID
-	seq   int64 // keeps messages about one object in the order they were made
+	seq   int64 // keeps messages about the same object in the order they were made
 }
 
 func (a sortKey) less(b sortKey) bool {

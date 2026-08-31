@@ -7,7 +7,7 @@ import (
 	"sync/atomic"
 )
 
-// edgeSlabSize is how many edges one slab holds.
+// edgeSlabSize is how many edges a slab holds.
 const edgeSlabSize = 8192
 
 // edgeArena hands out room for edges and keeps every slab it made.
@@ -17,7 +17,7 @@ type edgeArena struct {
 	chunks sync.Pool
 }
 
-// edgeChunk is the part of one slab a worker is handing out from.
+// edgeChunk is the part of a slab a worker is handing out from.
 type edgeChunk struct {
 	slab uint32
 	buf  []edge
@@ -38,7 +38,7 @@ func (a *edgeArena) alloc(n int) (edgeSpan, []edge) {
 	}
 	c, _ := a.chunks.Get().(*edgeChunk)
 	if c == nil || len(c.buf)-c.used < n {
-		// What is left of the old chunk is dropped: at most one object's edges out of a slab holding thousands.
+		// What is left of the old chunk is dropped: at most a single object's edges out of a slab holding thousands.
 		slab, buf := a.newSlab(edgeSlabSize)
 		c = &edgeChunk{slab: slab, buf: buf}
 	}
@@ -63,7 +63,7 @@ func (a *edgeArena) at(span edgeSpan) []edge {
 	return slab[pos : pos+span.n : pos+span.n]
 }
 
-// newSlab makes one slab and returns its index.
+// newSlab makes a slab and returns its index.
 //
 // The list of slabs grows by doubling, and a slab that fits in what is already
 // there is written into the spare capacity the readers cannot see: a reader

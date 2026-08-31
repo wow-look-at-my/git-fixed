@@ -1,6 +1,6 @@
 package repair_test
 
-// Every test here follows one shape: record the whole repository, damage it, repair it.
+// Every test here follows the same shape: record the whole repository, damage it, repair it.
 
 import (
 	"os"
@@ -78,8 +78,8 @@ func fix(t *testing.T, r *gittest.Repo) *repair.Result {
 	return res
 }
 
-// history builds a repository with two commits and a nested directory, the
-// smallest thing that exercises trees at more than one depth.
+// history builds a repository with a couple of commits and a nested directory, the
+// smallest thing that exercises trees at more than a single depth.
 func history(t *testing.T) *gittest.Repo {
 	r := gittest.New(t)
 	require.NoError(t, os.MkdirAll(filepath.Join(r.Dir, "src", "deep"), 0o777))
@@ -272,8 +272,8 @@ func TestRecoversEachObjectOnce(t *testing.T) {
 	assert.Equal(t, "garbage", string(kept), "the quarantine holds the repaired object instead of the corrupt one")
 }
 
-// TestDanglingIsNotDamage holds the sixth rule: an unreachable object is
-// ordinary, and a repair must neither report it nor remove it.
+// TestDanglingIsNotDamage confirms an unreachable object is ordinary, and a
+// repair must neither report it nor remove it.
 func TestDanglingIsNotDamage(t *testing.T) {
 	gittest.RequireGit(t)
 	r := history(t)
@@ -364,8 +364,8 @@ func TestCleanRepositoryIsLeftAlone(t *testing.T) {
 
 // TestDamageThisToolDoesNotRepairIsStillReported is the honesty case. The scan
 // looks for what this package can put back; fsck looks for everything. A
-// repository whose damage falls outside the first set must not be reported as
-// healthy just because the repair had nothing to do.
+// repository whose damage falls outside what the scan covers must not be
+// reported as healthy just because the repair had nothing to do.
 func TestDamageThisToolDoesNotRepairIsStillReported(t *testing.T) {
 	gittest.RequireGit(t)
 	r := history(t)
@@ -387,7 +387,7 @@ func TestDamageThisToolDoesNotRepairIsStillReported(t *testing.T) {
 	assert.False(t, res.Clean, "the pack is still truncated, so the repository is not whole")
 	assert.False(t, res.Nothing(), "this must never read as a healthy repository")
 
-	// Each object was attempted once, not once per pass.
+	// Each object was attempted a single time overall, never repeated per pass.
 	seen := map[string]int{}
 	for _, rec := range res.Objects {
 		seen[rec.OID.String()]++

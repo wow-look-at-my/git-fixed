@@ -1,6 +1,6 @@
 package odb
 
-// What one pack entry costs, and what it derives rather than holds.
+// What a pack entry costs, and what it derives rather than holds.
 
 import (
 	"reflect"
@@ -39,9 +39,9 @@ func holdsPointer(t reflect.Type) bool {
 	return false
 }
 
-// TestAnEntryDerivesWhereItsPayloadStarts covers the two fields the entry no
+// TestAnEntryDerivesWhereItsPayloadStarts covers the fields the entry no
 // longer holds: the header length stands in for the offset of the zlib stream,
-// and an entry ends where the next one starts.
+// and an entry ends where the next entry starts.
 func TestAnEntryDerivesWhereItsPayloadStarts(t *testing.T) {
 	l := &packLayout{
 		ents: []packEntry{
@@ -57,7 +57,7 @@ func TestAnEntryDerivesWhereItsPayloadStarts(t *testing.T) {
 }
 
 // TestATypeSurvivesItsByte keeps git's negative types readable out of the byte
-// they are stored in, because a bad entry is marked with one.
+// they are stored in, because a bad entry is marked using a negative value there.
 func TestATypeSurvivesItsByte(t *testing.T) {
 	for _, typ := range []gitobj.Type{
 		gitobj.TypeBad, gitobj.TypeNone, gitobj.TypeCommit, gitobj.TypeTree,

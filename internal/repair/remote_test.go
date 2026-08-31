@@ -48,7 +48,7 @@ func runWith(t *testing.T, r *gittest.Repo, dryRun bool) (*repair.Result, string
 }
 
 // TestTheRemoteIsAskedForTheObjectsByName is the whole point of the change: a
-// repository missing three objects costs three objects, not a copy of itself.
+// repository missing objects costs exactly those objects, not a copy of itself.
 //
 // The fallback announces itself, so its absence is the assertion. A server that
 // refuses to serve an object by name still gets the old behaviour, and says so.
@@ -82,7 +82,7 @@ func TestADryRunNeverFetchesEveryRef(t *testing.T) {
 		"a dry run pulled %d objects, which is the repository", received(stderr))
 }
 
-// gitCall is one git command a run made, and the directory it ran in.
+// gitCall is a git command a run made, and the directory it ran in.
 type gitCall struct {
 	dir  string
 	args []string
@@ -132,7 +132,7 @@ func remoteFetches(calls []gitCall) []gitCall {
 	return out
 }
 
-// transferred finds the objects one fetch pulled, in git's own progress.
+// transferred finds the objects a fetch pulled, in git's own progress.
 var transferred = regexp.MustCompile(`Receiving objects: 100% \((\d+)/\d+\), `)
 
 func received(stderr string) int {
@@ -172,16 +172,17 @@ func deepRemote(t *testing.T, commits int) *gittest.Repo {
 // TestARunFetchesEachObjectOnceAndNothingBehindIt is the cost of the remote
 // rung, on the repositories this tool is for.
 //
-// Two commits are gone at different depths. The deeper one is invisible until
-// the shallower one is back, so the run takes more than one pass -- and a pass
-// used to open a scratch repository of its own, throw away what the pass before
-// it had fetched, and ask the remote again. Nothing bounded the answer either:
-// a commit asked for by name arrives with its whole ancestry behind it. On a
-// repository of thirteen million objects that was eight gigabytes per pass.
+// A pair of commits are gone at different depths. The deeper commit is
+// invisible until the shallower commit is back, so the run takes more than a
+// single pass -- and a pass used to open a scratch repository of its own,
+// throw away what the earlier pass had fetched, and ask the remote again.
+// Nothing bounded the answer either: a commit asked for by name arrives with
+// its whole ancestry behind it. On a repository with many millions of objects
+// that cost several gigabytes per pass.
 //
-// The three things measured here are the three that went wrong: one scratch
-// repository for the run, no name asked for twice, and a transfer the size of
-// what was asked for.
+// What is measured here is what went wrong: a single scratch repository for
+// the run, no name asked for more than a single time, and a transfer the size
+// of what was asked for.
 func TestARunFetchesEachObjectOnceAndNothingBehindIt(t *testing.T) {
 	r := deepRemote(t, 30)
 	before := record(t, r)
@@ -224,7 +225,7 @@ func TestARunFetchesEachObjectOnceAndNothingBehindIt(t *testing.T) {
 		assert.Equal(t, 1, asked[oid], "%s was asked for %d times", oid, asked[oid])
 	}
 
-	// Thirty commits are ninety-odd objects. Two were missing.
+	// The history holds far more objects than went missing.
 	assert.LessOrEqual(t, received(stderr), 10,
 		"%d objects came over the wire to recover %d: the fetch dragged the history behind it",
 		received(stderr), len(gone))

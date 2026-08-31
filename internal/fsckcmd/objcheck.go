@@ -1,6 +1,6 @@
 package fsckcmd
 
-// The per-object check: what fsck says about one object once it has decoded.
+// The per-object check: what fsck says about an object after it decodes.
 
 import (
 	"sync"
@@ -23,14 +23,14 @@ func (r *run) printableType(oid gitobj.OID, typ gitobj.Type) string {
 	return "unknown"
 }
 
-// objError is git's objerror(): a problem with an object that is not one of the
+// objError is git's objerror(): a problem with an object outside the
 // numbered checks.
 func (r *run) objError(key sortKey, oid gitobj.OID, text string) {
 	r.fail(ErrorObject)
 	r.rep.Errf(key, "error in %s %s: %s", r.printableType(oid, gitobj.TypeNone), r.fsck.Describe(oid), text)
 }
 
-// checkObject runs the object checks and the link walk for one object. It is
+// checkObject runs the object checks and the link walk for an object. It is
 // git's fsck_obj().
 func (r *run) checkObject(key sortKey, e *objEntry, typ gitobj.Type, buf []byte) {
 	if e.SetFlag(flagSeen) {
@@ -39,7 +39,7 @@ func (r *run) checkObject(key sortKey, e *objEntry, typ gitobj.Type, buf []byte)
 	if r.o.Verbose {
 		r.rep.Verbosef("Checking %s %s", r.printableType(r.oid(e), typ), r.fsck.Describe(r.oid(e)))
 	}
-	// git walks the links first, marking each target used.
+	// git walks the links before the object checks, marking each target used.
 	var edges []edge
 	var span edgeSpan
 	broken := false
@@ -97,7 +97,7 @@ func (r *run) checkObject(key sortKey, e *objEntry, typ gitobj.Type, buf []byte)
 	}
 }
 
-// treeScratch lends each worker one entry slice, so decoding a tree does not allocate one per tree.
+// treeScratch lends each worker a reusable entry slice, so decoding a tree does not allocate a fresh slice every time.
 var treeScratch sync.Pool
 
 // recordEdges keeps the references for the connectivity walk, unless the names

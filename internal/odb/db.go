@@ -13,7 +13,7 @@ import (
 	"github.com/wow-look-at-my/git-fixed/internal/gitobj"
 )
 
-// Dir is one object directory: the repository's own, or an alternate.
+// Dir is an object directory: the repository's own, or an alternate.
 type Dir struct {
 	// Display is the path git would print for this directory.
 	Display string
@@ -107,9 +107,9 @@ func (d *Dir) loadPacks(algo *gitobj.Algo) error {
 		shown := filepath.Join(d.Display, "pack", n)
 		p, err := OpenPack(file, shown, algo)
 		if err != nil {
-			// git skips an index it cannot map and says so once the
-			// caller asks it to verify the pack. Record the failure
-			// as a broken pack so nothing is dropped in silence.
+			// git skips an index it cannot map and reports the failure
+			// when the caller asks it to verify the pack. Record the
+			// failure as a broken pack so nothing is dropped in silence.
 			d.Packs = append(d.Packs, &Pack{
 				IdxPath: shown,
 				IdxFile: file,
@@ -221,7 +221,7 @@ type Location struct {
 // Find locates an object. git looks in packs before loose files, and so do we.
 func (db *DB) Find(oid gitobj.OID) (Location, bool) {
 	if !oid.Valid() {
-		// A ref file with garbage in it yields no object name at all, and nothing on disk can be named by one.
+		// A ref file with garbage in it yields no valid object name, so nothing on disk can match it.
 		return Location{}, false
 	}
 	for _, p := range db.packs {
@@ -442,7 +442,7 @@ func (db *DB) HasPacked(oid gitobj.OID) bool {
 	return false
 }
 
-// FatalError is a condition git reports with "fatal:" and exit status 128.
+// FatalError is a condition git reports with "fatal:" and a nonzero exit status.
 type FatalError struct {
 	Msg string
 	// Inflate is what git's decompressor said on the way, which it prints as its own line before the caller dies.
@@ -453,7 +453,7 @@ func (e *FatalError) Error() string { return e.Msg }
 
 // corruptPacked builds the message git dies with when a packed object will not
 // decode. It names the object and the pack, as git's unpack_entry() does, and
-// carries whatever zlib complained about first.
+// carries whatever zlib complained about.
 func corruptPacked(p *Pack, oid gitobj.OID, off int64) error {
 	e := &FatalError{Msg: fmt.Sprintf("packed object %s (stored in %s) is corrupt", oid, p.Path)}
 	if h, err := p.ReadHeader(off); err == nil {

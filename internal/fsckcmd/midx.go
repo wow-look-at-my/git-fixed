@@ -11,7 +11,7 @@ import (
 	"github.com/wow-look-at-my/git-fixed/internal/odb"
 )
 
-// verifyMultiPackIndex checks one object directory's multi-pack-index, the way
+// verifyMultiPackIndex checks an object directory's multi-pack-index, the way
 // git's "multi-pack-index verify" does.
 //
 // see docs/multi-pack-index.md
@@ -21,7 +21,7 @@ func (r *run) verifyMultiPackIndex(dir *odb.Dir) bool {
 	shown := filepath.Join(dir.Display, "pack", "multi-pack-index")
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return true // not having one is normal
+		return true // not having a multi-pack-index is normal
 	}
 	key := sortKey{phase: phaseGraphs, group: 1}
 	ok := true
@@ -29,7 +29,7 @@ func (r *run) verifyMultiPackIndex(dir *odb.Dir) bool {
 		ok = false
 		r.rep.Errf(key, format, args...)
 	}
-	// git reads the index three times over: once itself.
+	// git repeats the "too small" error every time it retries reading the index, then adds a final parse failure.
 	tooSmall := func() bool {
 		for range 3 {
 			r.rep.Errf(key, "error: multi-pack-index file %s is too small", shown)
@@ -43,7 +43,7 @@ func (r *run) verifyMultiPackIndex(dir *odb.Dir) bool {
 		return tooSmall()
 	}
 	if string(data[0:4]) != "MIDX" {
-		// git dies on this one rather than reporting it, so the run
+		// git dies on this check rather than reporting it, so the run
 		// stops with the exit status a die() gives.
 		r.noteFatalMsg(fmt.Sprintf("multi-pack-index signature 0x%08x does not match signature 0x%08x",
 			binary.BigEndian.Uint32(data[0:4]), 0x4d494458))

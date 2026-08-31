@@ -27,7 +27,7 @@ type BadIndex struct {
 	Why string
 }
 
-// RepairedIndex is what one index rebuild came to.
+// RepairedIndex is what an index rebuild came to.
 type RepairedIndex struct {
 	// Path is the index that was rewritten.
 	Path string
@@ -49,7 +49,7 @@ func (s *scanner) scanIndexes(d *Damage) {
 	for _, wt := range s.repo.Worktrees() {
 		path := filepath.Join(wt.Dir, "index")
 		if _, err := os.Stat(path); err != nil {
-			// No index at all is a normal state for a bare repository, and git makes one on demand anywhere else.
+			// No index at all is a normal state for a bare repository, and git makes an index on demand anywhere else.
 			continue
 		}
 		_, _, err := s.repo.ReadIndex(path)
@@ -57,12 +57,12 @@ func (s *scanner) scanIndexes(d *Damage) {
 			continue
 		}
 		d.Index = &BadIndex{Path: path, WorktreeDir: wt.Dir, Why: err.Error()}
-		// One is enough to report. A second pass picks up the next.
+		// A single bad index is enough to report. A later pass picks up the next.
 		return
 	}
 }
 
-// repairIndex writes a whole index from what the damaged one still yields,
+// repairIndex writes a whole index from what the damaged file still yields,
 // filling the rest in from the commit HEAD names.
 //
 // The index is not a derived file, whatever its name suggests: it records which

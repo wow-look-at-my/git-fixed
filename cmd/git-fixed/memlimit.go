@@ -33,8 +33,8 @@ func capHeap() {
 	}
 }
 
-// setGCTarget lowers the heap's growth target, unless somebody has named one.
-// see docs/architecture.md
+// setGCTarget lowers the heap's growth target, unless somebody has named a
+// target. see docs/architecture.md
 func setGCTarget() {
 	if _, ok := os.LookupEnv("GOGC"); ok {
 		return
@@ -42,10 +42,10 @@ func setGCTarget() {
 	debug.SetGCPercent(gcTarget)
 }
 
-// heapLimit is three quarters of what the machine has.
+// heapLimit returns most of what the machine has, holding back a quarter.
 //
-// The other quarter is not spare. A packfile is read through a mapping, which
-// is not part of the Go heap and does not count against this number, and the
+// That quarter is not spare. A packfile is read through a mapping, which is
+// not part of the Go heap and does not count against this number, and the
 // machine has other work on it.
 func heapLimit(meminfo string) (int64, bool) {
 	for line := range strings.SplitSeq(meminfo, "\n") {
@@ -53,7 +53,7 @@ func heapLimit(meminfo string) (int64, bool) {
 		if !ok || key != "MemTotal" {
 			continue
 		}
-		// "MemTotal: 65759416 kB".
+		// e.g. "MemTotal: <N> kB".
 		fields := strings.Fields(value)
 		if len(fields) != 2 || fields[1] != "kB" {
 			return 0, false

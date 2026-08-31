@@ -14,7 +14,7 @@ import (
 	"github.com/wow-look-at-my/git-fixed/internal/gitobj"
 )
 
-// ReflogEntry is one line of a reflog.
+// ReflogEntry is a line of a reflog.
 type ReflogEntry struct {
 	Old       gitobj.OID
 	New       gitobj.OID
@@ -56,7 +56,7 @@ func (r *Repo) ReflogNames(worktreeDir string) []string {
 	return out
 }
 
-// Reflog reads one reference's log, oldest entry first.
+// Reflog reads a reference's log, in the order it was written.
 func (r *Repo) Reflog(worktreeDir, name string) []ReflogEntry {
 	path := filepath.Join(r.CommonDir, "logs", filepath.FromSlash(name))
 	if worktreeDir != "" && worktreeDir != r.CommonDir && (isPerWorktree(name) || name == "HEAD") {

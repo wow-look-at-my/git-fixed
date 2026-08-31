@@ -21,7 +21,7 @@ func writeRef(t *testing.T, r *gittest.Repo, name, content string) {
 }
 
 // TestRefContentChecks covers the checks git runs over the ref files
-// themselves. Each case is one message id from "git refs verify".
+// themselves. Each case names a message id from "git refs verify".
 func TestRefContentChecks(t *testing.T) {
 	gittest.RequireGit(t)
 	for _, c := range []struct {
@@ -49,7 +49,7 @@ func TestRefContentChecks(t *testing.T) {
 	}
 }
 
-// TestRefNameChecks covers a ref whose own name is not one a ref may have.
+// TestRefNameChecks covers a ref whose own name violates the shape a ref name must have.
 func TestRefNameChecks(t *testing.T) {
 	gittest.RequireGit(t)
 	for _, name := range []string{"refs/heads/bad name", "refs/heads/bad..name", "refs/heads/.hidden"} {

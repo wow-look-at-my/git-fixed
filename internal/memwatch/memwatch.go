@@ -8,7 +8,7 @@
 //
 // Resident memory has the kernel's own mark. VmHWM is the largest resident set
 // the process has held, so it is exact whenever it is read, however seldom that
-// is. The other two have no mark and are sampled.
+// is. The others have no mark and are sampled.
 //
 // see docs/memory.md
 package memwatch
@@ -25,9 +25,9 @@ import (
 // refresh is how stale a mark may be before a caller's read opens the file again.
 const refresh = 250 * time.Millisecond
 
-// Marks are what a run has cost at its worst moment. Each one is its own mark,
-// reached at its own moment, so they do not describe one instant and the
-// smaller ones are not a part of the larger.
+// Marks are what a run has cost at its worst moment. Each field is its own
+// mark, reached at its own moment, so together they do not describe a single
+// instant, and the smaller marks are not part of the larger.
 type Marks struct {
 	// RSS is the largest resident set the process has held: VmHWM, which the kernel maintains.
 	RSS uint64
@@ -40,7 +40,7 @@ type Marks struct {
 // Peak returns the process's marks, and false on a system that publishes none.
 func Peak() (Marks, bool) { return std.peak() }
 
-// std is the marks of this process, which has one memory footprint however many meters are drawing it.
+// std is the marks of this process, which has a single memory footprint however many meters are drawing it.
 var std = &watcher{path: "/proc/self/status", now: time.Now}
 
 type watcher struct {
@@ -88,15 +88,15 @@ func readStatus(path string) (Marks, bool) {
 	return parseStatus(string(data))
 }
 
-// parseStatus takes the three numbers out of a /proc/<pid>/status, which names
-// them in kB:
+// parseStatus takes the resident, anonymous, and swap numbers out of a
+// /proc/<pid>/status, which names them in kB:
 //
-//	VmHWM:	 81788928 kB
-//	RssAnon:  12897484 kB
-//	VmSwap:          0 kB
+//	VmHWM:	 NNNNNNNN kB
+//	RssAnon:  NNNNNNNN kB
+//	VmSwap:          N kB
 //
-// VmHWM is the peak and the other two are current, which is what makes the
-// other two sampled. A kernel built without an MMU publishes none of them, and
+// VmHWM is the peak and the others are current, which is what makes the
+// others sampled. A kernel built without an MMU publishes none of them, and
 // a value in a unit this does not know is refused rather than guessed at: a
 // wrong figure here would be read as a measurement.
 func parseStatus(status string) (Marks, bool) {
@@ -129,7 +129,7 @@ func parseStatus(status string) (Marks, bool) {
 	return m, haveRSS
 }
 
-// kilobytes reads the "  81788928 kB" half of a line.
+// kilobytes reads the "  NNNNNNNN kB" half of a line.
 func kilobytes(value string) (uint64, bool) {
 	fields := strings.Fields(value)
 	if len(fields) != 2 || fields[1] != "kB" {
@@ -160,9 +160,9 @@ func (m Marks) String() string {
 		Bytes(m.RSS), Bytes(m.Anon), swap)
 }
 
-// Bytes renders a size the way git renders one: a binary unit and two decimal
-// places, as `git count-objects -H` prints "333.84 KiB", and whole bytes below
-// a KiB.
+// Bytes renders a size the way git does: a binary unit and the same fixed
+// decimal precision `git count-objects -H` prints, "N.NN KiB", and whole
+// bytes below a KiB.
 func Bytes(n uint64) string {
 	switch {
 	case n >= 1<<40:

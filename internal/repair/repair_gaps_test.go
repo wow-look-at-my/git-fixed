@@ -1,6 +1,6 @@
 package repair_test
 
-// The three faults that used to be reported and not repaired: a packfile that will not verify.
+// Faults that used to be reported and not repaired: a packfile that will not verify.
 
 import (
 	"os"
@@ -21,7 +21,7 @@ func overwrite(t *testing.T, path string, data []byte) {
 	require.NoError(t, os.WriteFile(path, data, 0o644))
 }
 
-// packFile finds the one packfile in a repository.
+// packFile finds the packfile in a repository.
 func packFile(t *testing.T, r *gittest.Repo) string {
 	t.Helper()
 	matches, err := filepath.Glob(filepath.Join(r.GitDir(), "objects", "pack", "*.pack"))
@@ -30,7 +30,7 @@ func packFile(t *testing.T, r *gittest.Repo) string {
 	return matches[0]
 }
 
-// packed builds a history with everything in one packfile, which is what a
+// packed builds a history with everything in a single packfile, which is what a
 // repository looks like after any ordinary maintenance run.
 func packed(t *testing.T) *gittest.Repo {
 	r := history(t)
@@ -44,7 +44,7 @@ func packed(t *testing.T) *gittest.Repo {
 //
 // This is the fault the tool used to loop on. A corrupt entry in a pack shadows
 // every loose copy of the same object, because the database answers from packs
-// first, so putting the object back changed nothing while the pack stayed. The
+// before loose files, so putting the object back changed nothing while the pack stayed. The
 // repair writes out everything the pack still yields and then displaces it.
 func TestRepairsACorruptPackfile(t *testing.T) {
 	gittest.RequireGit(t)
@@ -54,7 +54,7 @@ func TestRepairsACorruptPackfile(t *testing.T) {
 
 	data, err := os.ReadFile(pack)
 	require.NoError(t, err)
-	// Past the twelve-byte header and before the trailing checksum.
+	// Past the pack's fixed header and before the trailing checksum.
 	at := len(data) / 2
 	data[at] ^= 0xff
 	overwrite(t, pack, data)
@@ -74,15 +74,15 @@ func TestRepairsACorruptPackfile(t *testing.T) {
 }
 
 // TestAPackThatYieldsNothingIsLeftAlone is the other half, and it was a real
-// hole rather than a hypothetical one.
+// gap, not a hypothetical worry.
 //
 // A pack that yields no object at all used to be displaced anyway. Every object
 // in it went with it, and the run only ever ended well because a remote happened
 // to have the history. Moving such a pack buys nothing either: there is no loose
 // copy for it to stop shadowing. So it stays where it is and the run says so.
 //
-// Two damage shapes reach that state. Destroying the body stops every entry from
-// decoding; destroying the four-byte signature stops the read before the first
+// Each damage shape below reaches that state. Destroying the body stops every entry from
+// decoding; destroying the signature bytes stops the read before the leading
 // entry, with every object still in the file byte for byte.
 func TestAPackThatYieldsNothingIsLeftAlone(t *testing.T) {
 	gittest.RequireGit(t)
@@ -167,7 +167,7 @@ func TestAnIndexRebuildKeepsStagedWork(t *testing.T) {
 }
 
 // TestRewritesAMalformedPackedRefs puts a garbage line above a real reference.
-// git's reader stops at the first line it refuses, so the branch below it
+// git's reader stops at the line it refuses, so the branch below it
 // disappears until the file is rewritten.
 func TestRewritesAMalformedPackedRefs(t *testing.T) {
 	gittest.RequireGit(t)
@@ -234,7 +234,7 @@ func TestAPackedRefsRewriteRestoresAMangledLine(t *testing.T) {
 //
 // An entry rebuilt that way has no stat data, and the mode lives INSIDE the stat
 // block, so it is written there by hand. Getting that wrong is silent: git reads
-// mode 000000 and the file stops being executable, or stops being a symlink.
+// an unset file mode and the file stops being executable, or stops being a symlink.
 func TestAnIndexRebuiltFromHeadKeepsEveryMode(t *testing.T) {
 	gittest.RequireGit(t)
 	r := history(t)
@@ -247,7 +247,7 @@ func TestAnIndexRebuiltFromHeadKeepsEveryMode(t *testing.T) {
 	require.Contains(t, wanted, "100755", "the test wrote no executable file")
 	require.Contains(t, wanted, "120000", "the test wrote no symlink")
 
-	// Header only: the entry count still says how many there were, and not one of them can be read.
+	// Header only: the entry count still says how many there were, and none of them can be read.
 	path := filepath.Join(r.GitDir(), "index")
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
@@ -262,10 +262,10 @@ func TestAnIndexRebuiltFromHeadKeepsEveryMode(t *testing.T) {
 	assert.Empty(t, r.Git("status", "--porcelain"), "the rebuilt index disagrees with the worktree")
 }
 
-// TestRepairsASHA256Repository runs all three container repairs at once over a
-// repository whose object names are SHA-256.
+// TestRepairsASHA256Repository runs every container repair together over a
+// repository built with gittest.NewSHA256, whose object names use that hash.
 //
-// Every one of them reads or writes a hash-width-dependent format: the pack
+// Each of them reads or writes a hash-width-dependent format: the pack
 // index, the index's fixed-size entry prefix, and packed-refs' line grammar. A
 // width baked in anywhere would show up here and nowhere else, because every
 // other test in this package uses the default.
@@ -313,7 +313,7 @@ func TestRepairsASHA256Repository(t *testing.T) {
 // has its own HEAD and its own git directory while sharing the objects.
 //
 // It also pins how the report names that index. Paths are measured from the
-// directory DisplayGitDir names, and measuring from the common one instead
+// directory DisplayGitDir names, and measuring from the common directory instead
 // printed ".git/worktrees/w/worktrees/w/index" -- a path that does not exist.
 func TestRepairsALinkedWorktreesIndex(t *testing.T) {
 	gittest.RequireGit(t)
@@ -363,7 +363,7 @@ func TestExtractionReplacesACorruptLooseCopy(t *testing.T) {
 	idx := strings.TrimSuffix(packFile(t, r), ".pack") + ".idx"
 	data, err := os.ReadFile(idx)
 	require.NoError(t, err)
-	// The last twenty bytes are the index's own checksum.
+	// The index's trailing bytes are its own checksum.
 	data[len(data)-1] ^= 0xff
 	overwrite(t, idx, data)
 

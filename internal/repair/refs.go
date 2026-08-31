@@ -12,7 +12,7 @@ import (
 	"github.com/wow-look-at-my/git-fixed/internal/odb"
 )
 
-// RepairedRef is one reference put back, and what it was set to.
+// RepairedRef is a reference put back, and what it was set to.
 type RepairedRef struct {
 	Name string
 	OID  gitobj.OID
@@ -20,11 +20,11 @@ type RepairedRef struct {
 	From string
 }
 
-// repairRef restores one malformed reference from its reflog.
+// repairRef restores a malformed reference from its reflog.
 //
-// The reflog records every value the ref has held, newest last. The newest one
-// whose object the repository still has is the value the ref had when it was
-// last usable, so restoring it loses nothing.
+// The reflog records every value the ref has held, newest last. The newest
+// value whose object the repository still has is the value the ref had when
+// it was last usable, so restoring it loses nothing.
 func repairRef(repo *gitrepo.Repo, db *odb.DB, q *Quarantine, bad BadRef) (RepairedRef, error) {
 	worktreeDir, name := splitRefName(repo, bad.Name)
 	entries := repo.Reflog(worktreeDir, name)
@@ -44,7 +44,7 @@ func repairRef(repo *gitrepo.Repo, db *odb.DB, q *Quarantine, bad BadRef) (Repai
 	return RepairedRef{}, fmt.Errorf("nothing in the reflog for %s still resolves", bad.Name)
 }
 
-// writeRef replaces a ref file, quarantining whatever was there first.
+// writeRef replaces a ref file, quarantining whatever occupied that path.
 func writeRef(repo *gitrepo.Repo, q *Quarantine, worktreeDir, name string, bad BadRef, oid gitobj.OID) error {
 	path := bad.Path
 	if path == "" {

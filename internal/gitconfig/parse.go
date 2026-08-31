@@ -14,7 +14,7 @@ import (
 // ErrParse marks any syntax error in a configuration source.
 var ErrParse = errors.New("bad config line")
 
-// Entry is one setting. Value is nil for a bare key, which git reads as true.
+// Entry is a setting. Value is nil for a bare key, which git reads as true.
 type Entry struct {
 	Key   string // "section.subsection.name", section and name lower-cased
 	Value *string
@@ -27,7 +27,7 @@ func Parse(data []byte) ([]Entry, error) {
 	return p.run()
 }
 
-// ForEach calls fn for every setting, stopping at the first error.
+// ForEach calls fn for every setting, stopping the moment fn returns an error.
 func ForEach(data []byte, fn func(key string, value *string) error) error {
 	entries, err := Parse(data)
 	for i := range entries {
@@ -187,7 +187,7 @@ func (p *parser) subsection() (string, error) {
 	}
 }
 
-// keyValue parses "name" or "name = value" starting from its first letter.
+// keyValue parses "name" or "name = value" starting from its leading letter.
 func (p *parser) keyValue(first byte) (string, *string, error) {
 	var name strings.Builder
 	name.WriteByte(toLower(first))

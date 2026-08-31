@@ -21,24 +21,24 @@ const (
 	cgDateOverflow = 0x80000000
 )
 
-// commitGraph is one parsed commit-graph layer.
+// commitGraph is a parsed commit-graph layer.
 type commitGraph struct {
 	path       string
 	algo       *gitobj.Algo
 	data       []byte
 	numCommits uint32
-	fanout     []byte // 256 * 4 bytes
+	fanout     []byte // a big-endian uint32 per possible OID leading byte
 	lookup     []byte // numCommits * rawsz
-	commitData []byte // numCommits * (rawsz + 16)
+	commitData []byte // a fixed-size record per commit: root tree hash, edges, packed generation/date
 	extraEdges []byte
 	genData    []byte
-	// base is every layer below this one in a chain, oldest first.
+	// base is every layer below this layer in a chain, ordered from oldest.
 	base []*commitGraph
 	// lexBase is how many commits the layers below hold, which is where this layer's own positions start.
 	lexBase uint32
 }
 
-// verifyCommitGraphs checks the commit-graph of one object directory. It
+// verifyCommitGraphs checks the commit-graph of an object directory. It
 // reports the same lines git's "commit-graph verify" does.
 //
 // see docs/commit-graph.md
@@ -53,7 +53,7 @@ func (r *run) verifyCommitGraphs(dir *odb.Dir) bool {
 	for _, path := range files {
 		g, msg := loadCommitGraph(path, r.repo.Algo)
 		if msg != "" {
-			// git loads the graph once itself and once inside the "commit-graph verify" it runs.
+			// git loads the graph itself, then again inside the "commit-graph verify" it runs, so the line repeats to match.
 			r.rep.Errf(key, "%s", msg)
 			r.rep.Errf(key, "%s", msg)
 			return false
@@ -72,8 +72,8 @@ func (r *run) verifyCommitGraphs(dir *odb.Dir) bool {
 	return ok
 }
 
-// loadCommitGraph reads and structurally validates one graph file. The message
-// it returns on failure is the one git's parser prints.
+// loadCommitGraph reads and structurally validates a graph file. The message
+// it returns on failure matches git's parser.
 func loadCommitGraph(path string, algo *gitobj.Algo) (*commitGraph, string) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -147,7 +147,7 @@ func (r *run) verifyOneCommitGraph(key sortKey, g *commitGraph) bool {
 		ok = false
 		r.rep.Errf(key, format, args...)
 	}
-	// The lite checks come first, because everything after them assumes the
+	// The lite checks run before the rest, because everything after them assumes the
 	// tables are the size the header claims.
 	for i := 0; i < 255; i++ {
 		a := binary.BigEndian.Uint32(g.fanout[i*4:])
@@ -257,13 +257,13 @@ func (g *commitGraph) checksumValid() bool {
 	return bytes.Equal(h.Sum(nil), g.data[len(g.data)-rawsz:])
 }
 
-// graphParent is one parent as the graph records it.
+// graphParent is a parent as the graph records it.
 type graphParent struct {
 	oid        gitobj.OID
 	generation uint64
 }
 
-// commitAt decodes one commit's record: its root tree, its parents, its
+// commitAt decodes a commit's record: its root tree, its parents, its
 // generation number, and its date.
 func (g *commitGraph) commitAt(i uint32) (tree gitobj.OID, parents []graphParent, generation uint64, date uint64, ok bool) {
 	rawsz := g.algo.RawSize
@@ -306,7 +306,7 @@ func (g *commitGraph) commitAt(i uint32) (tree gitobj.OID, parents []graphParent
 		}
 		return tree, parents, generation, date, true
 	}
-	// Three or more parents continue in the extra edges chunk.
+	// A commit with more parents than the direct edge slots hold continues in the extra edges chunk.
 	pos := int(edge1&cgEdgeLast) * 4
 	for {
 		if pos+4 > len(g.extraEdges) {
@@ -325,7 +325,7 @@ func (g *commitGraph) commitAt(i uint32) (tree gitobj.OID, parents []graphParent
 }
 
 // commitByPosition resolves a graph position, which counts through the layers
-// of a chain before reaching this one.
+// of a chain before reaching this layer.
 func (g *commitGraph) commitByPosition(pos uint32) (graphParent, bool) {
 	if pos < g.lexBase {
 		for _, b := range g.base {

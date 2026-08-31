@@ -17,17 +17,17 @@ const (
 	indexFormatUB = 4
 )
 
-// IndexEntry is one path recorded in the index.
+// IndexEntry is a path recorded in the index.
 type IndexEntry struct {
 	Mode  uint32
 	OID   gitobj.OID
 	Name  string
 	Stage int
-	// Stat is the 40 bytes git records before the object name: the two timestamps, the device, the inode.
+	// Stat is the raw stat block git records before the object name: the timestamps, the device, the inode.
 	Stat [40]byte
 }
 
-// CacheTree is one node of the cached tree object the index carries.
+// CacheTree is a node of the cached tree object the index carries.
 type CacheTree struct {
 	Name       string
 	EntryCount int
@@ -55,7 +55,7 @@ type Index struct {
 // knownExtensions are the index extensions git reads.
 var knownExtensions = set.Of("TREE", "REUC", "link", "UNTR", "FSMN", "EOIE", "IEOT", "sdir")
 
-// FatalError is a condition git reports with "fatal:" and exit status 128.
+// FatalError is a condition git reports with "fatal:" and the exit status its die() call uses.
 type FatalError struct{ Msg string }
 
 func (e *FatalError) Error() string { return e.Msg }
@@ -174,14 +174,14 @@ func (r *Repo) readIndexEntry(data []byte, pos int, version uint32, prevName str
 			name = data[off : off+end]
 		}
 		e.Name = string(name)
-		// Entries are padded so the next one starts on an 8-byte boundary, counting from the start of this entry.
+		// Entries are padded so the next entry starts word-aligned, counting from the start of this entry (see the mask below).
 		entryLen := fixed + len(name)
 		if flags&0x4000 != 0 {
 			entryLen += 2
 		}
 		return e, pos + ((entryLen + 8) & ^7), nil
 	}
-	// Version 4 strips a suffix from the previous name and appends its own.
+	// The newest index version strips a suffix from the previous name and appends its own.
 	strip, n := readVarint(data[off:])
 	if n == 0 || int(strip) > len(prevName) {
 		return IndexEntry{}, 0, &FatalError{Msg: "index file corrupt"}
@@ -195,7 +195,7 @@ func (r *Repo) readIndexEntry(data []byte, pos int, version uint32, prevName str
 	return e, off + end + 1, nil
 }
 
-// readVarint decodes git's offset encoding, the same one an ofs-delta uses.
+// readVarint decodes git's offset encoding, the same scheme an ofs-delta uses.
 func readVarint(b []byte) (uint64, int) {
 	if len(b) == 0 {
 		return 0, 0

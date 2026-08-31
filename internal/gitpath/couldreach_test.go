@@ -1,6 +1,6 @@
 package gitpath
 
-// The two-byte filter in front of every check here is an assertion about all four filesystems at once.
+// The leading-byte filter in front of every check here is an assertion about every filesystem this package covers together.
 
 import (
 	"testing"
@@ -10,9 +10,9 @@ import (
 )
 
 // reaches asks every check, with no filter in front of any of them. It is
-// matches with the first line taken out, and ".git" keeps its own NTFS check
-// for the same reason matches gives it one: there is no 8.3 short name for a
-// name that is already that short.
+// matches with the couldReach guard removed, and ".git" keeps its own NTFS
+// check for the same reason matches gives it a check of its own: there is no
+// short name for a name that is already that short.
 func reaches(name []byte, n needle) bool {
 	if n == dotGit {
 		return isHFSDotGeneric(name, n) || isNTFSDotGit(name) ||
@@ -22,11 +22,11 @@ func reaches(name []byte, n needle) bool {
 		isExt4DotGeneric(name, n) || isZFSDotGeneric(name, n)
 }
 
-// everyNeedle is each control name, so a sweep covers the 8.3 prefixes that begin differently as well as the rest.
+// everyNeedle is each control name, so a sweep covers the short-name prefixes that begin differently as well as the rest.
 var everyNeedle = []needle{dotGit, dotGitmodules, dotGitignore, dotGitattrs, dotMailmap}
 
 // TestTheFilterRulesOutNothingTheChecksAccept sweeps both bytes the filter
-// looks at, against every tail that could finish one of these names.
+// looks at, against every tail that could finish any of these names.
 func TestTheFilterRulesOutNothingTheChecksAccept(t *testing.T) {
 	tails := []string{
 		"", "t", "t~1", "t~1.", "tmodules", "ilmap", "7eba~1", "ba30~1",
@@ -66,7 +66,7 @@ func TestTheFilterRulesOutNothingOnAShortName(t *testing.T) {
 // nearly everything, or it saves nothing.
 func TestAnOrdinaryNameIsRuledOut(t *testing.T) {
 	// "Makefile" is not here, and neither is "main.go": the filter looks at
-	// two bytes and "ma" begins ".mailmap" as well as both of those.
+	// leading bytes and "ma" begins ".mailmap" as well as both of those.
 	for _, name := range []string{
 		"README", "src", "LICENSE", "index.html", "a.c", "go.mod", "model.py", "vendor",
 	} {

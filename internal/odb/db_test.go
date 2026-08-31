@@ -23,7 +23,7 @@ func TestUnquoteC(t *testing.T) {
 		{`"a\"b"`, `a"b`},
 		{`"a\\b"`, `a\b`},
 		{`"a\101b"`, "aAb"},  // an octal escape
-		{`"a\0101"`, "a\b1"}, // three octal digits at most, so \010 then "1"
+		{`"a\0101"`, "a\b1"}, // an octal escape stops at its fixed digit width, then the rest is literal
 		{`"quoted" trailing`, "quoted"},
 	} {
 		got, ok := unquoteC(c.in)

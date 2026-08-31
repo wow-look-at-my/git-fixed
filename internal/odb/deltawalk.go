@@ -1,6 +1,6 @@
 package odb
 
-// The delta walk: one pack's chains, decoded from the top down under a memory budget. see docs/pack-verification.md
+// The delta walk: a pack's chains, decoded from the top down under a memory budget. see docs/pack-verification.md
 
 import (
 	"fmt"
@@ -10,7 +10,7 @@ import (
 	"github.com/wow-look-at-my/git-fixed/internal/gitobj"
 )
 
-// walker decodes delta chains for one pack.
+// walker decodes delta chains for a pack.
 type walker struct {
 	p      *Pack
 	l      *packLayout
@@ -23,17 +23,17 @@ type walker struct {
 	pages *releaser
 }
 
-// spent counts one entry's bytes as read.
+// spent counts an entry's bytes as read.
 func (w *walker) spent(i int32) { w.pages.spent(w.l.end(i) - w.l.ents[i].off) }
 
-// frame is one level of an in-progress delta chain.
+// frame is a level of an in-progress delta chain.
 type frame struct {
 	entry int32
 	data  []byte
 	next  int32 // position in childList of the next child to visit
 }
 
-// take reserves room to hold one decoded base. The bottom of a worker's stack
+// take reserves room to hold a decoded base. The bottom of a worker's stack
 // is always allowed: a worker that could hold nothing would decode nothing.
 func (w *walker) take(depth int, n int64) bool {
 	if depth == 0 {
@@ -58,7 +58,7 @@ func (w *walker) give(depth int, n int64) {
 	w.budget.Add(n)
 }
 
-// walkChain decodes one base object and every delta built on it, reusing the
+// walkChain decodes a base object and every delta built on it, reusing the
 // parent's buffer instead of decoding a chain again for each of its children.
 func (w *walker) walkChain(root int32, in *Inflater) {
 	l, p := w.l, w.p
@@ -98,13 +98,13 @@ func (w *walker) walkChain(root int32, in *Inflater) {
 }
 
 // spread builds every delta standing on base, and every delta standing on those,
-// in one pass down the chain. base is spread's to drop.
+// walking down the chain in a single pass. base is spread's to drop.
 //
-// It holds one decoded object per level, and releases a level as soon as
+// It holds a decoded object per level, and releases a level as soon as
 // nothing below will read it again: descending into a node's last child hands
-// the buffer over rather than stacking a second one on top of it, which is the
-// whole of a chain that never branches. Past the budget a child is returned for
-// the caller to rebuild later instead of being held here.
+// the buffer over rather than stacking a further buffer on top of it, which is
+// the whole of a chain that never branches. Past the budget a child is returned
+// for the caller to rebuild later instead of being held here.
 func (w *walker) spread(base int32, typ gitobj.Type, data []byte, in *Inflater, deferred []int32) []int32 {
 	l, p := w.l, w.p
 	stack := []frame{{entry: base, data: data, next: l.childStart[base]}}
@@ -158,9 +158,9 @@ func (w *walker) spread(base int32, typ gitobj.Type, data []byte, in *Inflater, 
 	return deferred
 }
 
-// rebuild decodes one entry from the bottom of its own chain, for a delta the
-// walk could not afford to keep when it first passed it. It holds two objects
-// at a time rather than the chain.
+// rebuild decodes an entry from the bottom of its own chain, for a delta the
+// walk could not afford to keep when it walked past it. It holds only the
+// object being decoded, never the whole chain.
 func (w *walker) rebuild(i int32, in *Inflater) ([]byte, error) {
 	l := w.l
 	var path []int32
@@ -231,7 +231,7 @@ func (w *walker) finishStreamed(i int32) {
 	w.spent(i)
 }
 
-// finish hashes one decoded object and hands it to the caller.
+// finish hashes a decoded object and hands it to the caller.
 func (w *walker) finish(i int32, typ gitobj.Type, data []byte) {
 	e := &w.l.ents[i]
 	oid := w.p.OIDAt(e.idx)

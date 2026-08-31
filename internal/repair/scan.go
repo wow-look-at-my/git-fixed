@@ -29,7 +29,7 @@ type Need struct {
 	Path string
 }
 
-// BadObject is one object the repository cannot produce.
+// BadObject is an object the repository cannot produce.
 type BadObject struct {
 	OID gitobj.OID
 	// Type is what the object must be, from the link that named it, or TypeNone when only its name is known.
@@ -53,7 +53,7 @@ type BadRef struct {
 	Missing gitobj.OID
 }
 
-// Damage is everything one scan found.
+// Damage is everything a scan found.
 type Damage struct {
 	// Derived are the cache files that will not parse.
 	Derived []string
@@ -79,11 +79,11 @@ func (d *Damage) Empty() bool {
 		len(d.Packs) == 0 && d.Index == nil && d.PackedRefs == nil
 }
 
-// scanner holds one scan's state.
+// scanner holds a scan's state.
 //
 // Both tables are keyed on the object name itself. Keying them on its hex
-// spelling cost a 40-byte string for every tree entry in the repository, most
-// of them thrown away at once, and kept one per object for the whole walk.
+// spelling cost a full hex string for every tree entry in the repository, most
+// of them thrown away immediately, and kept per object for the whole walk.
 type scanner struct {
 	repo *gitrepo.Repo
 	db   *odb.DB
@@ -92,7 +92,7 @@ type scanner struct {
 	seen *concurrentmap.Map[gitobj.OID, bool]
 	// queue is a bag rather than a stack: the walk does not care what order it reaches objects in.
 	queue *concurrentbag.Bag[queued]
-	// anyBad is raised the moment an object first fails to read.
+	// anyBad is raised the moment an object fails to read.
 	anyBad atomic.Bool
 	// pending counts what is queued plus what a worker is still reading.
 	pending atomic.Int64
@@ -136,7 +136,7 @@ type Meters struct {
 	Show   bool
 }
 
-// start begins one meter, or returns nil when this scan draws none.
+// start begins a meter, or returns nil when this scan draws none.
 func (m Meters) start(title string, total int64) *progress.Meter {
 	if !m.Show || m.Stderr == nil {
 		return nil
@@ -146,8 +146,8 @@ func (m Meters) start(title string, total int64) *progress.Meter {
 
 // scan reads the repository, skipping the passes the caller's own fsck has already made.
 //
-// The two it can skip are the whole cost of a scan. What may be skipped is decided bit by bit, and everything
-// else still runs: fsck never verifies info/packs, so a corrupt one leaves it happy. see docs/repair.md
+// What it can skip is the whole cost of a scan. What may be skipped is decided bit by bit, and everything
+// else still runs: fsck never verifies info/packs, so a corrupt pack leaves it happy. see docs/repair.md
 func scan(repo *gitrepo.Repo, db *odb.DB, meters Meters, v *Verdict, verified []VerifiedPack) (*Damage, error) {
 	s := &scanner{
 		repo:   repo,
@@ -165,7 +165,7 @@ func scan(repo *gitrepo.Repo, db *odb.DB, meters Meters, v *Verdict, verified []
 	s.scanPacks(d)
 	d.Verified = s.verified
 	s.scanIndexes(d)
-	// scanRefs first: reading the references is what makes git's own reader pass over packed-refs.
+	// scanRefs runs before packed-refs: reading the references is what makes git's own reader pass over packed-refs.
 	s.scanRefs(d)
 	s.scanPackedRefs(d)
 	// When the fsck named every damaged object, the walk is not out looking for damage.
@@ -198,7 +198,7 @@ func (s *scanner) scanRefs(d *Damage) {
 	}
 }
 
-// checkRef judges one reference.
+// checkRef judges a single reference.
 func (s *scanner) checkRef(d *Damage, worktreeDir string, ref Ref) {
 	name := ref.Name
 	switch {
@@ -250,7 +250,7 @@ func (s *scanner) trustUnchanged(packs []VerifiedPack) {
 	}
 }
 
-// trust records one more pack this scan takes on trust, and notes what the file
+// trust records another pack this scan takes on trust, and notes what the file
 // looked like, so a later scan of the same run can tell whether it still is
 // that file.
 func (s *scanner) trust(path string) {
@@ -263,7 +263,7 @@ func (s *scanner) trust(path string) {
 	s.trusted[path] = true
 	fi, err := os.Stat(path)
 	if err != nil {
-		// Trusted for this scan, because somebody read it, but there is nothing to hand the next one.
+		// Trusted for this scan, because somebody read it, but there is nothing to hand the next scan.
 		return
 	}
 	s.verified = append(s.verified, VerifiedPack{Path: path, Size: fi.Size(), ModTime: fi.ModTime()})
@@ -280,7 +280,7 @@ func (s *scanner) collect(d *Damage) {
 	sort.Slice(d.Refs, func(i, j int) bool { return d.Refs[i].Name < d.Refs[j].Name })
 }
 
-// Describe renders one bad object for a person to read.
+// Describe renders a bad object for a person to read.
 func (b BadObject) Describe() string {
 	state := "missing"
 	if b.Corrupt {

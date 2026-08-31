@@ -18,7 +18,7 @@ import (
 )
 
 // checkObjectDirs walks every object directory and every pack. This is the
-// heaviest phase and the one that parallelizes best: each loose fanout
+// heaviest phase and it parallelizes best: each loose fanout
 // directory and each pack is independent work.
 func (r *run) checkObjectDirs() {
 	for i, dir := range r.db.Dirs {
@@ -27,7 +27,7 @@ func (r *run) checkObjectDirs() {
 	if !r.o.CheckFull {
 		return
 	}
-	// One meter spans every pack, as git's does: its total is the whole repository's packed object count.
+	// A meter spans every pack, as git's does: its total is the whole repository's packed object count.
 	packs := r.db.Packs()
 	total := int64(0)
 	for _, p := range packs {
@@ -42,7 +42,7 @@ func (r *run) checkObjectDirs() {
 	}
 }
 
-// checkLooseDir checks every loose object under one object directory.
+// checkLooseDir checks every loose object under an object directory.
 func (r *run) checkLooseDir(group int, path, shown string) {
 	if r.o.Verbose {
 		r.rep.Verbosef("Checking object directory")
@@ -95,7 +95,7 @@ func (r *run) checkLooseDir(group int, path, shown string) {
 	m.Finish()
 }
 
-// checkLooseObject reads one loose object and checks it, following git's
+// checkLooseObject reads a loose object and checks it, following git's
 // fsck_loose().
 func (r *run) checkLooseObject(key sortKey, oid gitobj.OID, path, shown string) {
 	res := odb.ReadLoose(path, shown, oid, r.repo.Algo, r.db.BigFileThreshold)
@@ -141,7 +141,7 @@ func (r *run) parsable(key sortKey, oid gitobj.OID, typ gitobj.Type, buf []byte)
 	return true
 }
 
-// checkPack verifies one pack and checks every object in it.
+// checkPack verifies a pack and checks every object in it.
 func (r *run) checkPack(group int, p *odb.Pack, m *progress.Meter) {
 	key := func(oid gitobj.OID, pos int64) sortKey {
 		return sortKey{phase: phaseObjects, group: 1 + group, pos: pos, oid: oid}
@@ -152,7 +152,7 @@ func (r *run) checkPack(group int, p *odb.Pack, m *progress.Meter) {
 		Progress:         m.Step,
 		Emit: func(oid gitobj.OID, text string) {
 			if oid.Valid() && strings.HasPrefix(text, "cannot unpack ") {
-				// The pack check reports an entry that will not decode and carries on to the next one.
+				// The pack check reports an entry that will not decode and continues checking the rest.
 				r.db.MarkBadPacked(oid)
 			}
 			r.rep.Errf(key(oid, 0), "error: %s", text)
