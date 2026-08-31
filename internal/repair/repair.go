@@ -235,8 +235,7 @@ func Run(o *Options) (*Result, error) {
 		verified, seen = damage.Verified, damage.Seen
 	}
 
-	// Repair goes round until it stops making progress. One set of sources
-	// serves every pass: a pass that builds its own refetches the remote.
+	// One set of sources serves every pass, or each pass refetches the remote.
 	sources := NewSources(repo, db, RemotePolicy{EveryRef: true, Progress: o.Stderr})
 	defer sources.Close()
 

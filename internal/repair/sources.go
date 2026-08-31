@@ -126,11 +126,8 @@ type Found struct {
 	Source  string
 }
 
-// Find reads the bytes for one object out of the first source that has them.
-//
-// It does not write. The caller displaces the corrupt file first and writes
-// afterwards: a write lands on the same path, so quarantining after it files
-// away the repaired object and leaves nothing to undo.
+// Find reads one object's bytes from the first source that has them. It does
+// not write: the caller must quarantine the corrupt file before it writes.
 func (s *Sources) Find(b BadObject) (Found, error) {
 	if f, ok := s.local(b); ok {
 		return f, nil

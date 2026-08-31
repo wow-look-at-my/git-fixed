@@ -148,9 +148,7 @@ func walkSizes(drawn, title string) []int {
 	return out
 }
 
-// broadFiles is how many files every commit's tree holds. On a handful of them
-// a descent that re-reads everything and one that reads nothing cost the same,
-// and the test below measures nothing.
+// broadFiles is files per commit tree: too few, and a full descent costs the same as none.
 const broadFiles = 150
 
 // chained builds a history whose every commit reaches a broad tree, with a run

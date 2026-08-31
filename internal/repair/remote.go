@@ -89,16 +89,12 @@ func openRemote(repo *gitrepo.Repo, policy RemotePolicy) (*remoteSource, error) 
 	}, nil
 }
 
-// remoteName is what the scratch repository calls the remote, because a filter
-// is a property of a named remote and a bare URL cannot carry one.
+// remoteName names the scratch remote: a filter is a property of a name, not a bare URL.
 const remoteName = "origin"
 
-// declarePartial makes the scratch repository one that accepts a filtered pack.
-// Without it git fetches the pack and then refuses it, missing blob object.
-//
-// Never add remote.<name>.partialclonefilter: it would filter every later fetch
-// too, and the every-ref fallback would come back without the blobs -- 60
-// objects of 90, silently. see docs/repair.md
+// declarePartial lets the scratch repository accept a filtered pack.
+// Never set remote.<name>.partialclonefilter: it would filter the every-ref
+// fallback too, and drop blobs silently. docs/repair.md
 func declarePartial(dir, url string) error {
 	for _, kv := range [][2]string{
 		{"core.repositoryformatversion", "1"},
