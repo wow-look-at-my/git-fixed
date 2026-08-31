@@ -15,7 +15,7 @@ import (
 	"github.com/wow-look-at-my/git-fixed/internal/odb"
 )
 
-// Recovered is one object put back, and where it came from.
+// Recovered is an object put back, and where it came from.
 type Recovered struct {
 	OID    gitobj.OID
 	Type   gitobj.Type
@@ -24,9 +24,9 @@ type Recovered struct {
 
 // Sources knows every place this repository can produce an object from.
 //
-// It holds the index and the worktree maps because building them costs one pass
+// It holds the index and the worktree maps because building them costs a single pass
 // and answers every object, where doing it per object would re-read the
-// worktree once for each thing that went missing.
+// worktree for each thing that went missing.
 type Sources struct {
 	repo *gitrepo.Repo
 	db   *odb.DB
@@ -35,7 +35,7 @@ type Sources struct {
 	byOID map[string][]string
 	// entries is the index, for rebuilding a tree.
 	entries []gitrepo.IndexEntry
-	// trees is the index folded back into tree objects, built once.
+	// trees is the index folded back into tree objects, built lazily and reused.
 	trees map[string][]byte
 	// remote is the scratch checkout a remote's objects arrive in.
 	remote *remoteSource
@@ -45,7 +45,7 @@ type Sources struct {
 	remoteErr error
 }
 
-// NewSources reads the index once and prepares the local sources. policy is
+// NewSources reads the index and prepares the local sources. policy is
 // how the remote at the bottom of the ladder may be used.
 func NewSources(repo *gitrepo.Repo, db *odb.DB, policy RemotePolicy) *Sources {
 	s := &Sources{repo: repo, db: db, policy: policy, byOID: map[string][]string{}}
@@ -72,7 +72,7 @@ func NewSources(repo *gitrepo.Repo, db *odb.DB, policy RemotePolicy) *Sources {
 	return s
 }
 
-// Close releases the scratch repository, when one was needed.
+// Close releases the scratch repository, when it was needed.
 func (s *Sources) Close() {
 	if s.remote != nil {
 		s.remote.Close()
@@ -87,7 +87,7 @@ func (s *Sources) Retarget(repo *gitrepo.Repo, db *odb.DB) {
 	s.remote, s.remoteErr = remote, remoteErr
 }
 
-// Prime fetches what this pass is about to ask a remote for, in one go and only
+// Prime fetches what this pass is about to ask a remote for, in a single request and only
 // for the objects no local source answers.
 //
 // The remote is the last rung, so an object the worktree or another copy here
@@ -119,18 +119,16 @@ func (s *Sources) Prime(bad []BadObject) {
 	}
 }
 
-// Found is one object's bytes, before they are written back.
+// Found is an object's bytes, before they are written back.
 type Found struct {
 	Type    gitobj.Type
 	Content []byte
 	Source  string
 }
 
-// Find reads the bytes for one object out of the first source that has them.
-//
-// It does not write. The caller displaces the corrupt file first and writes
-// afterwards: a write lands on the same path, so quarantining after it files
-// away the repaired object and leaves nothing to undo.
+// Find reads an object's bytes from whichever source has them, tried in
+// ladder order. It does not write: the caller must quarantine the corrupt
+// file before it writes.
 func (s *Sources) Find(b BadObject) (Found, error) {
 	if f, ok := s.local(b); ok {
 		return f, nil
@@ -141,7 +139,7 @@ func (s *Sources) Find(b BadObject) (Found, error) {
 	return Found{}, fmt.Errorf("no source has %s", b.OID)
 }
 
-// local reads the bytes out of the first source in this repository that has
+// local reads the bytes out of the earliest source in this repository that has
 // them, which is the order the ladder wants: a local source costs a read and
 // cannot fail halfway, and the name pins the content, so every source that
 // answers at all yields the identical bytes. Prime uses it to decide what is
@@ -163,7 +161,7 @@ func (s *Sources) local(b BadObject) (Found, bool) {
 	return Found{}, false
 }
 
-// check runs one source and keeps what it produced only when that is the object
+// check runs a source and keeps what it produced only when that is the object
 // asked for.
 func (s *Sources) check(b BadObject, name string, get func(BadObject) (gitobj.Type, []byte, bool)) (Found, bool) {
 	typ, content, ok := get(b)
@@ -188,7 +186,7 @@ func (s *Sources) Write(b BadObject, f Found, objectsDir string) (Recovered, err
 	return Recovered{OID: oid, Type: f.Type, Source: f.Source}, nil
 }
 
-// fromDuplicate finds a second, readable copy already in the repository.
+// fromDuplicate finds another readable copy already in the repository.
 //
 // The object database reads a name from wherever it can: a pack, another object
 // directory, an alternate. A corrupt loose file that also exists packed is the
@@ -266,7 +264,7 @@ func (s *Sources) RemoteError() error {
 	return s.remoteErr
 }
 
-// treeNode is one directory while the index is being folded back into trees.
+// treeNode is a directory while the index is being folded back into trees.
 type treeNode struct {
 	entries map[string]fsck.TreeEntry
 	dirs    map[string]*treeNode
@@ -276,10 +274,10 @@ func newTreeNode() *treeNode {
 	return &treeNode{entries: map[string]fsck.TreeEntry{}, dirs: map[string]*treeNode{}}
 }
 
-// buildTrees folds the index back into tree objects and returns each one's
+// buildTrees folds the index back into tree objects and returns each tree's
 // serialized bytes, keyed by the name it hashes to.
 //
-// Only stage-zero entries take part. A path in conflict has several versions
+// Only unconflicted entries take part. A path in conflict has several versions
 // and no single tree ever held it.
 func buildTrees(entries []gitrepo.IndexEntry, algo *gitobj.Algo) map[string][]byte {
 	root := newTreeNode()
@@ -305,8 +303,8 @@ func buildTrees(entries []gitrepo.IndexEntry, algo *gitobj.Algo) map[string][]by
 	return out
 }
 
-// serializeTree writes one directory and everything under it, depth first
-// because a directory's own bytes contain its subdirectories' names.
+// serializeTree writes a directory and everything under it, children before
+// parent, because a directory's own bytes contain its subdirectories' names.
 func serializeTree(node *treeNode, algo *gitobj.Algo, out map[string][]byte) gitobj.OID {
 	all := make([]fsck.TreeEntry, 0, len(node.entries)+len(node.dirs))
 	for _, e := range node.entries {

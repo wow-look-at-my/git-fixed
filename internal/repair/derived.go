@@ -1,6 +1,6 @@
 package repair
 
-// The caches git rebuilds by itself, and how a scan decides one is broken.
+// The caches git rebuilds by itself, and how a scan decides a cache is broken.
 //
 // see docs/repair.md
 
@@ -12,7 +12,7 @@ import (
 )
 
 // derivedNames are the caches git rebuilds by itself. docs/repair.md says why
-// .git/index is not one of them.
+// .git/index is not among them.
 var derivedNames = []string{
 	"info/commit-graph",
 	"info/packs",

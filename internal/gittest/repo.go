@@ -37,7 +37,7 @@ func New(t *testing.T) *Repo {
 	return r
 }
 
-// NewSHA256 creates an empty repository that names objects with SHA-256.
+// NewSHA256 creates an empty repository that names objects with SHA256.
 func NewSHA256(t *testing.T) *Repo {
 	t.Helper()
 	dir := t.TempDir()
@@ -149,9 +149,7 @@ func (r *Repo) writeLoose(oid gitobj.OID, uncompressed []byte) {
 	}
 }
 
-// WriteOver replaces a file git wrote. git creates a pack, an index, a reverse
-// index, and a graph read-only, so a plain write to one fails for everybody
-// except root.
+// WriteOver replaces a file git wrote read-only, which a plain write fails for everybody except root.
 func WriteOver(t *testing.T, path string, data []byte) {
 	t.Helper()
 	_ = os.Chmod(path, 0o666)
@@ -198,8 +196,8 @@ func (r *Repo) Delete(oid gitobj.OID) {
 	}
 }
 
-// TreeEntry is one line of a tree, with the mode written out exactly as given
-// so a test can store a zero-padded or otherwise unusual mode.
+// TreeEntry is a line of a tree, with the mode written out exactly as given
+// so a test can store a leading-padded or otherwise unusual mode.
 type TreeEntry struct {
 	Mode string
 	Name string
@@ -283,7 +281,7 @@ func (r *Repo) Write(name, content string) {
 	}
 }
 
-// SimpleHistory builds one commit on master with one file, and returns the
+// SimpleHistory builds a commit on master with a single file, and returns the
 // names of the blob, the tree, and the commit.
 func (r *Repo) SimpleHistory() (blob, tree, commit gitobj.OID) {
 	r.t.Helper()

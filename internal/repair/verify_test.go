@@ -16,7 +16,7 @@ import (
 )
 
 // TestTheCallersFsckAnswerIsUsed proves the shortcut that keeps a healthy
-// repository from being read twice.
+// repository from being scanned again needlessly.
 //
 // The command runs a full fsck of its own to report git's findings, so on a
 // repository the scan finds nothing wrong with, the answer is already known.
@@ -38,13 +38,13 @@ func TestTheCallersFsckAnswerIsUsed(t *testing.T) {
 	assert.False(t, res.Clean, "Run read the whole repository again instead of using the answer it was given")
 	assert.True(t, res.FoundNothingToDo())
 
-	// Without one, it asks, and gets the truth.
+	// Without a caller-supplied verdict, it asks, and gets the truth.
 	assert.True(t, fix(t, r).Nothing())
 }
 
 // TestATrustedScanStillChecksWhatFsckDoesNot is the other half of trusting the
 // caller's answer. git never verifies objects/info/packs -- it is a cache for
-// dumb HTTP clients -- so a stale one leaves fsck perfectly happy. Skipping the
+// dumb HTTP clients -- so a stale cache leaves fsck perfectly happy. Skipping the
 // whole scan on a clean fsck would have stopped repairing it, and said nothing.
 func TestATrustedScanStillChecksWhatFsckDoesNot(t *testing.T) {
 	gittest.RequireGit(t)

@@ -8,7 +8,7 @@ import (
 	"github.com/wow-look-at-my/git-fixed/internal/gitobj"
 )
 
-// Object runs the checks for one object of a known type. It is git's
+// Object runs the checks for an object of a known type. It is git's
 // fsck_buffer(). A nil buf means the object was too large to hold in memory.
 func (o *Options) Object(ctx any, oid gitobj.OID, typ gitobj.Type, buf []byte) int {
 	switch typ {
@@ -45,11 +45,11 @@ func (o *Options) verifyHeaders(ctx any, buf []byte, oid gitobj.OID, typ gitobj.
 	return o.report(ctx, oid, typ, MsgUnterminatedHeader, "unterminated header")
 }
 
-// ident checks one "Name <email> timestamp timezone" line and advances buf past
+// ident checks a "Name <email> timestamp timezone" line and advances buf past
 // it. It is git's fsck_ident().
 func (o *Options) ident(ctx any, buf []byte, oid gitobj.OID, typ gitobj.Type) (rest []byte, ret int) {
 	p := buf
-	// Advance the caller past this line first, exactly as git does, so a
+	// Advance the caller past this line up front, exactly as git does, so a
 	// reported problem still leaves the caller pointing at the next line.
 	if nl := bytes.IndexByte(buf, '\n'); nl >= 0 {
 		rest = buf[nl+1:]

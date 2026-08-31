@@ -1,7 +1,7 @@
 // Package gitpath decides whether a tree entry name can reach a repository's
-// own control files once it is checked out.
+// own control files after it is checked out.
 //
-// A filesystem that folds, normalizes, or shortens names lets one name reach a
+// A filesystem that folds, normalizes, or shortens names lets a name reach a
 // different file. A tree entry that reaches .git, .gitmodules, .gitattributes,
 // .gitignore, or .mailmap is how several path-traversal attacks on git start,
 // so fsck refuses the entry for every filesystem it knows about.
@@ -16,7 +16,7 @@ import (
 	"golang.org/x/text/unicode/norm"
 )
 
-// needle is one of the control names, always given in lower case ASCII.
+// needle is a control name, always given in lower case ASCII.
 type needle string
 
 // The control names fsck protects.
@@ -51,7 +51,7 @@ func IsNTFSDotGitmodules(name []byte) bool {
 	return couldReach(name) && isNTFSDotGeneric(name, dotGitmodules)
 }
 
-// couldReach rules a name out on its first two bytes.
+// couldReach rules a name out using its leading bytes.
 func couldReach(name []byte) bool {
 	if len(name) == 0 {
 		return false
@@ -60,8 +60,8 @@ func couldReach(name []byte) bool {
 	if c == '.' || c == '~' || c >= utf8.RuneSelf {
 		return true
 	}
-	// An 8.3 short name is at least three characters, and its second may be
-	// the tilde that introduces the disambiguating number.
+	// A short name always has a few characters; the byte after the leading
+	// byte may be the tilde that introduces the disambiguating number.
 	if len(name) < 2 {
 		return false
 	}
@@ -103,7 +103,7 @@ func isASCII(b []byte) bool {
 	return true
 }
 
-// ntfsShortnamePrefix is the fall-back 8.3 short name NTFS derives for each
+// ntfsShortnamePrefix is the fall-back short name NTFS derives for each
 // control name. git hard-codes the same table.
 func ntfsShortnamePrefix(n needle) string {
 	switch n {
@@ -133,8 +133,8 @@ func hfsIgnorable(r rune) bool {
 }
 
 // nextHFSChar returns the next code point HFS+ would compare, skipping the
-// ignorable ones. It reports ok=false on malformed UTF-8, which is enough for
-// the caller to conclude the name is not a control name.
+// ignorable ones. It reports ok=false on encoding the rune decoder rejects,
+// which is enough for the caller to conclude the name is not a control name.
 func nextHFSChar(s []byte) (r rune, rest []byte, ok bool) {
 	for {
 		if len(s) == 0 {
@@ -170,8 +170,8 @@ func isHFSDotGeneric(name []byte, n needle) bool {
 	return r == 0 || r == '/' || r == '\\'
 }
 
-// isNTFSDotGit is git's is_ntfs_dotgit(): ".git" or the short name "git~1",
-// either one followed only by spaces and periods.
+// isNTFSDotGit is git's is_ntfs_dotgit(): ".git" or its NTFS short-name
+// fallback, each followed only by spaces and periods.
 func isNTFSDotGit(name []byte) bool {
 	i := 0
 	next := func() byte {
@@ -207,7 +207,7 @@ func isNTFSDotGit(name []byte) bool {
 }
 
 // isNTFSDotGeneric is git's is_ntfs_dot_generic(): the plain name, the regular
-// 8.3 short name, or the fall-back short name, each followed only by spaces and
+// short name, or the fall-back short name, each followed only by spaces and
 // periods.
 func isNTFSDotGeneric(name []byte, n needle) bool {
 	prefix := ntfsShortnamePrefix(n)

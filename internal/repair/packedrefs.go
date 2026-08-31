@@ -26,7 +26,7 @@ type BadPackedRefs struct {
 	Why string
 }
 
-// RepairedPackedRefs is what one packed-refs rewrite came to.
+// RepairedPackedRefs is what a packed-refs rewrite came to.
 type RepairedPackedRefs struct {
 	// Kept is how many references were carried over unchanged.
 	Kept int
@@ -55,13 +55,13 @@ func (s *scanner) scanPackedRefs(d *Damage) {
 
 // repairPackedRefs rewrites packed-refs from the lines that still read.
 //
-// git's reader stops at the first line it refuses, so one bad line hides every
+// git's reader stops at the earliest line it refuses, so a bad line hides every
 // reference below it. Rewriting the file in valid grammar puts those back. The
 // lines that will not read are a different matter: a dropped line may be a
 // branch, and a branch that quietly disappears is exactly the loss this tool
-// exists to prevent. So each one is carried in the result, the reflog is asked
-// whether it knows the reference, and anything still unaccounted for is
-// reported with the original file waiting in quarantine.
+// exists to prevent. So each dropped line is carried in the result, the reflog
+// is asked whether it knows the reference, and anything still unaccounted for
+// is reported with the original file waiting in quarantine.
 func repairPackedRefs(repo *gitrepo.Repo, db *odb.DB, q *Quarantine, bad *BadPackedRefs) (RepairedPackedRefs, error) {
 	out := RepairedPackedRefs{Why: bad.Why}
 	data, err := os.ReadFile(bad.Path)
@@ -116,8 +116,9 @@ func readPackedLines(algo *gitobj.Algo, data []byte) (map[string]gitobj.OID, []s
 		case line == "":
 			continue
 		case strings.HasPrefix(line, "#"):
-			// Only the first line may be a comment, and a later one is a
-			// line git refuses. It carries no reference either way.
+			// A comment is legal only at the top of the file; a comment
+			// line anywhere else is a line git refuses. It carries no
+			// reference either way.
 			if i != 0 {
 				dropped = append(dropped, line)
 			}
@@ -155,7 +156,7 @@ func namesInDroppedLines(lines []string) []string {
 }
 
 // lastGoodValue finds the newest value a reference held whose object is still
-// here, from the loose ref file first and then from the reflog.
+// here, checking the loose ref file before falling back to the reflog.
 func lastGoodValue(repo *gitrepo.Repo, db *odb.DB, name string) (gitobj.OID, string, bool) {
 	worktreeDir, refName := splitRefName(repo, name)
 	loose := filepath.Join(repo.CommonDir, filepath.FromSlash(refName))
@@ -235,7 +236,7 @@ func taggedObject(db *odb.DB, data []byte) (gitobj.OID, bool) {
 	return gitobj.OID{}, false
 }
 
-// writeFileAtomic replaces a file without a reader ever seeing part of one.
+// writeFileAtomic replaces a file without a reader ever seeing a partial write.
 func writeFileAtomic(path string, body []byte) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, filepath.Base(path)+"_tmp_*")

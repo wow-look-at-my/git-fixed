@@ -14,7 +14,7 @@ import (
 	"github.com/wow-look-at-my/go-containers/set"
 )
 
-// Options are one run's settings.
+// Options are a run's settings.
 type Options struct {
 	// Dir is where to look for the repository.
 	Dir string
@@ -25,7 +25,7 @@ type Options struct {
 	// Verdict is what an fsck the caller already ran found, or nil when it ran none.
 	Verdict *Verdict
 
-	// ShowProgress draws a meter over the two passes a scan spends its time in.
+	// ShowProgress draws a meter over the passes a scan spends its time in.
 	ShowProgress bool
 
 	Stdout io.Writer
@@ -86,19 +86,19 @@ type Result struct {
 	Refs []RepairedRef
 	// Packs are the packfiles that were emptied out and displaced.
 	Packs []RescuedPack
-	// Index is the index that was rebuilt, when one was.
+	// Index is the index that was rebuilt, when a rebuild happened.
 	Index *RepairedIndex
-	// PackedRefs is the packed-refs rewrite, when there was one.
+	// PackedRefs is the packed-refs rewrite, when a rewrite happened.
 	PackedRefs *RepairedPackedRefs
 	// Refused are the faults that could not be repaired without risking the data behind them.
 	Refused []string
 	// Unrecovered are the objects no source had.
 	Unrecovered []BadObject
-	// RemoteError says why the remote could not answer, when one was needed and could not be reached.
+	// RemoteError says why the remote could not answer, when the remote was needed and could not be reached.
 	RemoteError error
 	// Quarantine names the run's directory, empty when nothing was displaced.
 	Quarantine string
-	// Clean says whether a second scan found the repository whole.
+	// Clean says whether a scan taken after repair found the repository whole.
 	Clean bool
 }
 
@@ -134,7 +134,7 @@ func (o *Options) firstScan(repo *gitrepo.Repo, db *odb.DB) (*Damage, error) {
 	return scan(repo, db, o.meters(), o.Verdict, nil)
 }
 
-// stillBad is what one pass has to try, which is what the pass before it could not put back plus what looking.
+// stillBad merges what the pass before could not put back with what this pass just found, deduplicated by OID.
 func stillBad(found, carried []BadObject) []BadObject {
 	out := make([]BadObject, 0, len(found)+len(carried))
 	seen := set.New[string]()
@@ -166,7 +166,7 @@ func Run(o *Options) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	// What one scan read, for the next one: the packs, and the objects.
+	// What this scan read, for the pass that follows: the packs, and the objects.
 	verified, seen := damage.Verified, damage.Seen
 
 	res := &Result{}
@@ -204,7 +204,7 @@ func Run(o *Options) (*Result, error) {
 			}
 			res.Packs = append(res.Packs, rescued)
 		}
-		// The database still holds the pack this run just moved away, so every later step works from a fresh one.
+		// The database still holds the pack this run just moved away, so every later step reopens the database fresh.
 		db.Close()
 		repo, db, err = open(o.Dir)
 		if err != nil {
@@ -235,18 +235,17 @@ func Run(o *Options) (*Result, error) {
 		verified, seen = damage.Verified, damage.Seen
 	}
 
-	// Repair goes round until it stops making progress. One set of sources
-	// serves every pass: a pass that builds its own refetches the remote.
+	// A shared set of sources serves every pass, or each pass refetches the remote.
 	sources := NewSources(repo, db, RemotePolicy{EveryRef: true, Progress: o.Stderr})
 	defer sources.Close()
 
 	// done is every object this run has already put back.
 	done := set.New[string]()
 
-	// stuck is what no source had, carried from one pass to the next.
+	// stuck is what no source had, carried forward from the previous pass.
 	var stuck []BadObject
 
-	// back is what the pass before this one put back, and where the next pass starts looking.
+	// back is what the previous pass put back, and where the next pass starts looking.
 	var back []BadObject
 
 	for pass := 0; ; pass++ {
@@ -267,7 +266,7 @@ func Run(o *Options) (*Result, error) {
 		if len(todo) == 0 {
 			break
 		}
-		// One fetch for the pass, for the names nothing local answers.
+		// A fetch serves the whole pass, for the names nothing local answers.
 		sources.Prime(todo)
 		recovered := 0
 		back = nil
@@ -344,7 +343,7 @@ func Run(o *Options) (*Result, error) {
 	return res, nil
 }
 
-// reopen closes one database and opens the repository again.
+// reopen closes the database and opens the repository again.
 func reopen(dir string, db *odb.DB) (*gitrepo.Repo, *odb.DB, error) {
 	db.Close()
 	return open(dir)

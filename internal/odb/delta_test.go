@@ -78,7 +78,7 @@ func TestApplyDelta(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "quickcat!", string(out))
 
-	// A copy with a zero size means 0x10000 bytes, which git encodes by leaving every size byte out.
+	// A copy with no size bytes means 0x10000 bytes, which git encodes by leaving every size byte out.
 	big := make([]byte, 0x10000)
 	for i := range big {
 		big[i] = byte(i)

@@ -13,9 +13,9 @@ import (
 	"github.com/wow-look-at-my/git-fixed/internal/odb"
 )
 
-// checkPackRevIndexes verifies each pack's reverse index, if one is on disk.
-// git splits this in two: a load, which refuses a file it cannot read at all,
-// and a verify, which reads the contents. The two report differently.
+// checkPackRevIndexes verifies each pack's reverse index, if the file is on disk.
+// git splits this into a load, which refuses a file it cannot read at all,
+// and a verify, which reads the contents. Each reports differently.
 func (r *run) checkPackRevIndexes() {
 	key := sortKey{phase: phaseIndexFiles}
 	packs := r.db.Packs()
@@ -52,7 +52,7 @@ func (r *run) checkPackRevIndexes() {
 	}
 }
 
-// revIndexSize is git's revindex_size(): a header, one index position per object.
+// revIndexSize is git's revindex_size(): a header, plus an index position per object.
 func revIndexSize(num uint32, rawsz int) int { return 12 + int(num)*4 + 2*rawsz }
 
 // loadRevIndex is git's load_revindex_from_disk(). It returns the tail of the
@@ -129,7 +129,7 @@ func (r *run) verifyBitmapFiles() {
 	for _, f := range files {
 		data, err := os.ReadFile(f[0])
 		if err != nil {
-			continue // it is fine not to have one
+			continue // it is fine to have none
 		}
 		rawsz := r.repo.Algo.RawSize
 		if len(data) >= rawsz {
@@ -179,7 +179,7 @@ func (r *run) verifyGraphFiles() {
 	}
 }
 
-// commitGraphFiles lists the graph files of one object directory: either the
+// commitGraphFiles lists the graph files of an object directory: either the
 // single info/commit-graph, or every layer of a commit-graph chain.
 func commitGraphFiles(objectDir string) []string {
 	single := filepath.Join(objectDir, "info", "commit-graph")

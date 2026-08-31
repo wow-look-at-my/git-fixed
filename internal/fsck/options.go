@@ -41,7 +41,7 @@ func (s Severity) String() string {
 	return "unknown"
 }
 
-// ParseSeverity accepts the three values git's configuration allows.
+// ParseSeverity accepts the values git's configuration allows: error, warn, ignore.
 func ParseSeverity(s string) (Severity, bool) {
 	switch s {
 	case "error":
@@ -54,11 +54,11 @@ func ParseSeverity(s string) (Severity, bool) {
 	return 0, false
 }
 
-// ErrorFunc receives one finished message.
+// ErrorFunc receives a finished message.
 type ErrorFunc func(o *Options, ctx any, oid gitobj.OID, objType gitobj.Type, sev Severity, id MsgID, message string) int
 
 // Options carries the severity table, the skip list, and the deferred work that
-// a whole fsck run shares. Several goroutines report through one Options, so
+// a whole fsck run shares. Several goroutines report through a shared Options, so
 // every mutable field is behind the mutex.
 type Options struct {
 	Strict bool
@@ -74,7 +74,7 @@ type Options struct {
 	msgType  []Severity
 	skiplist set.Set[gitobj.OID]
 
-	// A .gitmodules or .gitattributes blob named by a tree is checked once its content is read.
+	// A .gitmodules or .gitattributes blob named by a tree is checked after its content is read.
 	gitmodulesFound    set.Set[gitobj.OID]
 	gitmodulesDone     set.Set[gitobj.OID]
 	gitattributesFound set.Set[gitobj.OID]
@@ -106,7 +106,7 @@ func (o *Options) EnableObjectNames() {
 	}
 }
 
-// PutObjectName records a name for an object, keeping the first one seen.
+// PutObjectName records a name for an object, keeping the name recorded earliest.
 func (o *Options) PutObjectName(oid gitobj.OID, format string, args ...any) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -126,7 +126,7 @@ func (o *Options) ObjectName(oid gitobj.OID) string {
 	return o.names[oid]
 }
 
-// Describe renders an object name, with its readable name when one is known.
+// Describe renders an object name, adding its readable name when known.
 func (o *Options) Describe(oid gitobj.OID) string {
 	if name := o.ObjectName(oid); name != "" {
 		return oid.String() + " (" + name + ")"
@@ -134,7 +134,7 @@ func (o *Options) Describe(oid gitobj.OID) string {
 	return oid.String()
 }
 
-// severity resolves one message id against the table and the strict flag.
+// severity resolves a message id against the table and the strict flag.
 func (o *Options) severity(id MsgID) Severity {
 	if o.msgType == nil {
 		sev := msgInfos[id].Severity
@@ -146,7 +146,7 @@ func (o *Options) severity(id MsgID) Severity {
 	return o.msgType[id]
 }
 
-// SetSeverity overrides one check's severity. The table it materializes freezes
+// SetSeverity overrides a check's severity. The table it materializes freezes
 // the strict flag as it stands now, which is what git does.
 func (o *Options) SetSeverity(id MsgID, sev Severity) {
 	o.mu.Lock()
@@ -161,7 +161,7 @@ func (o *Options) SetSeverity(id MsgID, sev Severity) {
 	o.msgType[id] = sev
 }
 
-// Severity reports the severity in force for one check.
+// Severity reports the severity in force for a check.
 func (o *Options) Severity(id MsgID) Severity {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -203,7 +203,7 @@ func (o *Options) report(ctx any, oid gitobj.OID, objType gitobj.Type, id MsgID,
 }
 
 // DefaultErrorFunc is git's fsck_error_function, used by callers that do not
-// install one of their own.
+// install their own.
 func DefaultErrorFunc(o *Options, _ any, oid gitobj.OID, _ gitobj.Type, sev Severity, _ MsgID, message string) int {
 	if sev == SevWarn {
 		fmt.Printf("warning: object %s: %s\n", o.Describe(oid), message)

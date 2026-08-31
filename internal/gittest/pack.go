@@ -13,9 +13,9 @@ import (
 	"github.com/wow-look-at-my/git-fixed/internal/odb"
 )
 
-// PackObject is one object to put in a hand-built pack.
+// PackObject is an object to put in a hand-built pack.
 //
-// Base is an earlier object in the same pack to delta against, or -1 for an object stored whole.
+// Base is an earlier object in the same pack to delta against, or a negative value for an object stored whole.
 type PackObject struct {
 	Type gitobj.Type
 	Data []byte
@@ -26,7 +26,7 @@ type PackObject struct {
 
 // WritePack writes these objects as a packfile under .git/objects/pack and has
 // git build the index for it. It returns the path of the pack and where each
-// object starts in it, which is what a test that damages one needs.
+// object starts in it, which is what a test that damages an object needs.
 //
 // git rejects a pack it cannot read, so a pack that comes back with an index is
 // a pack that says what the test meant it to say.
@@ -88,8 +88,8 @@ func writeBE32(buf *bytes.Buffer, v uint32) {
 	buf.Write(b[:])
 }
 
-// writeObjHeader writes the type and size a pack entry starts with: four bits
-// of size in the first byte, then seven at a time.
+// writeObjHeader writes the type and size a pack entry starts with: the low
+// nibble of size in the leading byte, then the mask below per remaining group.
 func writeObjHeader(buf *bytes.Buffer, typ gitobj.Type, size int64) {
 	c := byte(typ)<<4 | byte(size&0xf)
 	size >>= 4
@@ -115,8 +115,8 @@ func writeOfsDelta(buf *bytes.Buffer, back int64) {
 	buf.Write(tmp[i:])
 }
 
-// deltaBetween encodes want as a delta on base: copy whatever the two share at
-// the front, then insert the rest.
+// deltaBetween encodes want as a delta on base: copy whatever base and want
+// share at the front, then insert the rest.
 func deltaBetween(base, want []byte) []byte {
 	var out []byte
 	out = appendDeltaVarint(out, uint64(len(base)))
@@ -126,8 +126,8 @@ func deltaBetween(base, want []byte) []byte {
 		shared++
 	}
 	// A copy op names an offset and a size, each byte of them optional, and
-	// the low bits of the command say which bytes follow. This one writes
-	// every byte of both rather than work out which it could leave out.
+	// the low bits of the command say which bytes follow. This writes every
+	// byte of both rather than work out which it could leave out.
 	for done := 0; done < shared; {
 		n := min(shared-done, 0xffffff)
 		out = append(out, 0x80|0x0f|0x70,
@@ -135,7 +135,8 @@ func deltaBetween(base, want []byte) []byte {
 			byte(n), byte(n>>8), byte(n>>16))
 		done += n
 	}
-	// An insert op is a length under 128 and then that many bytes.
+	// An insert op writes its length as a single byte with the top bit clear,
+	// then that many bytes.
 	for rest := want[shared:]; len(rest) > 0; {
 		n := min(len(rest), 127)
 		out = append(out, byte(n))
@@ -145,7 +146,7 @@ func deltaBetween(base, want []byte) []byte {
 	return out
 }
 
-// appendDeltaVarint writes one of the two sizes a delta stream starts with.
+// appendDeltaVarint writes a size field a delta stream starts with.
 func appendDeltaVarint(out []byte, v uint64) []byte {
 	for v >= 0x80 {
 		out = append(out, byte(v)|0x80)

@@ -8,7 +8,7 @@ import (
 
 // snapshotRefs reads the object each starting point names, which is what git
 // does before it opens the object database at all. Nothing here reports
-// anything: the later passes say what is wrong with a reference. The one thing
+// anything: the later passes say what is wrong with a reference. The only thing
 // this pass does produce is git's death on a packed object that will not
 // decode, before the object pass has printed a word.
 func (r *run) snapshotRefs() {
@@ -86,7 +86,7 @@ func (r *run) handleRef(refname string, oid gitobj.OID, broken bool) {
 		e = r.objs.Get(oid)
 	}
 	if e == nil || e.Flags()&flagHasObj == 0 {
-		// git parses the object again here, so one that failed the object pass reports its complaint twice.
+		// git parses the object again here, so an object that failed the object pass reports its complaint again.
 		r.reparse(key, oid)
 		r.rep.Errf(key, "error: %s: invalid sha1 pointer %s", refname, oid)
 		r.fail(ErrorReachable)
@@ -112,7 +112,7 @@ func (r *run) handleRef(refname string, oid gitobj.OID, broken bool) {
 	r.markReachable(e)
 }
 
-// handleReflogs walks one worktree's reflogs, which are also starting points.
+// handleReflogs walks a worktree's reflogs, which are also starting points.
 func (r *run) handleReflogs(wt *gitrepo.Worktree) {
 	for _, name := range r.repo.ReflogNames(wt.Dir) {
 		refname := wt.RefName(name)
@@ -235,7 +235,7 @@ func (r *run) fsckCacheTree(key sortKey, ct *gitrepo.CacheTree, path string) {
 
 // reparse reads an object and repeats whatever its parser complains about. git
 // re-parses an object every time a reference names it, so a broken object is
-// reported once per attempt rather than once in total.
+// reported for each attempt, not folded into a single count.
 func (r *run) reparse(key sortKey, oid gitobj.OID) {
 	typ, buf, err := r.readObject(oid)
 	if err != nil {

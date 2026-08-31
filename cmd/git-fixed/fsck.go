@@ -31,8 +31,8 @@ type fsckFlags struct {
 	nameObjects  int
 }
 
-// newFsckFlags starts the flags where git starts them. Progress is -1 for "not
-// said either way", which is a third state, not a default.
+// newFsckFlags starts the flags where git starts them. Progress starts unset:
+// "not said either way" is a state of its own, not a default.
 func newFsckFlags() *fsckFlags {
 	return &fsckFlags{dangling: 1, reflogs: 1, full: 1, references: 1, progress: -1}
 }
@@ -57,8 +57,8 @@ func (f *fsckFlags) table() []*parseopt.Bool {
 	}
 }
 
-// options turns the flags into a run, resolving the defaults git resolves once
-// it has read the whole command line.
+// options turns the flags into a run, resolving the defaults git resolves
+// after it reads the whole command line.
 func (f *fsckFlags) options(dir string, args []string, stdout, stderr io.Writer) *fsckcmd.Options {
 	o := fsckcmd.DefaultOptions()
 	o.Dir = dir

@@ -1,6 +1,6 @@
 package gitrepo
 
-// Salvaging a damaged index, and writing a whole one back.
+// Salvaging a damaged index, and writing a whole index back.
 //
 // see docs/repair.md
 
@@ -27,8 +27,8 @@ type SalvagedIndex struct {
 
 // SalvageIndex reads as much of an index as the file allows.
 //
-// ReadIndex is the check git makes, and it stops at the first fault because a
-// tool that is about to USE an index must not act on half of one. This is the
+// ReadIndex is the check git makes, and it stops at the earliest fault because a
+// tool that is about to USE an index must not act on a half-read index. This is the
 // other question: a repair is going to displace the file, so everything still
 // legible in it is worth having. A truncated index usually loses only its tail.
 //
@@ -52,7 +52,7 @@ func (r *Repo) SalvageIndex(path string) (*SalvagedIndex, error) {
 		return &SalvagedIndex{Stopped: fmt.Sprintf("index version %d is not one git writes", version)}, nil
 	}
 	out := &SalvagedIndex{Count: int(binary.BigEndian.Uint32(data[8:12]))}
-	// The entries end before the trailing checksum, when there is room for one.
+	// The entries end before the trailing checksum, when the file is long enough to hold a checksum.
 	end := len(data)
 	if end > 12+rawsz {
 		end -= rawsz
@@ -76,7 +76,7 @@ func (r *Repo) SalvageIndex(path string) (*SalvagedIndex, error) {
 
 // WriteIndex writes entries as an index file, replacing whatever is there.
 //
-// It writes version 2, which every git since 1.5 reads. A rewritten index is
+// It writes the oldest index version every supported git reads. A rewritten index is
 // not a place to be clever: the newer versions save space, and space is not
 // what a repair is short of.
 func (r *Repo) WriteIndex(path string, entries []IndexEntry) error {
@@ -102,18 +102,18 @@ func (r *Repo) WriteIndex(path string, entries []IndexEntry) error {
 		stat := e.Stat
 		binary.BigEndian.PutUint32(stat[24:28], e.Mode)
 		buf.Write(stat[:])
-		// Always rawsz bytes: a zero OID reports a length of zero.
+		// Always rawsz bytes: an unset OID still reports a fixed length.
 		var oid [gitobj.MaxRawSize]byte
 		copy(oid[:], e.OID.Raw())
 		buf.Write(oid[:rawsz])
 		nameLen := len(e.Name)
 		if nameLen > 0x0fff {
-			// The field only holds twelve bits.
+			// The length subfield cannot record more than the mask below allows.
 			nameLen = 0x0fff
 		}
 		binary.Write(&buf, binary.BigEndian, uint16(e.Stage)<<12|uint16(nameLen))
 		buf.WriteString(e.Name)
-		// At least one terminator, then padding to an eight-byte boundary measured from the start of the entry.
+		// A terminator byte, then padding to a word boundary measured from the start of the entry (the loop below enforces it).
 		buf.WriteByte(0)
 		for (buf.Len()-start)%8 != 0 {
 			buf.WriteByte(0)
@@ -123,7 +123,7 @@ func (r *Repo) WriteIndex(path string, entries []IndexEntry) error {
 	h.Write(buf.Bytes())
 	buf.Write(h.Sum(nil))
 
-	// Write beside the index and rename, so no reader ever sees half of one.
+	// Write beside the index and rename, so no reader ever sees a half-written index.
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, "index_tmp_*")
 	if err != nil {

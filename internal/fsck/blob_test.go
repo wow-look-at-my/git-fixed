@@ -37,7 +37,7 @@ func TestCheckSubmoduleURL(t *testing.T) {
 		"-u./payload",
 		"./sub\nmore",
 		"../%0a/sub",  // a newline smuggled through percent-encoding
-		"../../:22/x", // CVE-2020-11008: escapes past its own root
+		"../../:22/x", // escapes past its own root, the submodule URL exploit git's fsck rejects
 		"..//host/x",
 		"https://exam\nple.com/repo.git",
 		"https://",
@@ -110,8 +110,8 @@ func TestURLToCurlURL(t *testing.T) {
 	}
 }
 
-// gitmodulesBlob names a blob as .gitmodules and then checks it, which is the
-// two-step git does across a tree and the blob it points at.
+// gitmodulesBlob names a blob as .gitmodules and then checks it, mirroring how
+// git links a tree entry to the blob it points at before checking that blob.
 func gitmodulesBlob(t *testing.T, content string) []string {
 	t.Helper()
 	oid := oidN(7)
@@ -176,7 +176,7 @@ func TestBlobGitattributes(t *testing.T) {
 	long := strings.Repeat("x", attrMaxLineLength) + "\n"
 	assert.Contains(t, check(long)[0], ".gitattributes has too long lines to parse")
 	assert.Contains(t, check("ok\n" + long)[0], ".gitattributes has too long lines to parse")
-	// git stops reading at a NUL, so a long line past one does not count.
+	// git stops reading at a NUL, so a long line after it does not count.
 	assert.Empty(t, check("ok\n\x00"+long))
 }
 

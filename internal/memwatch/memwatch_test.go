@@ -78,7 +78,7 @@ func TestTheMarksReadThisMachine(t *testing.T) {
 }
 
 // TestAMarkOnlyEverGoesUp is the whole meaning of the word. The resident mark
-// is the kernel's own and rises by itself; the other two are sampled, so a
+// is the kernel's own and rises by itself; the others are sampled, so a
 // sample taken after the worst moment has passed must not lower them.
 func TestAMarkOnlyEverGoesUp(t *testing.T) {
 	now := time.Now()
@@ -118,7 +118,7 @@ func TestAReadThatFailsLeavesTheMarksAlone(t *testing.T) {
 }
 
 // TestNothingToReportBeforeAnythingIsRead is the answer on a system that
-// publishes no marks: no figure, rather than a made-up one.
+// publishes no marks: no figure, rather than a made-up value.
 func TestNothingToReportBeforeAnythingIsRead(t *testing.T) {
 	w := &watcher{path: filepath.Join(t.TempDir(), "absent"), now: time.Now}
 	got, ok := w.peak()
@@ -126,9 +126,9 @@ func TestNothingToReportBeforeAnythingIsRead(t *testing.T) {
 	assert.Equal(t, Marks{}, got)
 }
 
-// TestTheFileIsNotReadOnEveryDraw holds the cost of a mark down. Step is called
-// once per object and draws several times a second, and a file read on each one
-// would be paid for by the phase it is reporting on.
+// TestTheFileIsNotReadOnEveryDraw holds the cost of a mark down. Step is
+// called for each object and draws repeatedly while a phase runs, so a file
+// read on each draw would be paid for by the phase it is reporting on.
 func TestTheFileIsNotReadOnEveryDraw(t *testing.T) {
 	now := time.Now()
 	w := &watcher{
@@ -170,8 +170,8 @@ func TestASizeIsRenderedTheWayGitRendersOne(t *testing.T) {
 	}
 }
 
-// TestTheMarksReadAsASentence covers both renderings, and the one thing they
-// must never do: claim a run swapped when it did not.
+// TestTheMarksReadAsASentence covers both renderings, and the single thing
+// they must never do: claim a run swapped when it did not.
 func TestTheMarksReadAsASentence(t *testing.T) {
 	quiet := Marks{RSS: 81788928 * 1024, Anon: 12897484 * 1024}
 	assert.Equal(t, "78.00 GiB", quiet.Short())

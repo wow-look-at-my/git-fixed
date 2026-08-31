@@ -19,12 +19,12 @@ import (
 // rests on, and it did not work.
 //
 // Undo refused to restore over a file that was there again. But most of what a
-// repair displaces, it also REPLACES -- a whole index over a broken one, a valid
-// packed-refs over a malformed one -- so the path is always occupied and the
-// undo failed on every run worth undoing, part way through, with exit 128.
+// repair displaces, it also REPLACES -- a whole index over a broken index, a valid
+// packed-refs over a malformed packed-refs -- so the path is always occupied and the
+// undo failed on every run worth undoing, part way through, with a fatal exit status.
 //
 // Nothing is overwritten even so: what the repair had written moves into the
-// run's own "replaced" directory first.
+// run's own "replaced" directory before undo writes anything back.
 func TestUndoPutsBackWhatARepairReplaced(t *testing.T) {
 	gittest.RequireGit(t)
 	r := packed(t)

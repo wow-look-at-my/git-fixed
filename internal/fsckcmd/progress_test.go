@@ -30,7 +30,7 @@ func withProgress(t *testing.T, dir string) (stderr string, code int) {
 	return errBuf.String(), code
 }
 
-// packedRepo is a repository whose objects are all in one pack, which is what
+// packedRepo is a repository whose objects are all in a single pack, which is what
 // gives the object phase something to count.
 func packedRepo(t *testing.T) *gittest.Repo {
 	t.Helper()
@@ -50,7 +50,7 @@ func TestProgressNamesEveryPhaseGitNames(t *testing.T) {
 	stderr, code := withProgress(t, r.Dir)
 	assert.Equal(t, 0, code, "the repository is sound: %s", stderr)
 
-	// git shows a meter on these three straight away.
+	// git shows a meter on each phase below without delay.
 	for _, want := range []string{
 		"Checking ref database: 100% (1/1) ",
 		"Checking object directories: 100% (256/256) ",
@@ -96,7 +96,7 @@ func TestProgressIsOffByDefaultForANonTerminal(t *testing.T) {
 	assert.Empty(t, errBuf.String(), "a run nobody asked for progress from prints none")
 }
 
-// TestProgressRedrawsInPlace keeps the meter to one line while it runs: every
+// TestProgressRedrawsInPlace keeps the meter to a single line while it runs: every
 // update but the last returns the cursor rather than ending the line.
 func TestProgressRedrawsInPlace(t *testing.T) {
 	gittest.RequireGit(t)

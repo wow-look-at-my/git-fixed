@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// writer builds a stream one bit at a time, which is the only way to reach some
+// writer builds a stream a bit at a time, which is the only way to reach some
 // of zlib's complaints: a compressor never produces them.
 type writer struct {
 	out  []byte
@@ -17,8 +17,8 @@ type writer struct {
 	n    uint
 }
 
-// bits writes n bits of v, least significant first. DEFLATE writes its own
-// fields this way.
+// bits writes n bits of v, with the least significant bit leading. DEFLATE
+// writes its own fields this way.
 func (w *writer) bits(v uint32, n uint) {
 	w.hold |= v << w.n
 	w.n += n
@@ -29,8 +29,8 @@ func (w *writer) bits(v uint32, n uint) {
 	}
 }
 
-// code writes an n-bit Huffman code, most significant bit first. DEFLATE packs
-// a code the other way round from its fields.
+// code writes an n-bit Huffman code, with the most significant bit leading.
+// DEFLATE packs a code the other way round from its fields.
 func (w *writer) code(v uint32, n uint) {
 	for shift := int(n) - 1; shift >= 0; shift-- {
 		w.bits(v>>uint(shift)&1, 1)
@@ -58,7 +58,7 @@ func fixedBlock() *writer {
 	return w
 }
 
-// literal writes one byte through the fixed length alphabet.
+// literal writes a byte through the fixed length alphabet.
 func (w *writer) literal(c byte) {
 	if c < 144 {
 		w.code(0x30+uint32(c), 8)
@@ -80,11 +80,10 @@ func dynamicBlock(hlit, hdist, hclen uint32) *writer {
 }
 
 // TestMessages pins every complaint zlib makes about a zlib stream, on a stream
-// built to produce exactly that one. A compressor cannot write most of these,
-// so each is assembled bit by bit.
+// built to produce exactly that complaint. A compressor cannot write most of
+// these, so each is assembled bit by bit.
 func TestMessages(t *testing.T) {
-	// Four code lengths of one bit each claim twice the code space there
-	// is, which is the smallest over-subscribed set.
+	// Every length here is the shortest code length, claiming more of the code space than exists.
 	overSubscribed := func(w *writer) {
 		for range 4 {
 			w.bits(1, 3)
@@ -96,17 +95,17 @@ func TestMessages(t *testing.T) {
 		want string
 	}{{
 		name: "header check",
-		// The two header bytes together are a checksum, and these do not add up.
+		// The header bytes together are a checksum, and these do not add up.
 		raw:  []byte{0x78, 0x00},
 		want: "inflate: data stream error (incorrect header check)",
 	}, {
 		name: "compression method",
-		// Method 9 passes the checksum and is still not DEFLATE.
+		// The compression-method field names a method that is not DEFLATE, though it still passes the checksum.
 		raw:  []byte{0x79, 0x18},
 		want: "inflate: data stream error (unknown compression method)",
 	}, {
 		name: "window size",
-		// A 64 KiB window is larger than the 32 KiB zlib was asked for.
+		// The encoded window size exceeds windowSize, the largest zlib was asked for.
 		raw:  []byte{0x88, 0x1c},
 		want: "inflate: data stream error (invalid window size)",
 	}, {
@@ -120,7 +119,7 @@ func TestMessages(t *testing.T) {
 		want: "inflate: data stream error (invalid block type)",
 	}, {
 		name: "stored block lengths",
-		// A stored block writes its length twice, the second time inverted, and these two do not agree.
+		// A stored block writes its length, then its complement, and they disagree here.
 		raw:  []byte{0x78, 0x01, 0x01, 0x05, 0x00, 0x00, 0x00},
 		want: "inflate: data stream error (invalid stored block lengths)",
 	}, {
@@ -138,20 +137,20 @@ func TestMessages(t *testing.T) {
 	}, {
 		name: "bit length repeat",
 		raw: func() []byte {
-			// Symbols 16, 17 and 18 get one-bit codes, leaving 16 as code 0: it repeats a length nothing has set.
+			// The repeat-previous symbol lands on the lowest code, and repeats a length nothing has set.
 			w := dynamicBlock(0, 0, 0)
-			w.bits(1, 3) // 16: repeat the last length
-			w.bits(2, 3) // 17: a run of zeros
-			w.bits(2, 3) // 18: a longer run of zeros
-			w.bits(0, 3) // 0
-			w.code(0, 1) // symbol 16, with nothing before it
+			w.bits(1, 3) // repeat-previous: give it a short code
+			w.bits(2, 3) // short empty-length run: give it a code
+			w.bits(2, 3) // long empty-length run: give it a code
+			w.bits(0, 3) // give the literal length-value symbol no code
+			w.code(0, 1) // the repeat-previous code, written before any length exists to repeat
 			return w.bytes()
 		}(),
 		want: "inflate: data stream error (invalid bit length repeat)",
 	}, {
 		name: "missing end-of-block",
 		raw: func() []byte {
-			// An alphabet with no codes at all leaves every length zero, so nothing codes the end of the block.
+			// An alphabet with no codes at all leaves every length unset, so nothing codes the end of the block.
 			w := dynamicBlock(0, 0, 0)
 			for range 4 {
 				w.bits(0, 3)
@@ -170,7 +169,7 @@ func TestMessages(t *testing.T) {
 	}, {
 		name: "literal/length code",
 		raw: func() []byte {
-			// Symbol 286 has a code in the built-in alphabet and names no length.
+			// The built-in alphabet still assigns a code past the valid range, which names no length.
 			w := fixedBlock()
 			w.code(0xc6, 8)
 			return w.bytes()
@@ -181,7 +180,7 @@ func TestMessages(t *testing.T) {
 		raw: func() []byte {
 			w := fixedBlock()
 			w.literal('A')
-			w.code(1, 7)  // symbol 257: a match of three
+			w.code(1, 7)  // the length code for the shortest possible match
 			w.code(30, 5) // a distance symbol that names no distance
 			return w.bytes()
 		}(),
@@ -189,11 +188,11 @@ func TestMessages(t *testing.T) {
 	}, {
 		name: "distance too far back",
 		raw: func() []byte {
-			// One byte has been written, and the match reaches two bytes back.
+			// A byte has been written, and the match reaches past it.
 			w := fixedBlock()
 			w.literal('A')
-			w.code(1, 7) // symbol 257: a match of three
-			w.code(1, 5) // symbol 1: a distance of two
+			w.code(1, 7) // the length code for the shortest possible match
+			w.code(1, 5) // a distance that reaches further back than any byte written
 			return w.bytes()
 		}(),
 		want: "inflate: data stream error (invalid distance too far back)",
@@ -208,46 +207,46 @@ func TestMessages(t *testing.T) {
 	}
 }
 
-// lengthAlphabet writes the eighteen three-bit numbers that give code-length symbols 0, 1.
+// lengthAlphabet writes the fixed-width numbers that give the code-length symbols their lengths.
 func (w *writer) lengthAlphabet() {
 	for _, v := range [18]uint32{0, 2, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2} {
 		w.bits(v, 3)
 	}
 }
 
-// The four codes lengthAlphabet defines, in the canonical order: symbol 0 is the lowest.
+// The codes lengthAlphabet defines, in canonical order: the lowest code names the lowest symbol.
 func (w *writer) zeroLength()      { w.code(0, 2) }
 func (w *writer) oneLength()       { w.code(1, 2) }
 func (w *writer) zeroRun(n uint32) { w.code(3, 2); w.bits(n-11, 7) }
 
 // litLenOverSubscribed builds a block whose length alphabet claims more code
-// space than exists: three symbols share the two one-bit codes there are. The
-// end-of-block symbol carries a length, because a block without one is refused
-// before the alphabet is built.
+// space than exists: more symbols share the shortest codes than there are
+// codes to share. The end-of-block symbol carries a length, because a block
+// with none is refused before the alphabet is built.
 func litLenOverSubscribed() []byte {
-	w := dynamicBlock(0, 0, 14) // 257 lengths, 1 distance, 18 code lengths
+	w := dynamicBlock(0, 0, 14) // the smallest lengths and distance alphabets, and a large code-length table
 	w.lengthAlphabet()
-	w.oneLength() // symbol 0
-	w.oneLength() // symbol 1
+	w.oneLength() // the lowest length symbol
+	w.oneLength() // the next length symbol
 	w.zeroRun(138)
-	w.zeroRun(116) // symbols 2 to 255
-	w.oneLength()  // symbol 256, the end of the block
-	w.zeroLength() // the one distance length
+	w.zeroRun(116) // the rest of the literal symbols
+	w.oneLength()  // the end-of-block symbol
+	w.zeroLength() // the distance alphabet's only length
 	return w.bytes()
 }
 
 // distOverSubscribed builds a block whose distance alphabet is over-subscribed
 // while its length alphabet builds, so zlib reaches the distances.
 func distOverSubscribed() []byte {
-	w := dynamicBlock(0, 2, 14) // 257 lengths, 3 distances, 18 code lengths
+	w := dynamicBlock(0, 2, 14) // the smallest lengths alphabet, several distances, and a large code-length table
 	w.lengthAlphabet()
 	w.zeroRun(138)
-	w.zeroRun(118) // symbols 0 to 255
-	// One single-bit code is an incomplete alphabet, which zlib allows.
-	w.oneLength() // symbol 256, the end of the block
+	w.zeroRun(118) // every literal symbol
+	// A short code left without a partner is an incomplete alphabet, which zlib allows.
+	w.oneLength() // the end-of-block symbol
 	w.oneLength()
 	w.oneLength()
-	w.oneLength() // three distances sharing two one-bit codes
+	w.oneLength() // distances sharing more short codes than there are to go around
 	return w.bytes()
 }
 
@@ -286,7 +285,7 @@ func TestGoodStream(t *testing.T) {
 func TestOutputLimit(t *testing.T) {
 	raw := brokenChecksum(t)
 	assert.Equal(t, "inflate: data stream error (incorrect data check)", Diagnose(raw, Whole))
-	// "the quick brown fox" is 19 bytes, so a caller with room for four never reaches the checksum.
+	// The decoded text is longer than the room given below, so that call never reaches the checksum.
 	assert.Empty(t, Diagnose(raw, 4))
 	assert.Equal(t, "inflate: data stream error (incorrect data check)", Diagnose(raw, 19))
 }

@@ -14,7 +14,7 @@ const (
 	goodDate = "1700000000 +0000"
 )
 
-// first returns the one message a check produced, or "" when it produced none.
+// returns the leading message a check produced, or "" when it produced none.
 func first(msgs []string) string {
 	if len(msgs) == 0 {
 		return ""
@@ -76,7 +76,7 @@ func TestCommitNulInBody(t *testing.T) {
 	assert.Contains(t, first(msgs), "nulInCommit: NUL byte in the commit object body")
 }
 
-// identCase builds a commit whose author line is the one under test.
+// identCase builds a commit whose author line is the line under test.
 func identCase(line string) string {
 	return "tree " + hexA + "\nauthor " + line + "\ncommitter A <a@e> " + goodDate + "\n\nm\n"
 }
@@ -99,7 +99,7 @@ func TestIdent(t *testing.T) {
 		assert.Contains(t, first(msgs), c.want, c.name)
 	}
 
-	// A timestamp of exactly "0" is legal, and so are extra blanks after
+	// A minimal timestamp string is legal, and so are extra blanks after
 	// the email.
 	for _, line := range []string{"A <a@e> 0 +0000", "A <a@e>  \t 1700000000 -0530", "A <> 1700000000 +0000"} {
 		_, msgs := collect(t, func(o *Options) int { return o.Commit(nil, oidN(1), []byte(identCase(line))) })
@@ -107,7 +107,7 @@ func TestIdent(t *testing.T) {
 	}
 }
 
-// tagBody assembles a tag object from its four header lines.
+// tagBody assembles a tag object from its object, type, tag, and tagger lines.
 func tagBody(object, typ, name, tagger string) string {
 	b := "object " + object + "\ntype " + typ + "\ntag " + name + "\n"
 	if tagger != "" {
@@ -167,7 +167,7 @@ func TestTagMissingTaggerIsOnlyAWarning(t *testing.T) {
 func TestTagTruncatedAfterHeaderLine(t *testing.T) {
 	// A header line with no newline of its own never reaches the
 	// unexpected-end reports, because the header check refuses the object
-	// first. git carries the same pair of unreachable branches.
+	// before those checks run. git carries the same unreachable branches.
 	for _, body := range []string{
 		"object " + hexA + "\ntype commit",
 		"object " + hexA + "\ntype commit\ntag v1",

@@ -10,7 +10,7 @@ import (
 )
 
 // flatten renders the entries as "key=value" strings, with a bare key written
-// as "key" alone, so a whole parse is one comparison.
+// as "key" alone, so a whole parse reduces to a single comparison.
 func flatten(t *testing.T, src string) []string {
 	t.Helper()
 	entries, err := gitconfig.Parse([]byte(src))
@@ -123,7 +123,7 @@ func TestSplitKey(t *testing.T) {
 	assert.Empty(t, name)
 	assert.False(t, hasSub)
 
-	// A subsection may itself contain dots; only the last one splits off the name.
+	// A subsection may itself contain dots; only the last dot splits off the name.
 	_, sub, name, hasSub = gitconfig.SplitKey("submodule.a.b.c.url")
 	assert.Equal(t, "a.b.c", sub)
 	assert.Equal(t, "url", name)

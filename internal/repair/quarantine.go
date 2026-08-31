@@ -19,10 +19,10 @@ import (
 // quarantineRoot is where a run's displaced files live.
 const quarantineRoot = "git-fixed/quarantine"
 
-// manifestName holds one run's record, written next to the files it displaced.
+// manifestName holds a run's record, written next to the files it displaced.
 const manifestName = "manifest.json"
 
-// Displaced records one file the run moved out of the way.
+// Displaced records a file the run moved out of the way.
 type Displaced struct {
 	// From is the path the file had, relative to the git directory.
 	From string `json:"from"`
@@ -50,7 +50,7 @@ type Quarantine struct {
 	made bool
 }
 
-// NewQuarantine prepares a quarantine for one run.
+// NewQuarantine prepares a quarantine for a run.
 func NewQuarantine(gitDir, run string) *Quarantine {
 	return &Quarantine{gitDir: gitDir, run: run, man: Manifest{Run: run}}
 }
@@ -67,10 +67,10 @@ func (q *Quarantine) Files() []Displaced {
 	return append([]Displaced(nil), q.man.Files...)
 }
 
-// Take moves one file out of the repository and records why. path is absolute.
+// Take moves a file out of the repository and records why. path is absolute.
 //
-// A file that is not there is not an error: two repairs can name the same
-// derived file, and the second one has nothing left to do.
+// A file that is not there is not an error: separate repairs can name the same
+// derived file, and the later repair has nothing left to do.
 func (q *Quarantine) Take(path, why string) error {
 	if _, err := os.Lstat(path); err != nil {
 		if os.IsNotExist(err) {
@@ -151,14 +151,15 @@ const replacedDir = "replaced"
 // Undo puts a run's files back where they came from.
 //
 // Most of what a run displaces, it also replaces: it writes a whole index over
-// a broken one, a valid packed-refs over a malformed one, a recovered object
-// over a corrupt one. So the path an undo restores to is usually occupied, and
-// refusing to overwrite it -- which this used to do -- meant the undo failed on
-// every run worth undoing.
+// a broken index, a valid packed-refs over a malformed packed-refs, a recovered
+// object over a corrupt object. So the path an undo restores to is usually
+// occupied, and refusing to overwrite it -- which this used to do -- meant the
+// undo failed on every run worth undoing.
 //
 // Nothing is overwritten even so. Whatever is in the way moves into the run's
-// own "replaced" directory first, keeping its path, so an undo deletes no more
-// than a repair does and can itself be picked apart by hand.
+// own "replaced" directory before anything is written, keeping its path, so an
+// undo deletes no more than a repair does and can itself be picked apart by
+// hand.
 func Undo(gitDir, run string) ([]Displaced, error) {
 	q := NewQuarantine(gitDir, run)
 	data, err := os.ReadFile(filepath.Join(q.Dir(), manifestName))
@@ -214,9 +215,9 @@ func Runs(gitDir string) []string {
 	return runs
 }
 
-// move renames a file, falling back to a copy when the two paths are on
-// different filesystems. A worktree and its git directory are not always on the
-// same one.
+// move renames a file, falling back to a copy when the paths sit on
+// different filesystems. A worktree and its git directory are not always on
+// the same filesystem.
 func move(src, dest string) error {
 	if err := os.Rename(src, dest); err == nil {
 		return nil
@@ -237,7 +238,7 @@ func copyFile(src, dest string) error {
 		return err
 	}
 	defer in.Close()
-	// A loose object is mode 0444, and a copy of one must be writable long enough to write it.
+	// A loose object file is read-only, and a copy of it must be writable long enough to write it.
 	out, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o666)
 	if err != nil {
 		return err

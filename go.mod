@@ -7,7 +7,7 @@ require (
 	golang.org/x/text v0.21.0
 )
 
-require github.com/wow-look-at-my/go-containers v0.0.0-20260820210621-2e1261867045 // go-toolchain:auto-branch
+require github.com/wow-look-at-my/go-containers v0.0.0-20260826161058-40a3d1ef3d41 // go-toolchain:auto-branch
 
 require github.com/stretchr/testify v1.11.1
 

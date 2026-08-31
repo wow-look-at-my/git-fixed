@@ -133,7 +133,7 @@ func TestTreeRecordsGitmodules(t *testing.T) {
 
 func TestVerifyOrdered(t *testing.T) {
 	// The candidate stack carries over between adjacent pairs, so each case
-	// starts from an empty one.
+	// starts with a fresh, empty stack.
 	pair := func(mode1 uint32, name1 string, mode2 uint32, name2 string) int {
 		var candidates [][]byte
 		return verifyOrdered(mode1, []byte(name1), mode2, []byte(name2), &candidates)

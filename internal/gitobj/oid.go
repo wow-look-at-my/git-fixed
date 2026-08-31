@@ -12,7 +12,7 @@ import (
 // MaxRawSize is the raw byte length of the widest hash git supports.
 const MaxRawSize = 32
 
-// Algo describes one of git's object hash algorithms.
+// Algo describes a git object hash algorithm.
 type Algo struct {
 	Name      string
 	Format    uint32 // the value git stores in extensions.objectFormat order
@@ -23,7 +23,7 @@ type Algo struct {
 	EmptyTree OID
 }
 
-// SHA1 and SHA256 are the two algorithms git repositories may use.
+// SHA1 and SHA256 are the algorithms a git repository may use.
 var (
 	SHA1 = &Algo{
 		Name:    "sha1",
@@ -72,7 +72,7 @@ func FromBytes(b []byte) OID {
 	return o
 }
 
-// Null returns the all-zero object name for the algorithm.
+// Null returns the object name whose bytes are all unset, for the algorithm.
 func (a *Algo) Null() OID { return OID{N: uint8(a.RawSize)} }
 
 // Raw returns the significant bytes of the object name.
@@ -81,7 +81,7 @@ func (o OID) Raw() []byte { return o.H[:o.N] }
 // String renders the object name in lower-case hex.
 func (o OID) String() string { return hex.EncodeToString(o.H[:o.N]) }
 
-// IsNull reports whether every byte of the object name is zero.
+// IsNull reports whether every byte of the object name is unset.
 func (o OID) IsNull() bool {
 	for _, c := range o.H[:o.N] {
 		if c != 0 {
@@ -94,7 +94,7 @@ func (o OID) IsNull() bool {
 // Valid reports whether the object name carries a hash at all.
 func (o OID) Valid() bool { return o.N > 0 }
 
-// Compare orders two object names bytewise, like git's oidcmp().
+// Compare orders object names bytewise, like git's oidcmp().
 func (o OID) Compare(b OID) int {
 	for i := range o.H {
 		if o.H[i] != b.H[i] {
@@ -130,7 +130,7 @@ func (a *Algo) ParsePrefix(s string) (OID, string, bool) {
 	return o, s[a.HexSize:], true
 }
 
-// ParseHexBytes decodes the first HexSize bytes of buf as an object name.
+// ParseHexBytes decodes buf's leading HexSize bytes as an object name.
 func (a *Algo) ParseHexBytes(buf []byte) (OID, bool) {
 	if len(buf) < a.HexSize {
 		return OID{}, false

@@ -21,7 +21,7 @@ import (
 // original object if it hashes to the name that went missing. Pass an invalid
 // OID to store content whose name is not known in advance.
 //
-// An object that is already there is left alone. Two names cannot collide on
+// An object that is already there is left alone. Names cannot collide on
 // different content, so a file that exists holds this content already.
 func WriteLoose(objectsDir string, algo *gitobj.Algo, t gitobj.Type, content []byte, want gitobj.OID) (gitobj.OID, error) {
 	oid := Hash(algo, t, content)
@@ -59,7 +59,7 @@ func WriteLoose(objectsDir string, algo *gitobj.Algo, t gitobj.Type, content []b
 		os.Remove(tmpName)
 		return gitobj.OID{}, err
 	}
-	// A loose object is read-only once written, the same as git's own.
+	// A loose object is read-only after it is written, the same as git's own.
 	if err := os.Chmod(tmpName, 0o444); err != nil {
 		os.Remove(tmpName)
 		return gitobj.OID{}, err

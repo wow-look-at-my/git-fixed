@@ -1,6 +1,6 @@
 package progress
 
-// The meter's three promises: it only ever goes forwards, it never passes a hundred percent.
+// The meter's promises: it only ever goes forwards, it never passes full.
 
 import (
 	"bytes"
@@ -39,7 +39,7 @@ func (b *safeBuffer) String() string {
 // work is done on every core and finishes out of order, and a count that walks
 // backwards over work already done reads as a run losing ground.
 //
-// Two workers that step the counter can reach the lock in the other order. What
+// Workers racing to step the counter can reach the lock in either order. What
 // keeps the line honest is that neither draws the number it was holding.
 func TestAMeterOnlyEverGoesForwards(t *testing.T) {
 	const (
@@ -77,8 +77,8 @@ func TestAMeterOnlyEverGoesForwards(t *testing.T) {
 }
 
 // TestAdvanceNeverPullsTheCountBack covers the other half, where the work
-// arrives with its own number: the loose-object phase advances one meter per
-// fanout directory from every core at once.
+// arrives with its own number: the loose-object phase advances a meter per
+// fanout directory from every core at the same time.
 func TestAdvanceNeverPullsTheCountBack(t *testing.T) {
 	var out safeBuffer
 	m := Start(&out, "Checking object directories", 256)
@@ -89,8 +89,8 @@ func TestAdvanceNeverPullsTheCountBack(t *testing.T) {
 }
 
 // TestEveryLineSaysHowLongThePhaseHasRun keeps the clock in the widest unit
-// that has a whole number in it. Three digits of seconds, or a leading zero on
-// everything short, is what a fixed unit gives instead.
+// that carries a nonzero span, with the smaller field padded to a full width
+// rather than left short.
 func TestEveryLineSaysHowLongThePhaseHasRun(t *testing.T) {
 	for _, tc := range []struct {
 		d    time.Duration
@@ -156,12 +156,13 @@ func TestAShortPhaseWithNoTotalStillDrawsItsLine(t *testing.T) {
 // percent is the percentage out of every line a meter wrote.
 var percent = regexp.MustCompile(`(\d+)% \((\d+)/(\d+)\)`)
 
-// TestAMeterNeverPassesAHundredPercent is the third promise, and it is about a
+// TestAMeterNeverPassesAHundredPercent is another promise, and it is about a
 // total that was wrong.
 //
 // The repair walk counts against the objects the repository holds and then
-// reaches one it does not hold, which is the entire reason that walk runs. The
-// arithmetic then says 150%, which reports on the meter and not on the run.
+// reaches an object it does not hold, which is the entire reason that walk
+// runs. The arithmetic then would report over full, which is a property of
+// the meter, not of the run.
 func TestAMeterNeverPassesAHundredPercent(t *testing.T) {
 	var buf safeBuffer
 	m := Start(&buf, "Checking", 2)

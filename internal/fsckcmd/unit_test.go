@@ -38,7 +38,7 @@ func TestLinkTypeName(t *testing.T) {
 }
 
 func TestHashSlots(t *testing.T) {
-	// git prints the size of its own object hash, which starts at 32 and doubles once it is half full.
+	// git prints the size of its own object hash, which starts small and doubles whenever it becomes half full.
 	tab := newObjTable(0)
 	assert.Equal(t, int64(0), tab.HashSlots())
 	for i := range 40 {
@@ -53,9 +53,9 @@ func TestHashSlots(t *testing.T) {
 }
 
 // TestObjTableTellsNamesApartByMoreThanItsHash keeps the table honest about
-// what its four bytes are for. They pick a slot and rule a slot out; they never
-// stand in for the name. These names share every byte the table looks at, so
-// each one has to be told apart by the whole of it.
+// what its own hash bytes are for. They pick a slot and rule a slot out; they
+// never stand in for the name. These names share every byte the table looks
+// at, so telling them apart takes the whole of it.
 func TestObjTableTellsNamesApartByMoreThanItsHash(t *testing.T) {
 	tab := newObjTable(0)
 	want := map[gitobj.OID]*objEntry{}
@@ -168,7 +168,7 @@ func TestSetMsgTypeErrors(t *testing.T) {
 }
 
 func TestSetMsgTypeCannotDemoteFatal(t *testing.T) {
-	// git refuses to make a fatal check anything but an error, because the parser cannot continue past one.
+	// git refuses to make a fatal check anything but an error, because the parser cannot continue past a fatal condition.
 	require.Equal(t, fsck.SevFatal, fsck.MsgNulInHeader.DefaultSeverity())
 
 	var errBuf bytes.Buffer
@@ -182,9 +182,9 @@ func TestSetMsgTypeCannotDemoteFatal(t *testing.T) {
 	assert.Empty(t, errBuf.String())
 }
 
-// TestTheTypeAndTheFlagsShareAWord keeps the two halves of meta apart. They are
-// one word so that the entry is 48 bytes, and a flag that reached the type byte
-// would rename an object's type.
+// TestTheTypeAndTheFlagsShareAWord keeps the halves of meta apart. They share
+// a word so that the entry stays the size TestAnObjectEntryStaysSmall checks,
+// and a flag that reached the type byte would rename an object's type.
 func TestTheTypeAndTheFlagsShareAWord(t *testing.T) {
 	var e objEntry
 	assert.Equal(t, gitobj.TypeNone, e.Type())
@@ -222,7 +222,7 @@ func TestAnUnresolvedEdgeKeepsTheTypeItImplied(t *testing.T) {
 		require.False(t, e.ok(), "an unresolved edge names no target")
 		assert.Equal(t, typ, e.typ())
 	}
-	// git's negative types have no spelling, and neither did the wider edge that came before this one.
+	// git's negative types have no spelling, and neither did the wider edge that came before it.
 	assert.Equal(t, "unknown", linkTypeName(makeEdge(0, false, gitobj.TypeAny).typ()))
 	assert.Equal(t, "unknown", linkTypeName(makeEdge(0, false, gitobj.TypeBad).typ()))
 }

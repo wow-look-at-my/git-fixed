@@ -58,7 +58,7 @@ func TestTheHeapCeilingReadsThisMachine(t *testing.T) {
 
 // TestAnExplicitLimitWins proves the deference: capHeap leaves a limit somebody
 // else set, which is what makes GOMEMLIMIT and go-toolchain's cgroup guard the
-// answer rather than an argument with this one.
+// answer rather than an argument with this tool.
 func TestAnExplicitLimitWins(t *testing.T) {
 	const chosen = 123 << 20
 	before := debug.SetMemoryLimit(chosen)

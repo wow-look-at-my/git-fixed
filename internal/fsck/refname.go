@@ -1,18 +1,23 @@
 package fsck
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/wow-look-at-my/go-containers/set"
+)
 
 // Flags for CheckRefnameFormat, matching git's REFNAME_* values.
 const (
 	// RefnameAllowOnelevel permits a name with a single component.
 	RefnameAllowOnelevel = 1 << iota
-	// RefnameRefspecPattern permits exactly one "*" component.
+	// RefnameRefspecPattern permits a single "*" component.
 	RefnameRefspecPattern
 )
 
 // refnameDisposition classifies every byte, exactly as git's table does.
 //
-//	1 ends the component, 2 is '.', 3 is '{', 4 is forbidden, 5 is '*'.
+//	Each entry selects a case in checkRefnameComponent below: end of
+//	component, '.', '{', forbidden, or '*'.
 var refnameDisposition = [256]byte{
 	1, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
 	4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
@@ -79,14 +84,14 @@ func checkRefnameComponent(refname string, flags *int) (int, bool) {
 			if *flags&RefnameRefspecPattern == 0 {
 				return 0, false
 			}
-			// Only one side of a refspec may hold the asterisk.
+			// Only a single side of a refspec may hold the asterisk.
 			*flags &^= RefnameRefspecPattern
 		}
 		last = ch
 	}
 out:
 	if i == 0 {
-		return 0, true // a zero-length component, which the caller rejects
+		return 0, true // an empty component, which the caller rejects
 	}
 	if refname[0] == '.' {
 		return 0, false
@@ -101,14 +106,14 @@ out:
 func IsBranchRef(refname string) bool { return strings.HasPrefix(refname, "refs/heads/") }
 
 // irregularRootRefs are the root references whose names do not end in _HEAD.
-var irregularRootRefs = []string{
+var irregularRootRefs = set.Of(
 	"HEAD", "AUTO_MERGE", "BISECT_EXPECTED_REV",
 	"NOTES_MERGE_PARTIAL", "NOTES_MERGE_REF", "MERGE_AUTOSTASH",
-}
+)
 
 // IsRootRef reports whether a name belongs to a reference that lives beside
-// refs/ rather than under it. Such a name is one component in capitals, so the
-// ordinary refname rules do not apply to it.
+// refs/ rather than under it. Such a name is a single component in capitals,
+// so the ordinary refname rules do not apply to it.
 func IsRootRef(refname string) bool {
 	if !isRootRefSyntax(refname) || isPseudoRef(refname) {
 		return false
@@ -116,15 +121,10 @@ func IsRootRef(refname string) bool {
 	if strings.HasSuffix(refname, "_HEAD") {
 		return true
 	}
-	for _, name := range irregularRootRefs {
-		if refname == name {
-			return true
-		}
-	}
-	return false
+	return irregularRootRefs.Contains(refname)
 }
 
-// isRootRefSyntax reports whether every byte is one a root reference may carry.
+// isRootRefSyntax reports whether every byte belongs to the set a root reference may carry.
 func isRootRefSyntax(refname string) bool {
 	for i := 0; i < len(refname); i++ {
 		c := refname[i]
@@ -135,8 +135,8 @@ func isRootRefSyntax(refname string) bool {
 	return true
 }
 
-// isPseudoRef names the two references git writes but does not treat as root
-// references.
+// isPseudoRef names FETCH_HEAD and MERGE_HEAD, references git writes but does
+// not treat as root references.
 func isPseudoRef(refname string) bool {
 	return refname == "FETCH_HEAD" || refname == "MERGE_HEAD"
 }

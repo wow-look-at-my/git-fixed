@@ -1,6 +1,6 @@
 package fsckcmd
 
-// The progress meters, one per phase git shows one on.
+// The progress meters, matching the phases git draws a meter on.
 
 import "github.com/wow-look-at-my/git-fixed/internal/progress"
 
@@ -12,7 +12,7 @@ func (r *run) meterOn(title string, total int64) *progress.Meter {
 	return progress.Start(r.o.Stderr, title, total)
 }
 
-// meterDelayed starts one that stays quiet for a second first, for a phase that
+// meterDelayed starts a meter that stays quiet briefly before it draws, for a phase that
 // is usually instant.
 func (r *run) meterDelayed(title string, total int64) *progress.Meter {
 	if !r.o.ShowProgress {

@@ -5,7 +5,7 @@ import "errors"
 // errBadDelta marks a delta that does not decode against its base.
 var errBadDelta = errors.New("corrupt delta")
 
-// deltaHeader reads one varint from the front of a delta stream.
+// deltaHeader reads a varint from the front of a delta stream.
 func deltaVarint(d []byte) (uint64, []byte, bool) {
 	var v uint64
 	var shift uint
@@ -76,7 +76,7 @@ func applyDelta(base, delta []byte) ([]byte, error) {
 			out = append(out, delta[:cmd]...)
 			delta = delta[cmd:]
 		default:
-			// A zero command byte is reserved and git rejects it.
+			// A command byte with no bits set is reserved and git rejects it.
 			return nil, errBadDelta
 		}
 	}

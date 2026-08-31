@@ -142,8 +142,8 @@ func TestDeltaChainsInPack(t *testing.T) {
 //
 // git canonicalises the mode as it decodes the tree, in canon_mode(), and
 // everything left over becomes a gitlink, which the walk steps over without a
-// word. Its object check still sees the mode as written and warns about it
-// twice. Reading the raw mode in the walk as well produced an error git never
+// word. Its object check still sees the mode as written and repeats the
+// warning. Reading the raw mode in the walk as well produced an error git never
 // prints, and a repository git is happy with came back damaged.
 func TestTreeEntryWithAModeThatNamesNoObject(t *testing.T) {
 	gittest.RequireGit(t)
@@ -174,10 +174,11 @@ func TestTreeEntryWithAModeThatNamesNoObject(t *testing.T) {
 // read that reserves it outright asks the allocator for whatever number is
 // written there. git does exactly that, and on the repository below it dies:
 //
-//	fatal: Out of memory, malloc failed (tried to allocate 1099511627777 bytes)
+//	fatal: Out of memory, malloc failed (tried to allocate an absurd number of bytes)
 //
-// naming no object, checking nothing else, and exiting 128. A tool for
-// repositories that are already broken cannot answer a corrupt size that way.
+// naming no object, checking nothing else, and exiting with git's fatal
+// status. A tool for repositories that are already broken cannot answer a
+// corrupt size that way.
 // No deflate stream of this file's length can inflate that far, so the file is
 // reported like any other that will not read and the run carries on.
 func TestLooseObjectCannotAskForMoreThanItsFileHolds(t *testing.T) {
@@ -217,7 +218,7 @@ func TestCorruptPackData(t *testing.T) {
 	require.Len(t, packs, 1)
 	data, err := os.ReadFile(packs[0])
 	require.NoError(t, err)
-	// Flip a byte inside the first object's compressed data.
+	// Flip a byte inside the earliest object's compressed data.
 	data[20] ^= 0xff
 	gittest.WriteOver(t, packs[0], data)
 	got := sameAsGit(t, r)

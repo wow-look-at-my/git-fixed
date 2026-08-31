@@ -18,7 +18,7 @@ const (
 	fanoutSize = 256 * 4
 )
 
-// Pack is one packfile and its index, both mapped read-only.
+// Pack is a packfile and its index, both mapped read-only.
 type Pack struct {
 	Path    string // the .pack path as git prints it
 	IdxFile string // the index path this process opens
@@ -37,7 +37,7 @@ type Pack struct {
 	idxSize  int64
 	dataSize int64
 
-	// Offsets into idx of each table, for index version 2.
+	// Offsets into idx of each table, for the newer index format.
 	oidTable    int
 	crcTable    int
 	offTable    int
@@ -156,8 +156,8 @@ func (p *Pack) OffsetAt(i uint32) int64 {
 	return int64(binary.BigEndian.Uint64(p.idx[off:]))
 }
 
-// CRCAt returns the index's recorded CRC32 for position i. Index version 1
-// stores no CRCs, and the caller must not ask for one.
+// CRCAt returns the index's recorded CRC32 for position i. The older index
+// format stores no CRCs, and the caller must not ask.
 func (p *Pack) CRCAt(i uint32) uint32 {
 	return binary.BigEndian.Uint32(p.idx[p.crcTable+int(i)*4:])
 }
@@ -200,7 +200,7 @@ func (p *Pack) Data() []byte { return p.data }
 // Idx exposes the mapped index file.
 func (p *Pack) Idx() []byte { return p.idx }
 
-// ObjHeader describes one entry as the packfile itself stores it.
+// ObjHeader describes an entry as the packfile itself stores it.
 type ObjHeader struct {
 	Type    gitobj.Type
 	Size    int64
@@ -209,7 +209,7 @@ type ObjHeader struct {
 	BaseOID gitobj.OID // base name, for a ref-delta
 }
 
-// badDeltaBase is git's one complaint about a delta whose base it cannot
+// badDeltaBase is git's complaint about a delta whose base it cannot
 // locate, from unpack_entry(). at is where the base reference starts.
 func badDeltaBase(at int64, path string) error {
 	return fmt.Errorf("failed to validate delta base reference at offset %d from %s", at, path)
@@ -320,7 +320,7 @@ func (in *Inflater) Inflate(p *Pack, dataOff, size int64) ([]byte, error) {
 	if _, err := io.ReadFull(in.zr, out); err != nil {
 		return nil, err
 	}
-	// One more read reaches the end of the zlib stream, which is what checks
+	// Another read reaches the end of the zlib stream, which is what checks
 	// the adler32 trailer. Anything else here means the entry is corrupt.
 	if n, err := in.zr.Read(in.pad[:]); n != 0 || err != io.EOF {
 		if err == nil || err == io.ErrUnexpectedEOF {

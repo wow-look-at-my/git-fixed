@@ -50,7 +50,7 @@ func TestParseNegatedAndValued(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 0, *v["dangling"])
 
-	// A --no- form with an explicit value inverts twice.
+	// A --no- form combined with an explicit false value cancels out, landing back on true.
 	s, v = testSet()
 	_, err = s.Parse([]string{"--no-dangling=no"})
 	require.NoError(t, err)

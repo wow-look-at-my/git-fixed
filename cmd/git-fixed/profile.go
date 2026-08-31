@@ -1,6 +1,6 @@
 package main
 
-// Profiling, for the two questions this tool is ever asked about itself: where
+// Profiling, for the questions this tool is ever asked about itself: where
 // the time goes, and where the memory goes.
 
 import (

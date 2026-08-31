@@ -1,7 +1,7 @@
 // Package fsckcmd implements the fsck half of git-fixed: git fsck's own checks,
 // its output and its exit status.
 //
-// The phases follow builtin/fsck.c, but each one runs its work in parallel and
+// The phases follow builtin/fsck.c, but each phase runs its work in parallel and
 // puts the output back in order before printing it.
 //
 // see docs/architecture.md
@@ -37,7 +37,7 @@ const (
 	ErrorIndex          = 0400
 )
 
-// Options are the command's settings, one field per git fsck option.
+// Options are the command's settings, a field per git fsck option.
 type Options struct {
 	ShowRoot         bool
 	ShowTags         bool
@@ -58,13 +58,13 @@ type Options struct {
 	// PackVerified, when set, is called with the path of every packfile this run read end to end with every.
 	PackVerified func(path string)
 
-	// ObjectsDamaged, when set, is called once with every object this run could not produce and something.
+	// ObjectsDamaged, when set, is called a single time with every object this run could not produce, and whether that list is complete.
 	ObjectsDamaged func(oids []gitobj.OID, whole bool)
 
 	// Stopped, when set, is called with the message this run died on.
 	Stopped func(msg string)
 
-	// Workers is how many goroutines decode and check objects at once.
+	// Workers is how many goroutines decode and check objects concurrently.
 	Workers int
 
 	Dir    string
@@ -85,7 +85,7 @@ func DefaultOptions() *Options {
 	}
 }
 
-// run holds one execution's state.
+// run holds a single execution's state.
 type run struct {
 	o      *Options
 	repo   *gitrepo.Repo
@@ -111,13 +111,13 @@ type run struct {
 	partial atomic.Bool
 }
 
-// damaged is one object this run could not produce.
+// damaged is an object this run could not produce.
 type damaged struct {
 	oid    gitobj.OID
 	rooted bool
 }
 
-// noteDamaged records an object this run could not produce. There is one entry
+// noteDamaged records an object this run could not produce. There is an entry
 // per damaged object and a damaged repository has a handful, so a slice under a
 // lock costs nothing.
 func (r *run) noteDamaged(oid gitobj.OID, rooted bool) {
@@ -197,7 +197,7 @@ func Run(o *Options) int {
 		return code
 	}
 
-	// die reports the one condition git exits 128 for, after printing what
+	// die reports the condition git treats as fatal, after printing what
 	// the run has already found.
 	die := func() int {
 		rep.Flush()
@@ -293,7 +293,7 @@ func (r *run) applyConfig() int {
 	return 0
 }
 
-// setMsgType applies one fsck.<msgid> setting.
+// setMsgType applies an fsck.<msgid> setting.
 func (r *run) setMsgType(name, value string) int {
 	id, ok := fsck.MsgIDByName(name)
 	if !ok {
@@ -301,7 +301,7 @@ func (r *run) setMsgType(name, value string) int {
 		return 128
 	}
 	if id == fsck.MsgLargePathname {
-		// This one may carry its own limit, as in "warn:1024".
+		// MsgLargePathname may carry its own limit, as in "warn:<limit>".
 		if colon := strings.IndexByte(value, ':'); colon >= 0 {
 			limit, err := parseSize(value[colon+1:])
 			if err != nil {
@@ -359,7 +359,7 @@ func (r *run) loadSkiplist(path string) error {
 	return nil
 }
 
-// fsckError renders one finding the way builtin/fsck.c's callback does. ctx is
+// fsckError renders a finding the way builtin/fsck.c's callback does. ctx is
 // the sort key of whatever pass produced the finding.
 func (r *run) fsckError(o *fsck.Options, ctx any, oid gitobj.OID, objType gitobj.Type, sev fsck.Severity, _ fsck.MsgID, message string) int {
 	key, _ := ctx.(sortKey)
@@ -386,14 +386,14 @@ func (r *run) ensureType(e *objEntry) gitobj.Type {
 	return t
 }
 
-// readObject reads an object and notices the one failure git treats as fatal.
+// readObject reads an object and notices the failure git treats as fatal.
 func (r *run) readObject(oid gitobj.OID) (gitobj.Type, []byte, error) {
 	typ, buf, err := r.db.Read(oid)
 	r.noteFatal(err)
 	return typ, buf, err
 }
 
-// noteFatal remembers the first condition git would die on. Work already under
+// noteFatal remembers the earliest condition git would die on. Work already under
 // way finishes, and the run stops at the end of the phase, which is as close as
 // a parallel implementation gets to git's immediate exit.
 func (r *run) noteFatal(err error) {
@@ -410,7 +410,7 @@ func (r *run) noteFatal(err error) {
 }
 
 // noteFatalMsg records a fatal condition the caller found itself, rather than
-// one that came back from the object database.
+// a condition that came back from the object database.
 func (r *run) noteFatalMsg(msg string) {
 	r.fatalMu.Lock()
 	if r.fatalMsg == "" {
@@ -427,7 +427,7 @@ func (r *run) died() string {
 }
 
 // dying returns the message the run stops with, and the line its decompressor
-// printed first.
+// printed before it.
 func (r *run) dying() (msg, pre string) {
 	r.fatalMu.Lock()
 	defer r.fatalMu.Unlock()

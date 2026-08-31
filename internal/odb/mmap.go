@@ -7,7 +7,7 @@ import (
 	mmap "github.com/wow-look-at-my/go-mmap"
 )
 
-// mapping is one read-only view of a pack or index file.
+// mapping is a read-only view of a pack or index file.
 type mapping struct {
 	b mmap.MMap
 }

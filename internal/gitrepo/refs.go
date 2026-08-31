@@ -12,7 +12,7 @@ import (
 	"github.com/wow-look-at-my/git-fixed/internal/gitobj"
 )
 
-// Ref is one reference.
+// Ref is a reference.
 type Ref struct {
 	Name   string
 	OID    gitobj.OID
@@ -60,7 +60,7 @@ func (r *Repo) Refs(worktreeDir string) []Ref {
 	return out
 }
 
-// noteBadPackedLine records the first line of packed-refs that git's own reader
+// noteBadPackedLine records the earliest line of packed-refs that git's own reader
 // would refuse, as the message git dies with. The run prints it and stops, as
 // git does.
 func (r *Repo) noteBadPackedLine(kind, line string) {
@@ -82,7 +82,7 @@ func (r *Repo) packedRefs() []Ref {
 		if i := bytes.IndexByte(data[off:], '\n'); i >= 0 {
 			line, off = data[off:off+i], off+i+1
 		} else {
-			// git reads the file whole, so a last line with no newline is one it refuses rather than one it ignores.
+			// git reads the file whole, so a last line with no newline is refused rather than ignored.
 			line, off = data[off:], len(data)
 			r.noteBadPackedLine("unterminated", string(line))
 		}
@@ -156,7 +156,7 @@ func (r *Repo) looseRefs(dir, prefix string, algo *gitobj.Algo, root string) []R
 	return out
 }
 
-// readRefFile reads one reference file, following a symbolic reference. A file
+// readRefFile reads a reference file, following a symbolic reference. A file
 // it cannot make sense of leaves the null object name, which is what git
 // reports for a reference that resolves to nothing.
 func (r *Repo) readRefFile(path, name string, algo *gitobj.Algo, root string, depth int) Ref {
@@ -201,7 +201,7 @@ func isSpace(c byte) bool {
 	return c == ' ' || c == '\t' || c == '\n' || c == '\v' || c == '\f' || c == '\r'
 }
 
-// Head resolves one worktree's HEAD without following it to an object.
+// Head resolves a worktree's HEAD without following it to an object.
 func (r *Repo) Head(worktreeDir string) (target string, oid gitobj.OID, ok bool) {
 	if worktreeDir == "" {
 		worktreeDir = r.CommonDir
@@ -227,7 +227,7 @@ func (r *Repo) Head(worktreeDir string) (target string, oid gitobj.OID, ok bool)
 	if !valid || len(line) != r.Algo.HexSize {
 		return "", gitobj.OID{}, false
 	}
-	// A detached HEAD resolves to itself, which is how git spots one.
+	// A detached HEAD resolves to itself, which is how git recognizes the state.
 	return "HEAD", oid, true
 }
 

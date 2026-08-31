@@ -7,7 +7,7 @@ import (
 	"github.com/wow-look-at-my/git-fixed/internal/gitobj"
 )
 
-// link is one reference an object makes to another.
+// link is a reference an object makes to another.
 type link struct {
 	oid  gitobj.OID
 	typ  gitobj.Type // the type the reference implies, TypeAny for a tag target
@@ -101,7 +101,7 @@ func commitLinks(oid gitobj.OID, buf []byte, algo *gitobj.Algo, name string, nam
 	out = append(out, l)
 	buf = buf[6+hexsz:]
 
-	// A parent's name follows from the commit's own: the first parent gets "^" or continues a "~<n>" run.
+	// A parent's name follows from the commit's own: the primary parent gets "^" or continues a "~<n>" run.
 	generation, prefixLen := 0, 0
 	if named && name != "" {
 		n := len(name)

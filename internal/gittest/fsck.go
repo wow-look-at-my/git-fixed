@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// Result is one fsck run's output and exit status.
+// Result holds an fsck run's output and exit status.
 type Result struct {
 	Stdout string
 	Stderr string
@@ -79,7 +79,7 @@ func RequireGit(t *testing.T) {
 	t.Logf("comparing against %s", line)
 }
 
-// gitVersion is a release, as its three leading numbers.
+// gitVersion is a release's leading version numbers.
 type gitVersion [3]int
 
 // Less reports whether v comes before other.
@@ -92,10 +92,10 @@ func (v gitVersion) Less(other [3]int) bool {
 	return false
 }
 
-// parseGitVersion reads the numbers out of a "git version 2.55.0" line. A build
-// may add its own text after them, such as "(Apple Git-154)", and a release
-// candidate may add a suffix to a number, so each field stops at its first
-// non-digit.
+// parseGitVersion reads the numbers out of a "git version" line. A build may
+// add its own text after them, such as "(Apple Git-NNN)", and a release
+// candidate may add a suffix to a number, so each field stops at its earliest
+// non-digit character.
 func parseGitVersion(line string) (gitVersion, bool) {
 	fields := strings.Fields(line)
 	if len(fields) < 3 || fields[0] != "git" || fields[1] != "version" {

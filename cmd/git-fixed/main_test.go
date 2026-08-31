@@ -41,8 +41,8 @@ func invoke(t *testing.T, r *gittest.Repo, args ...string) gittest.Result {
 	return gittest.Result{Stdout: out.String(), Stderr: errOut.String(), Code: code}
 }
 
-// fingerprint is every file under a directory and what is in it. Two of these
-// are equal exactly when nothing was written, added, or removed.
+// fingerprint is every file under a directory and what is in it. Equal
+// fingerprints mean nothing was written, added, or removed.
 func fingerprint(t *testing.T, dir string) string {
 	t.Helper()
 	var lines []string
@@ -75,7 +75,7 @@ func breakIndex(t *testing.T, r *gittest.Repo) []byte {
 }
 
 // TestDryRunOnAHealthyRepositoryIsGitFsck is the drop-in case, and the reason
-// --dry-run prints nothing of its own when there is nothing to repair. One
+// --dry-run prints nothing of its own when there is nothing to repair. The
 // binary now does both jobs, so this is the surface that has to keep standing
 // in for git fsck exactly: same lines, same exit status.
 func TestDryRunOnAHealthyRepositoryIsGitFsck(t *testing.T) {
@@ -137,15 +137,16 @@ func TestDryRunPlansARepairWithoutMakingOne(t *testing.T) {
 	assert.Contains(t, got.Stdout, "would rebuild: .git/index")
 	assert.Contains(t, got.Stderr, ".git/index: index file smaller than expected",
 		"the diagnosis git prints must come out before the plan")
-	// git exits 128 here and stops. see docs/exit-status.md
+	// git exits with its fatal status here and stops. see docs/exit-status.md
 	assert.Equal(t, 128, r.GitFsck().Code)
 	assert.Equal(t, fsckcmd.ErrorIndex, got.Code,
 		"the status must name the fault, not say the run gave up")
 	assert.Equal(t, before, fingerprint(t, r.GitDir()), "a --dry-run repaired something")
 }
 
-// TestDefaultRunDiagnosesThenRepairs is the whole point of one binary: what
-// used to need two commands is one, and the diagnosis is still git's.
+// TestDefaultRunDiagnosesThenRepairs is the whole point of a single binary:
+// what used to need separate commands now runs together, and the diagnosis
+// is still git's.
 func TestDefaultRunDiagnosesThenRepairs(t *testing.T) {
 	r := repo(t)
 	breakIndex(t, r)
@@ -159,7 +160,7 @@ func TestDefaultRunDiagnosesThenRepairs(t *testing.T) {
 }
 
 // TestUndoPutsTheRunBack covers the escape hatch the no-delete rule rests on,
-// through the one binary's own spelling of it.
+// through the binary's own spelling of it.
 func TestUndoPutsTheRunBack(t *testing.T) {
 	r := repo(t)
 	broken := breakIndex(t, r)
@@ -178,8 +179,8 @@ func TestUndoPutsTheRunBack(t *testing.T) {
 	assert.Equal(t, broken[:8], back, "the undo did not put the original index back")
 }
 
-// TestUndoCannotBeADryRun refuses the one combination with no honest reading:
-// an undo that changed nothing would put nothing back.
+// TestUndoCannotBeADryRun refuses the combination with no honest reading: an
+// undo that changed nothing would put nothing back.
 func TestUndoCannotBeADryRun(t *testing.T) {
 	r := repo(t)
 	got := invoke(t, r, "--undo", "--dry-run")
@@ -197,7 +198,7 @@ func TestUnknownOptionIsAUsageError(t *testing.T) {
 }
 
 // TestSameVerdictOnlyWhenTheQuestionIs guards the shortcut that stops a healthy
-// repository being read twice. Reusing the answer is only sound when the fsck
+// repository being read again. Reusing the answer is only sound when the fsck
 // the command ran asked what the repair's own verification asks; every case
 // below asks something else, and must fall back to asking again.
 func TestSameVerdictOnlyWhenTheQuestionIs(t *testing.T) {
@@ -244,7 +245,7 @@ func TestProgressFollowsTheStreamItIsWrittenTo(t *testing.T) {
 	assert.True(t, f.options(".", nil, &buf, &buf).ShowProgress)
 }
 
-// TestOptionsCarryGitsResolvedDefaults covers the two rules git applies after
+// TestOptionsCarryGitsResolvedDefaults covers the rules git applies after
 // it has read the whole command line, rather than as it reads it.
 func TestOptionsCarryGitsResolvedDefaults(t *testing.T) {
 	f := newFsckFlags()
@@ -277,7 +278,7 @@ func TestTheFsckVerdictIsJudgedBeforeItRuns(t *testing.T) {
 		"fsck no longer rewrites the options it was given, so run() can stop working around it")
 }
 
-// TestDryRunStillWritesWhatLostFoundWrites pins the one thing a --dry-run does put on disk.
+// TestDryRunStillWritesWhatLostFoundWrites pins what a --dry-run does put on disk.
 func TestDryRunStillWritesWhatLostFoundWrites(t *testing.T) {
 	r := repo(t)
 	r.Blob("loose and unreferenced\n")
@@ -290,9 +291,9 @@ func TestDryRunStillWritesWhatLostFoundWrites(t *testing.T) {
 
 // TestDryRunSaysWhatItCouldAndCouldNotRepair is the whole job of a plan.
 //
-// It used to list every damaged object as one that could not be recovered,
-// because it never asked. A person whose objects were all one command away
-// from being put back was told they were gone.
+// It used to list every damaged object as unrecoverable, because it never
+// asked. A person whose objects were a command away from being put back was
+// told they were gone.
 func TestDryRunSaysWhatItCouldAndCouldNotRepair(t *testing.T) {
 	gittest.RequireGit(t)
 
@@ -323,7 +324,7 @@ func TestDryRunSaysWhatItCouldAndCouldNotRepair(t *testing.T) {
 	})
 }
 
-// overwriteObject makes one object's only file unreadable.
+// overwriteObject makes an object's only file unreadable.
 func overwriteObject(t *testing.T, r *gittest.Repo, oid gitobj.OID) {
 	t.Helper()
 	name := oid.String()
@@ -355,11 +356,11 @@ func TestTheClosingMemoryLineRidesWithTheMeters(t *testing.T) {
 // TestOneBadLooseObjectDoesNotRereadEveryPack is the longest thing a run used
 // to do for no reason.
 //
-// The fsck reads every object in every pack and hashes each one. When it then
-// reports a corrupt LOOSE object, its status word says ErrorObject -- which
-// says nothing about the packs, and used to send the repair scan through every
-// one of them a second time. On a hundred million objects that is twenty
-// minutes to rediscover that the packs are fine.
+// The fsck reads every object in every pack and hashes each object. When it
+// then reports a corrupt LOOSE object, its status word says ErrorObject --
+// which says nothing about the packs, and used to send the repair scan back
+// through every pack again. On the repositories this tool targets that is
+// long enough to rediscover that the packs are fine.
 //
 // The meter is the evidence: the scan's pack pass draws "Verifying packs", and
 // a pass that is skipped draws nothing.
@@ -382,10 +383,11 @@ func TestOneBadLooseObjectDoesNotRereadEveryPack(t *testing.T) {
 // status word used to buy far too much of.
 //
 // A corrupt loose object sets ErrorObject, and so does a commit with no author.
-// One is damage and the other is a badly written object, and the bit does not
-// tell them apart. The repair scan answered it by walking every object a
-// reference reaches -- forty-eight minutes over a hundred million of them --
-// to find that nothing reaches this one at all.
+// A corrupt object is real damage; a commit missing its author is a badly
+// written object, and the bit does not tell them apart. The repair scan
+// answered it by walking every object a reference reaches -- the better part
+// of an hour on the repositories this tool targets -- to find that nothing
+// reaches this object at all.
 func TestACorruptObjectNobodyPointsAtDoesNotStartTheWalk(t *testing.T) {
 	r := repo(t)
 	r.Git("repack", "-adq")
@@ -432,11 +434,11 @@ func walkReached(t *testing.T, stderr string) (reached, total int) {
 //
 // The fsck has already read every object and named the ones it could not
 // produce. What the walk adds is the route to each of them, so it has nothing
-// left to do once it has found the last one -- and reading the rest of the
-// history to say that they are fine is the longest part of a repair.
+// left to do after it finds the last damaged object -- and reading the rest
+// of the history to say that they are fine is the longest part of a repair.
 //
-// The history here is a chain, so the only way to the far end of it is one
-// commit at a time, while the damaged blob hangs off the tip.
+// The history here is a chain, so the only way to the far end of it is a
+// single commit at a time, while the damaged blob hangs off the tip.
 func TestTheWalkStopsAtTheLastDamagedObject(t *testing.T) {
 	gittest.RequireGit(t)
 	r := gittest.New(t)

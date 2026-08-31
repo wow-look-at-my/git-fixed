@@ -19,7 +19,7 @@ func TestIsDotGit(t *testing.T) {
 		".git ",
 		".git.",
 		".git . . ",
-		".gi\u200ct", // HFS+ drops a zero width non-joiner
+		".gi\u200ct", // HFS+ drops an invisible non-joiner
 		".g\ufeffit", // and a byte order mark
 		".\uff47it",  // ZFS folds a fullwidth g to "g"
 		"\uff0egit",  // and a fullwidth stop to "."
@@ -51,7 +51,7 @@ func TestIsDotGitmodules(t *testing.T) {
 		".gitmodules:",
 		"gitmod~1",
 		"GITMOD~4",
-		"gi7eba~1",         // the fall-back 8.3 short name
+		"gi7eba~1",         // the fall-back short name
 		"gi7eba~9",         // any digit, as git allows
 		".gitmodule\u017f", // ext4 casefold: the long s folds to "s"
 	} {

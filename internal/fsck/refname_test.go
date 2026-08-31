@@ -20,7 +20,7 @@ func TestCheckRefnameFormat(t *testing.T) {
 	for _, name := range []string{
 		"",
 		"@",
-		"main",             // one level needs the flag
+		"main",             // a single-level name needs the flag
 		"refs/heads/",      // an empty component
 		"/refs/heads/main", // a leading separator
 		"refs//heads/main", // an empty middle component
@@ -54,7 +54,7 @@ func TestCheckRefnameFormatOnelevel(t *testing.T) {
 func TestCheckRefnameFormatPattern(t *testing.T) {
 	assert.True(t, CheckRefnameFormat("refs/heads/*", RefnameRefspecPattern))
 	assert.True(t, CheckRefnameFormat("refs/*/main", RefnameRefspecPattern))
-	// git allows exactly one "*" in a whole pattern.
+	// git allows only a single "*" in a whole pattern.
 	assert.False(t, CheckRefnameFormat("refs/*/*", RefnameRefspecPattern))
 	assert.False(t, CheckRefnameFormat("refs/heads/*", 0))
 }

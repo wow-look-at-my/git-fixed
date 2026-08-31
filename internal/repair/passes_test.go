@@ -1,11 +1,11 @@
 package repair_test
 
-// What a second pass of a run is allowed to read again.
+// What a later pass of a run is allowed to read again.
 //
-// A repair goes round more than once, because one pass repairs one layer. Every
+// A repair goes round repeatedly, because each pass repairs a layer. Every
 // pass used to start by reading every packfile in the repository from end to
-// end. Over a hundred million objects that is fifteen minutes, and a run of
-// four passes spent an hour of it reaching an answer it had before it started.
+// end. At scale that reading cost real minutes, and a run of several passes
+// wasted most of an hour reaching an answer it already had before it started.
 
 import (
 	"bytes"
@@ -24,7 +24,7 @@ import (
 	"github.com/wow-look-at-my/git-fixed/internal/repair"
 )
 
-// meterRuns counts the meters one run drew under a title.
+// meterRuns counts the meters a run drew under a title.
 func meterRuns(drawn, title string) int {
 	n := 0
 	for _, line := range strings.Split(drawn, "\n") {
@@ -56,10 +56,10 @@ func fixWithMeters(t *testing.T, r *gittest.Repo) (*repair.Result, string) {
 //
 // Repairing packed-refs makes the run scan again, because a line git's reader
 // refuses hides every reference below it, and the objects those references lead
-// to look unreferenced until the file is back. That second scan has every reason
-// to walk the references again. It has no reason whatever to re-read a pack: a
-// pass writes loose objects and moves whole packs away, and it never writes into
-// one.
+// to look unreferenced until the file is back. That follow-up scan has every
+// reason to walk the references again. It has no reason whatever to re-read a
+// pack: a pass writes loose objects and moves whole packs away, and it never
+// writes into a pack.
 func TestASecondPassDoesNotReadThePacksAgain(t *testing.T) {
 	gittest.RequireGit(t)
 	r := history(t)
@@ -91,20 +91,20 @@ func TestASecondPassDoesNotReadThePacksAgain(t *testing.T) {
 // TestAChainOfMissingObjectsCostsOneWalk is the other half of the same hour.
 //
 // A missing tree hides everything under it, so a scan sees only the top of a
-// chain and one pass repairs one layer. Every later pass used to find its layer
-// by walking every object every reference reaches -- over a hundred million
-// objects that is five minutes, once per layer, to arrive under the object the
-// run was already holding.
+// chain and each pass repairs a layer. Every later pass used to find its layer
+// by walking every object every reference reaches -- at scale that walk cost
+// real minutes per layer, to arrive under the object the run was already
+// holding.
 //
-// The chain here is four deep: the commit's tree, a directory in it, a
-// directory in that, and a file at the bottom. Only the first is visible when
-// the run starts.
+// The chain here runs several levels deep: the commit's tree, a directory in
+// it, a directory in that, and a file at the bottom. Only the top level is
+// visible when the run starts.
 func TestAChainOfMissingObjectsCostsOneWalk(t *testing.T) {
 	gittest.RequireGit(t)
 	r := history(t)
 	before := record(t, r)
 
-	// Every name first.
+	// Collect every name before breaking anything.
 	var chain []string
 	for _, rev := range []string{"HEAD^{tree}", "HEAD:src", "HEAD:src/deep", "HEAD:src/deep/c.txt"} {
 		chain = append(chain, strings.TrimSpace(r.Git("rev-parse", rev)))
@@ -129,8 +129,8 @@ func TestAChainOfMissingObjectsCostsOneWalk(t *testing.T) {
 
 // walkSizes are the object counts every meter under a title finished at.
 //
-// The meter redraws on one line, so its counts arrive separated by carriage
-// returns and the last one before "done." is what that walk cost.
+// The meter redraws on a single line, so its counts arrive separated by
+// carriage returns and the last count before "done." is what that walk cost.
 func walkSizes(drawn, title string) []int {
 	var out []int
 	for _, line := range strings.Split(strings.ReplaceAll(drawn, "\r", "\n"), "\n") {
@@ -148,14 +148,12 @@ func walkSizes(drawn, title string) []int {
 	return out
 }
 
-// broadFiles is how many files every commit's tree holds. On a handful of them
-// a descent that re-reads everything and one that reads nothing cost the same,
-// and the test below measures nothing.
+// broadFiles is files per commit tree: too few, and a full descent costs the same as none.
 const broadFiles = 150
 
 // chained builds a history whose every commit reaches a broad tree, with a run
-// of consecutive commits gone. Each one hides the one above it, so the run
-// needs a pass per link.
+// of consecutive commits gone. Each removed commit hides the commit above it,
+// so the run needs a pass per link.
 func chained(t *testing.T, links int) (*gittest.Repo, []string, snapshot) {
 	t.Helper()
 	gittest.RequireGit(t)
@@ -197,11 +195,11 @@ func chained(t *testing.T, links int) (*gittest.Repo, []string, snapshot) {
 // A missing commit hides its parent, so a chain takes a pass per link. Every
 // pass used to start a fresh record of what it had already read, and descending
 // under a restored commit still reaches everything that commit reaches -- so
-// each pass re-read the whole repository to find the one object above it.
-// Thirteen million objects, forty-five seconds, once per link.
+// each pass re-read the whole repository to find the single new object above
+// it. That cost real time in objects and seconds, repeated per link.
 //
 // What a pass reads stays true: a pass only writes objects, and only displaces
-// files that were already unusable. So the walks after the first cost what is
+// files that were already unusable. So every later walk costs only what is
 // newly reachable, which is the link itself.
 func TestAChainCostsOneWalkOfTheRepositoryNotOnePerLink(t *testing.T) {
 	const links = 4
@@ -218,7 +216,7 @@ func TestAChainCostsOneWalkOfTheRepositoryNotOnePerLink(t *testing.T) {
 	assert.Len(t, gone, links)
 
 	// A descent that starts from nothing reads the whole tree under the commit
-	// it starts at, which is what every one of these sits on.
+	// it starts at, which is what each of these sits on.
 	for i, n := range walks {
 		assert.Less(t, n, broadFiles/2,
 			"descent %d read %d objects, and every commit here reaches %d files: it re-read the tree it had already read (%v)",
@@ -249,7 +247,7 @@ func objectCount(t *testing.T, r *gittest.Repo) int {
 }
 
 // TestAScanVouchesForThePacksItRead is what makes the pass above possible: a
-// scan hands the next one the packs it read, and what each file was when it
+// scan hands the next scan the packs it read, and what each file was when it
 // read it.
 func TestAScanVouchesForThePacksItRead(t *testing.T) {
 	gittest.RequireGit(t)

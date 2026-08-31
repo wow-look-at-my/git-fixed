@@ -74,13 +74,13 @@ func (r *Result) Report(w io.Writer, dryRun bool) {
 		}
 		if r.RemoteError != nil {
 			// The remote might well have these. Saying so is the difference
-			// between a repository to restore and one to grieve over.
+			// between a repository to restore and a repository to grieve over.
 			fmt.Fprintf(w, "\nThe remote was NOT consulted, because reaching it failed:\n  %s\n"+
 				"Fix that and run this again before believing anything is lost.\n", r.RemoteError)
 			return
 		}
-		// Only once there IS a quarantine directory. A dry run displaces
-		// nothing, so pointing at one would be pointing at nothing.
+		// This applies only when a quarantine directory exists. A dry run displaces
+		// nothing, so pointing at it would be pointing at nothing.
 		if len(r.Packs) > 0 && r.Quarantine != "" {
 			// Their bytes came out of a pack this run displaced, and that pack is in the quarantine directory whole.
 			fmt.Fprint(w, "\nSome of these were in a packfile this run took out. That pack is in the\n"+
@@ -97,7 +97,7 @@ func (r *Result) Report(w io.Writer, dryRun bool) {
 // A rewritten packed-refs and a rebuilt index both leave a repository git will
 // use again, which is exactly the state in which a quiet report is dangerous:
 // fsck comes back clean and the owner has no way to know that a reference or a
-// staged path did not survive. Every one is named here.
+// staged path did not survive. Each is named here.
 func (r *Result) reportPartialRepairs(w io.Writer) {
 	if pr := r.PackedRefs; pr != nil && len(pr.Dropped) > len(pr.Restored) {
 		fmt.Fprintf(w, "\n%d line(s) of the old packed-refs named no reference this repository\n"+
@@ -121,9 +121,9 @@ func (r *Result) reportPartialRepairs(w io.Writer) {
 // ReportPlanTotals closes a --dry-run by accounting for everything the scan
 // found: what a repair would put right, and what it would leave.
 //
-// The lines above name each one, and a person reading a long list of them
+// The lines above name each fault, and a person reading a long list of them
 // needs to know whether the list adds up. A plan that ends without saying so
-// leaves the one question it was run to answer -- can this be repaired --
+// leaves the question it was run to answer -- can this be repaired --
 // for the reader to work out by counting.
 func (r *Result) ReportPlanTotals(w io.Writer) {
 	would := len(r.Derived) + len(r.Objects) + len(r.Refs) + len(r.Packs)

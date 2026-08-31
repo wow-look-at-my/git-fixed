@@ -21,13 +21,13 @@ type BadPack struct {
 	// Pack and Idx are absolute paths.
 	Pack string
 	Idx  string
-	// Why is the first complaint the verification made.
+	// Why is the earliest complaint the verification made.
 	Why string
 	// Objects is how many the index says the pack holds, which is what the extraction below has to account for.
 	Objects int
 }
 
-// RescuedPack is one pack this run took out of the repository.
+// RescuedPack is a pack this run took out of the repository.
 type RescuedPack struct {
 	// Pack is the pack's path, as a person would recognise it.
 	Pack string
@@ -39,7 +39,7 @@ type RescuedPack struct {
 	Lost int
 }
 
-// companionSuffixes are the files that belong to one pack.
+// companionSuffixes are the files that belong to a pack.
 var companionSuffixes = []string{".pack", ".idx", ".rev", ".bitmap", ".keep", ".promisor", ".mtimes"}
 
 // scanPacks verifies the packs nobody has verified yet, and records the ones
@@ -75,7 +75,7 @@ func (s *scanner) scanPacks(d *Damage) {
 	}
 }
 
-// verifyPack reports whether one pack is damaged, and how.
+// verifyPack reports whether a pack is damaged, and how.
 func verifyPack(p *odb.Pack, m *progress.Meter) (BadPack, bool) {
 	bad := BadPack{Pack: p.File, Idx: p.IdxFile}
 	if p.OpenErr != nil {
@@ -103,11 +103,11 @@ func verifyPack(p *odb.Pack, m *progress.Meter) (BadPack, bool) {
 // rescuePack writes out everything the pack still holds, then displaces it.
 //
 // The order is the whole point. A corrupt entry in a pack SHADOWS a good loose
-// copy of the same object, because the database answers from packs first, so
-// the object keeps reading as damaged however many times it is put back. Only
-// removing the pack clears that. But removing a pack removes every object in
-// it, so each one has to be on disk as a loose object first. Extract, then
-// displace: never the other way round.
+// copy of the same object, because the database checks packs before loose
+// files, so the object keeps reading as damaged however many times it is put
+// back. Only removing the pack clears that. But removing a pack removes every
+// object in it, so every object needs a loose copy on disk before that
+// removal. Extract, then displace: never the other way round.
 //
 // A pack that yields nothing is never displaced. Moving it would take every
 // object in it out of the repository and buy nothing, since there is no loose
@@ -138,9 +138,9 @@ func rescuePack(repo *gitrepo.Repo, q *Quarantine, bad BadPack) (RescuedPack, er
 				out.Present++
 			}
 		},
-		// One worker, so quarantining a corrupt loose copy and writing over it stay ordered without a lock.
+		// A single worker, so quarantining a corrupt loose copy and writing over it stay ordered without a lock.
 		Workers: 1,
-		// Zero, so every object arrives with its content.
+		// No threshold, so every object arrives with its content.
 		BigFileThreshold: 0,
 	})
 	if writeErr != nil {
@@ -161,18 +161,18 @@ func rescuePack(repo *gitrepo.Repo, q *Quarantine, bad BadPack) (RescuedPack, er
 	return out, nil
 }
 
-// keepLoose makes sure one object survives its pack, and reports whether it had
+// keepLoose makes sure an object survives its pack, and reports whether it had
 // to be written.
 //
 // An object that already has a readable loose copy needs nothing: that copy
-// outlives the pack. A loose file that will NOT read back is quarantined first,
-// because leaving it in place would shadow the copy being written and put the
-// object right back where it started.
+// outlives the pack. A loose file that will NOT read back is quarantined
+// before the write, because leaving it in place would shadow the copy being
+// written and put the object right back where it started.
 func keepLoose(repo *gitrepo.Repo, q *Quarantine, oid gitobj.OID, typ gitobj.Type, data []byte) (bool, error) {
 	name := oid.String()
 	path := filepath.Join(repo.ObjectsDir, name[:2], name[2:])
 	if _, err := os.Stat(path); err == nil {
-		// ReadLoose answers from this one file, never from a pack.
+		// ReadLoose answers from this loose file, never from a pack.
 		res := odb.ReadLoose(path, path, oid, repo.Algo, 0)
 		if !res.Failed {
 			return false, nil
@@ -187,7 +187,7 @@ func keepLoose(repo *gitrepo.Repo, q *Quarantine, oid gitobj.OID, typ gitobj.Typ
 	return true, nil
 }
 
-// companions lists the files that belong to one pack and are present.
+// companions lists the files that belong to a pack and are present.
 func companions(packPath string) []string {
 	base := strings.TrimSuffix(packPath, ".pack")
 	var out []string

@@ -1,7 +1,7 @@
 package repair
 
 // The walk: reading every object a reference leads to, and reading every
-// object under one this run has just put back.
+// object under what this run has just put back.
 
 import (
 	"bytes"
@@ -29,7 +29,7 @@ type queued struct {
 	path *pathNode
 }
 
-// pathNode is one step of the route to an object, sharing everything above it with its siblings.
+// pathNode is a step of the route to an object, sharing everything above it with its siblings.
 type pathNode struct {
 	parent *pathNode
 	name   string
@@ -54,7 +54,7 @@ func (p *pathNode) String() string {
 	return b.String()
 }
 
-// need renders what a report says about one queued object.
+// need renders what a report says about a queued object.
 func (q queued) need() Need { return Need{Ref: q.ref, Path: q.path.String()} }
 
 // descend follows the objects a pass has just put back.
@@ -62,9 +62,9 @@ func (q queued) need() Need { return Need{Ref: q.ref, Path: q.path.String()} }
 // seen is what every earlier walk of this run already read, and carrying it is
 // the difference between a pass and a run. Starting under a restored commit
 // still reaches everything that commit reaches, so a fresh set costs a full
-// walk per pass: a chain of a hundred missing commits read a repository of
-// thirteen million objects a hundred times, forty-five seconds each. What an
-// earlier pass read is still there, because a pass only writes objects and only
+// walk per pass: a chain of missing commits on a large repository turns that
+// into a heavy, repeated cost. Measurements: docs/repair.md. What an earlier
+// pass read is still there, because a pass only writes objects and only
 // displaces files that were already unusable.
 func descend(repo *gitrepo.Repo, db *odb.DB, meters Meters, from []BadObject, verified []VerifiedPack, seen *concurrentmap.Map[gitobj.OID, bool]) (*Damage, error) {
 	if seen == nil {
@@ -103,7 +103,7 @@ func (s *scanner) want(oid gitobj.OID, typ gitobj.Type, ref string, path *pathNo
 	}
 	if !s.seen.TryAdd(oid, true) {
 		// Record the extra need anyway: a report that names every route to a
-		// missing object is worth more than one that names the first.
+		// missing object beats a report that names only the earliest route.
 		if s.knownBad(oid) {
 			s.recordNeed(oid, Need{Ref: ref, Path: path.String()})
 		}
@@ -129,7 +129,7 @@ func (s *scanner) wantEntry(oid gitobj.OID, typ gitobj.Type, ref string, parent 
 	s.queue.Add(queued{oid: oid, typ: typ, ref: ref, path: &pathNode{parent: parent, name: string(name)}})
 }
 
-// entryPath renders the route to one tree entry.
+// entryPath renders the route to a tree entry.
 func entryPath(parent *pathNode, name []byte) string {
 	return (&pathNode{parent: parent, name: string(name)}).String()
 }
@@ -151,20 +151,15 @@ func (s *scanner) recordNeed(oid gitobj.OID, need Need) {
 	})
 }
 
-// walk reads every queued object and follows what it points at, so the scan
-// reaches everything a reference needs rather than only the tips.
-//
-// It has two shapes. With no verdict to go on it is a search, and it reads
-// everything. With one it is an errand: the fsck has already named what cannot
-// be produced, and the walk goes and finds the route to each of those and
-// stops. An errand reports the first route to each damaged object rather than
-// every route, which is the price of not reading a hundred million objects to
-// list the rest of them.
+// walk reads every queued object and follows what it points at, reaching
+// everything a reference needs. With no verdict it is a search that reads
+// everything; with a verdict it is an errand that stops at each object the
+// fsck already named as unproducible, reporting the shortest route to it.
 func (s *scanner) walk() {
 	// There is no total to count against: the queue grows as the walk finds what each object points at.
 	title, total := "Checking what the references reach", s.objectCount()+int64(s.hunt)
 	if s.errand {
-		// An errand starts under one object rather than at the references, so there is no total.
+		// An errand starts under a specific object rather than at the references, so there is no total.
 		title, total = "Checking what came back", 0
 	}
 	m := s.meters.start(title, total)
@@ -193,9 +188,9 @@ func (s *scanner) provenBlob(oid gitobj.OID) bool {
 // walkWorker reads what the bag holds until the walk is finished.
 //
 // An empty bag does not mean the walk is over: another worker may be part way
-// through a tree that will queue a thousand more objects. pending counts both
-// what is waiting and what is being read, so zero is the only honest answer to
-// "is there any more".
+// through a tree that will queue many more objects. pending counts both
+// what is waiting and what is being read, so an empty pending count is the
+// only honest answer to "is there any more".
 func (s *scanner) walkWorker(m *progress.Meter) {
 	for {
 		if s.stop.Load() {
@@ -229,7 +224,7 @@ func (s *scanner) walkWorker(m *progress.Meter) {
 				s.walkTag(q, data)
 			}
 		}
-		// Last, so that everything this object queued is counted before this one stops counting.
+		// Last, so that everything this object queued is counted before this step stops counting.
 		s.pending.Add(-1)
 	}
 }
@@ -267,15 +262,15 @@ func (s *scanner) copiesOf(oid gitobj.OID) (files []string, corrupt bool) {
 			files = append(files, path)
 		}
 	}
-	// A packed copy is not a file of its own, and a pack is never displaced for one bad entry.
+	// A packed copy is not a file of its own, and a pack is never displaced for a single bad entry.
 	return files, len(files) > 0
 }
 
 // walkCommit follows a commit's tree and parents.
 //
-// The links are all in the header, and the header ends at the first empty line.
-// Never split the whole object: that copies every byte of every commit message
-// into a string, to read the two lines at the top.
+// The links are all in the header, and the header ends at the blank line that
+// follows it. Never split the whole object: that copies every byte of every
+// commit message into a string, just to read a few header lines.
 func (s *scanner) walkCommit(q queued, data []byte) {
 	for len(data) > 0 {
 		line, rest, _ := bytes.Cut(data, newline)
