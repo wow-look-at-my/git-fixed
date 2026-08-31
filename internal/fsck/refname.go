@@ -1,6 +1,10 @@
 package fsck
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/wow-look-at-my/go-containers/set"
+)
 
 // Flags for CheckRefnameFormat, matching git's REFNAME_* values.
 const (
@@ -101,10 +105,10 @@ out:
 func IsBranchRef(refname string) bool { return strings.HasPrefix(refname, "refs/heads/") }
 
 // irregularRootRefs are the root references whose names do not end in _HEAD.
-var irregularRootRefs = []string{
+var irregularRootRefs = set.Of(
 	"HEAD", "AUTO_MERGE", "BISECT_EXPECTED_REV",
 	"NOTES_MERGE_PARTIAL", "NOTES_MERGE_REF", "MERGE_AUTOSTASH",
-}
+)
 
 // IsRootRef reports whether a name belongs to a reference that lives beside
 // refs/ rather than under it. Such a name is one component in capitals, so the
@@ -116,12 +120,7 @@ func IsRootRef(refname string) bool {
 	if strings.HasSuffix(refname, "_HEAD") {
 		return true
 	}
-	for _, name := range irregularRootRefs {
-		if refname == name {
-			return true
-		}
-	}
-	return false
+	return irregularRootRefs.Contains(refname)
 }
 
 // isRootRefSyntax reports whether every byte is one a root reference may carry.

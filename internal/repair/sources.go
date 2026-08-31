@@ -126,7 +126,7 @@ type Found struct {
 	Source  string
 }
 
-// Find reads one object's bytes from the first source that has them. It does
+// Find reads an object's bytes from the first source that has them. It does
 // not write: the caller must quarantine the corrupt file before it writes.
 func (s *Sources) Find(b BadObject) (Found, error) {
 	if f, ok := s.local(b); ok {

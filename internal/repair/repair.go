@@ -235,7 +235,7 @@ func Run(o *Options) (*Result, error) {
 		verified, seen = damage.Verified, damage.Seen
 	}
 
-	// One set of sources serves every pass, or each pass refetches the remote.
+	// A shared set of sources serves every pass, or each pass refetches the remote.
 	sources := NewSources(repo, db, RemotePolicy{EveryRef: true, Progress: o.Stderr})
 	defer sources.Close()
 

@@ -232,7 +232,7 @@ func firstRemoteURL(repo *gitrepo.Repo) string {
 }
 
 // leaked are the variables that would point a scratch repository back at the damaged one.
-var leaked = []string{
+var leaked = set.Of(
 	"GIT_DIR",
 	"GIT_WORK_TREE",
 	"GIT_OBJECT_DIRECTORY",
@@ -240,14 +240,14 @@ var leaked = []string{
 	"GIT_INDEX_FILE",
 	"GIT_COMMON_DIR",
 	"GIT_CEILING_DIRECTORIES",
-}
+)
 
 // scratchEnv is the environment a scratch repository's git runs under.
 func scratchEnv() []string {
 	var env []string
 	for _, kv := range os.Environ() {
 		name, _, _ := strings.Cut(kv, "=")
-		if !slices.Contains(leaked, name) {
+		if !leaked.Contains(name) {
 			env = append(env, kv)
 		}
 	}
